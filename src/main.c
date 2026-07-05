@@ -83,6 +83,9 @@ typedef struct { double x, y; int active; } Key;
 static Key    keys[NUM_KEYS];
 static int    keys_left;
 static double exitX, exitY;
+static double doorNx = 1, doorNz = 0;   /* the exit door's facing (axis-snapped) */
+static double descend_t = 0.0;          /* >0 while the descent transition plays  */
+static int    descend_done = 0;         /* floor already swapped mid-transition   */
 
 typedef struct { double x, y; } Locker;
 static Locker lockers[NUM_LOCKERS];
@@ -585,9 +588,14 @@ static void reset_level(void) {
     mon_speed = MONSTER_SPD + (depth - 1) * 0.10;
     if (mon_speed > 3.2) mon_speed = 3.2;
 
-    /* stairs down live in the exit room; stairs up in a corner of the entrance */
+    /* the descent door lives in the exit room; stairs up in the entrance corner */
     for (int i = 0; i < room_count; i++)
         if (rooms[i].theme == RM_EXIT) { int cx, cy; room_center(&rooms[i], &cx, &cy); exitX = cx + 0.5; exitY = cy + 0.5; }
+    /* face the door toward the entrance side, snapped to the nearest axis */
+    { double ddx = startX - (int)exitX, ddy = startY - (int)exitY;
+      if (fabs(ddx) >= fabs(ddy)) { doorNx = ddx >= 0 ? 1 : -1; doorNz = 0; }
+      else                        { doorNx = 0; doorNz = ddy >= 0 ? 1 : -1; } }
+    descend_t = 0.0; descend_done = 0;
     has_up = (depth > 1);
     int ux = rooms[0].x + 1, uy = rooms[0].y + 1;
     if (ux == startX && uy == startY) ux = rooms[0].x + rooms[0].w - 2;
@@ -627,11 +635,13 @@ static void reset_level(void) {
     int li = 0;
     for (int pass = 0; pass < 2 && li < NUM_LOCKERS; pass++)
         for (int i = 0; i < room_count && li < NUM_LOCKERS; i++) {
+            if (rooms[i].theme == RM_ENTRANCE || rooms[i].theme == RM_EXIT) continue;
             if (pass == 0 && rooms[i].theme != RM_STORAGE) continue;
             Room *r = &rooms[i];
             for (int yy = r->y; yy < r->y + r->h && li < NUM_LOCKERS; yy++)
                 for (int xx = r->x; xx < r->x + r->w && li < NUM_LOCKERS; xx++) {
                     if (!is_open(xx, yy) || abs(xx - startX) + abs(yy - startY) < 3) continue;
+                    if (abs(xx - (int)exitX) + abs(yy - (int)exitY) < 2) continue;
                     int wx = 0, wy = 0, found = 0;
                     for (int k = 0; k < 4; k++)
                         if (!is_open(xx + wdx[k], yy + wdy[k])) { wx = wdx[k]; wy = wdy[k]; found = 1; break; }
@@ -1007,9 +1017,10 @@ static void add_beam(float *buf, int *n, float x0, float y0, float z0,
     push_quad(buf, n, tip[0], tip[1], tip[2], tip[3], dx, dy, dz, 1);   /* end cap */
 }
 
-/* a freestanding centred box (4 sides + top): altar pedestals, plinths */
-static void add_prop_box(float *buf, int *n, double cx, double cz, double hw, double y0, double y1) {
-    float x0 = cx - hw, x1 = cx + hw, z0 = cz - hw, z1 = cz + hw;
+/* a freestanding centred box with independent x/z half-extents (4 sides + top):
+ * altar pedestals, door posts, lintels and slabs.                          */
+static void add_box2(float *buf, int *n, double cx, double cz, double hwx, double hwz, double y0, double y1) {
+    float x0 = cx - hwx, x1 = cx + hwx, z0 = cz - hwz, z1 = cz + hwz;
     float A[3]={x0,y0,z0}, B[3]={x1,y0,z0}, C[3]={x1,y0,z1}, D[3]={x0,y0,z1};
     float At[3]={x0,y1,z0}, Bt[3]={x1,y1,z0}, Ct[3]={x1,y1,z1}, Dt[3]={x0,y1,z1};
     push_quad(buf, n, A, B, Bt, At, 0, 0, -1, 1);
@@ -1017,6 +1028,22 @@ static void add_prop_box(float *buf, int *n, double cx, double cz, double hw, do
     push_quad(buf, n, C, D, Dt, Ct, 0, 0, 1, 1);
     push_quad(buf, n, D, A, At, Dt, -1, 0, 0, 1);
     push_quad(buf, n, At, Bt, Ct, Dt, 0, 1, 0, 1);
+}
+
+/* the descent door: an iron frame (two posts + a lintel) with a slab that is
+ * present only while the floor is locked; collecting all keys drops it.     */
+static void add_door(float *buf, int *n, double ex, double ez, double nx, int locked) {
+    if (nx != 0.0) {                         /* faces ±X, opening spans Z */
+        add_box2(buf, n, ex, ez + 0.34, 0.06, 0.06, 0.0, 0.98);   /* post */
+        add_box2(buf, n, ex, ez - 0.34, 0.06, 0.06, 0.0, 0.98);   /* post */
+        add_box2(buf, n, ex, ez, 0.07, 0.44, 0.90, 0.99);         /* lintel */
+        if (locked) add_box2(buf, n, ex, ez, 0.05, 0.34, 0.0, 0.90);  /* slab */
+    } else {                                 /* faces ±Z, opening spans X */
+        add_box2(buf, n, ex + 0.34, ez, 0.06, 0.06, 0.0, 0.98);
+        add_box2(buf, n, ex - 0.34, ez, 0.06, 0.06, 0.0, 0.98);
+        add_box2(buf, n, ex, ez, 0.44, 0.07, 0.90, 0.99);
+        if (locked) add_box2(buf, n, ex, ez, 0.34, 0.05, 0.0, 0.90);
+    }
 }
 
 /* a wooden wall torch: a handle angling up into the corridor with a fatter
@@ -1078,7 +1105,7 @@ static void place_torches(void) {
 
 /* Rebuild the world mesh for the current maze (walls, floor, ceiling, lockers). */
 static void build_world_mesh(void) {
-    static float buf[(MW * MH * 36 + NUM_LOCKERS * 24 + NUM_KEYS * 32 + MAX_TORCHES * 72 + 64) * 8];
+    static float buf[(MW * MH * 36 + NUM_LOCKERS * 24 + NUM_KEYS * 32 + MAX_TORCHES * 72 + 256) * 8];
     int n = 0;
     place_torches();
     /* walls: a face for every wall cell that borders an open cell */
@@ -1104,12 +1131,13 @@ static void build_world_mesh(void) {
         for (int x = 0; x < MW; x++)
             if (is_open(x, y)) { float a[3]={x,1,y+1}, b[3]={x+1,1,y+1}, c[3]={x+1,1,y}, d[3]={x,1,y}; push_quad(buf,&n,a,b,c,d,0,-1,0,1); }
     ceilCount = n - ceilStart;
-    /* locker cabinets + altar pedestals (both steel) */
+    /* locker cabinets + altar pedestals + the descent door (all iron/steel) */
     lockStart = n;
     for (int i = 0; i < NUM_LOCKERS; i++)
         add_locker_box(buf, &n, lockers[i].x, lockers[i].y, lockWX[i], lockWY[i]);
     for (int i = 0; i < NUM_KEYS; i++)
-        add_prop_box(buf, &n, pedX[i], pedZ[i], 0.17, 0.0, 0.30);   /* shrine plinth */
+        add_box2(buf, &n, pedX[i], pedZ[i], 0.17, 0.17, 0.0, 0.30);   /* shrine plinth */
+    add_door(buf, &n, exitX, exitY, doorNx, keys_left > 0);
     lockCount = n - lockStart;
     /* wooden torch handles */
     brkStart = n;
@@ -1310,15 +1338,18 @@ static void render_3d(void) {
         if (keys[i].active) draw_billboard(keys[i].x, keys[i].y, 0.4, 0.4, 0.35, 1, mvp);
     for (int i = 0; i < NUM_NOTES; i++)
         if (notes[i].active) draw_billboard(notes[i].x, notes[i].y, 0.32, 0.32, 0.25, 5, mvp);
-    draw_billboard(exitX, exitY, 0.95, 0.95, 0.02, 2, mvp);          /* stairs down */
     if (has_up) draw_billboard(upX, upY, 0.95, 0.95, 0.02, 6, mvp);  /* stairs up   */
 
-    /* torch flames: additive glow so they read as fire, not flat sprites.
-     * Two stacked billboards -- a broad tongue plus a smaller, brighter
-     * inner core (additive, so the overlap reads as white-hot).          */
+    /* additive glows: torch flames, and the door's portal light once open */
     glEnable(GL_BLEND);
     glBlendFunc(GL_ONE, GL_ONE);
     glDepthMask(GL_FALSE);
+    /* the open doorway breathes a soft green light you're drawn toward */
+    if (keys_left == 0) {
+        double pulse = 0.6 + 0.22 * sin(state_time * 2.4);
+        if (descend_t > 0) pulse = 1.1;                 /* flares as you step through */
+        draw_billboard(exitX, exitY, 0.34 * pulse, 0.62 * pulse, 0.06, 2, mvp);
+    }
     for (int i = 0; i < torch_count; i++) {
         double fl = 0.88 + 0.16 * sin(state_time * 9.0 + i * 2.1)
                          + 0.05 * sin(state_time * 23.0 + i);        /* fast jitter */
@@ -1391,8 +1422,8 @@ static void draw_hud(void) {
 
     /* contextual stair prompts */
     double ed = fabs(posX - exitX) + fabs(posY - exitY);
-    if (ed < 1.4) draw_text_c(SCREEN_H - 150, 3,
-        keys_left == 0 ? "STAIRS DOWN - STEP ON TO DESCEND" : "STAIRS DOWN - LOCKED, FIND THE KEYS", pack(90, 255, 150));
+    if (ed < 1.6) draw_text_c(SCREEN_H - 150, 3,
+        keys_left == 0 ? "THE DOOR - STEP THROUGH TO DESCEND" : "THE DOOR - SEALED, FIND THE KEYS", pack(90, 255, 150));
     if (has_up) {
         double ud = fabs(posX - upX) + fabs(posY - upY);
         if (ud < 1.4) draw_text_c(SCREEN_H - 150, 3, "STAIRS UP - STEP ON TO CLIMB", pack(120, 190, 255));
@@ -1581,6 +1612,15 @@ int main(int argc, char **argv) {
             }
             pitch = 0.02;
         }
+        if (getenv("NIGHTFALL_SHOWEXIT")) {            /* stand back from the door */
+            if (getenv("NIGHTFALL_OPENDOOR")) { keys_left = 0; build_world_mesh(); }
+            double dx = doorNx, dz = doorNz;
+            for (double s = 2.5; s >= 1.5; s -= 0.5) {
+                double px = exitX + dx * s, pz = exitY + dz * s;
+                if (is_open((int)px, (int)pz)) { posX = px; posY = pz;
+                    yaw = atan2(exitY - pz, exitX - px); pitch = -0.02; }
+            }
+        }
         if (getenv("NIGHTFALL_SHOWKEY")) {              /* stand back from a shrine */
             double kx = pedX[0], kz = pedZ[0];
             for (double s = 2.5; s >= 1.5; s -= 0.5) {
@@ -1686,7 +1726,9 @@ int main(int argc, char **argv) {
                 if (keys[i].active) {
                     double kd = (posX - keys[i].x) * (posX - keys[i].x) + (posY - keys[i].y) * (posY - keys[i].y);
                     if (kd < PICKUP_DIST * PICKUP_DIST) { keys[i].active = 0; keys_left--;
-                        if (snd_pickup) Mix_PlayChannel(3, snd_pickup, 0); }
+                        if (snd_pickup) Mix_PlayChannel(3, snd_pickup, 0);
+                        if (keys_left == 0) build_world_mesh();   /* the door's slab drops */
+                    }
                 }
             /* pick up and read a lore note */
             for (int i = 0; i < NUM_NOTES; i++)
@@ -1698,13 +1740,24 @@ int main(int argc, char **argv) {
                         if (snd_pickup) Mix_PlayChannel(3, snd_pickup, 0);
                     }
                 }
-            /* descend once the floor's keys are collected */
-            if (keys_left == 0) {
+            /* step through the open door -> a fade-to-black descent transition */
+            if (descend_t > 0.0) {
+                descend_t -= dt;
+                if (descend_t <= 0.8 && !descend_done) {    /* swap the floor while black */
+                    double save = descend_t;                /* new_game() resets it; keep the fade */
+                    depth++; new_game();
+                    descend_t = save; descend_done = 1;
+                }
+                if (descend_t <= 0.0) { descend_t = 0.0; descend_done = 0; state_time = 0; }
+            } else if (keys_left == 0) {
                 double ed = (posX - exitX) * (posX - exitX) + (posY - exitY) * (posY - exitY);
-                if (ed < 0.4) { depth++; new_game(); state_time = 0; }
+                if (ed < 0.36) {                            /* enter the doorway */
+                    descend_t = 1.6;
+                    if (snd_pickup) Mix_PlayChannel(3, snd_pickup, 0);
+                }
             }
             /* climb back up */
-            if (has_up) {
+            if (has_up && descend_t == 0.0) {
                 double ud = (posX - upX) * (posX - upX) + (posY - upY) * (posY - upY);
                 if (ud < 0.4) { depth--; new_game(); state_time = 0; }
             }
@@ -1744,6 +1797,14 @@ int main(int argc, char **argv) {
             draw_sanity_fx();
             if (hidden) draw_hidden_overlay();
             draw_hud();
+        }
+        /* descent fade: darkness peaks exactly as the next floor swaps in */
+        if (descend_t > 0.0) {
+            double f = 1.0 - fabs(descend_t - 0.8) / 0.8;
+            if (f < 0.0) f = 0.0;
+            if (f > 1.0) f = 1.0;
+            uint32_t px = packa(0, 0, 0, (int)(f * 255));
+            for (int i = 0; i < SCREEN_W * SCREEN_H; i++) fb[i] = px;
         }
         present_overlay();
 
