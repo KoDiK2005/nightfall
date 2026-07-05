@@ -173,6 +173,16 @@ static PFNGLUNIFORM2FPROC               glUniform2f_;
 static PFNGLUNIFORM3FVPROC              glUniform3fv_;
 static PFNGLUNIFORM1FVPROC              glUniform1fv_;
 static PFNGLACTIVETEXTUREPROC           glActiveTexture_;
+static PFNGLGENFRAMEBUFFERSPROC         glGenFramebuffers_;
+static PFNGLBINDFRAMEBUFFERPROC         glBindFramebuffer_;
+static PFNGLFRAMEBUFFERTEXTURE2DPROC    glFramebufferTexture2D_;
+static PFNGLGENRENDERBUFFERSPROC        glGenRenderbuffers_;
+static PFNGLBINDRENDERBUFFERPROC        glBindRenderbuffer_;
+static PFNGLRENDERBUFFERSTORAGEPROC     glRenderbufferStorage_;
+static PFNGLFRAMEBUFFERRENDERBUFFERPROC glFramebufferRenderbuffer_;
+static PFNGLBLITFRAMEBUFFERPROC         glBlitFramebuffer_;
+static PFNGLDELETEFRAMEBUFFERSPROC      glDeleteFramebuffers_;
+static PFNGLDELETERENDERBUFFERSPROC     glDeleteRenderbuffers_;
 
 static void load_gl(void) {
     glCreateShader_            = (PFNGLCREATESHADERPROC)            SDL_GL_GetProcAddress("glCreateShader");
@@ -203,6 +213,16 @@ static void load_gl(void) {
     glUniform3fv_            = (PFNGLUNIFORM3FVPROC)              SDL_GL_GetProcAddress("glUniform3fv");
     glUniform1fv_            = (PFNGLUNIFORM1FVPROC)              SDL_GL_GetProcAddress("glUniform1fv");
     glActiveTexture_          = (PFNGLACTIVETEXTUREPROC)           SDL_GL_GetProcAddress("glActiveTexture");
+    glGenFramebuffers_        = (PFNGLGENFRAMEBUFFERSPROC)         SDL_GL_GetProcAddress("glGenFramebuffers");
+    glBindFramebuffer_        = (PFNGLBINDFRAMEBUFFERPROC)         SDL_GL_GetProcAddress("glBindFramebuffer");
+    glFramebufferTexture2D_   = (PFNGLFRAMEBUFFERTEXTURE2DPROC)    SDL_GL_GetProcAddress("glFramebufferTexture2D");
+    glGenRenderbuffers_       = (PFNGLGENRENDERBUFFERSPROC)        SDL_GL_GetProcAddress("glGenRenderbuffers");
+    glBindRenderbuffer_       = (PFNGLBINDRENDERBUFFERPROC)        SDL_GL_GetProcAddress("glBindRenderbuffer");
+    glRenderbufferStorage_    = (PFNGLRENDERBUFFERSTORAGEPROC)     SDL_GL_GetProcAddress("glRenderbufferStorage");
+    glFramebufferRenderbuffer_= (PFNGLFRAMEBUFFERRENDERBUFFERPROC) SDL_GL_GetProcAddress("glFramebufferRenderbuffer");
+    glBlitFramebuffer_        = (PFNGLBLITFRAMEBUFFERPROC)         SDL_GL_GetProcAddress("glBlitFramebuffer");
+    glDeleteFramebuffers_     = (PFNGLDELETEFRAMEBUFFERSPROC)      SDL_GL_GetProcAddress("glDeleteFramebuffers");
+    glDeleteRenderbuffers_    = (PFNGLDELETERENDERBUFFERSPROC)     SDL_GL_GetProcAddress("glDeleteRenderbuffers");
 }
 
 /* --------------------------------------------------------------- utilities */
@@ -857,7 +877,7 @@ static const char *FSRC =
      * hack would risk).                                                  */
     "float occlusion(vec2 p, vec2 q){\n"
     "  vec2 d = q - p; float len = length(d);\n"
-    "  int steps = int(len / 0.25) + 1; if(steps > 40) steps = 40;\n"
+    "  int steps = int(len / 0.34) + 1; if(steps > 24) steps = 24;\n"
     "  float occ = 0.0;\n"
     "  for(int s = 1; s < steps; s++){\n"
     "    vec2 c = p + d * (float(s)/float(steps));\n"
@@ -879,7 +899,7 @@ static const char *FSRC =
     "  for(int i=0;i<uTorchCount;i++){\n"
     "    vec3 L = uTorchPos[i] - vW; float td = length(L);\n"
     "    float att = uTorchInt[i] / (1.0 + 0.35*td + 0.55*td*td);\n"
-    "    if(att < 0.02) continue;\n"                 /* too dim to bother     */
+    "    if(att < 0.03) continue;\n"                 /* too dim to bother     */
     "    float lxz = length(L.xz);\n"
     /* nudge the ray start toward the torch AND off the surface along its
      * normal, so the march doesn't begin sitting exactly on a wall cell's
@@ -915,6 +935,14 @@ static GLint u_ambtint, u_scrsize;
 static GLint u_tcount, u_tpos, u_tint, u_tcol, u_tex, u_map, u_mapsize, u_occl;
 static int   occl_on = 1;
 static int   winW = SCREEN_W, winH = SCREEN_H;   /* actual drawable size (resize/fullscreen) */
+/* the 3D scene renders into this offscreen buffer at a capped internal size,
+ * then is upscaled to the window -- so fragment cost never scales with a huge
+ * (e.g. fullscreen) window. The HUD overlay is still composited at native res. */
+#define RENDER_CAP_W 1280
+static int   render_cap_w = RENDER_CAP_W;        /* override with NIGHTFALL_RCAP */
+static GLuint sceneFBO = 0, sceneTex = 0, sceneDepth = 0;
+static int   fboW = 0, fboH = 0;                 /* current FBO allocation      */
+static int   rndW = SCREEN_W, rndH = SCREEN_H;   /* internal 3D render size     */
 static GLuint worldVAO, worldVBO, sprVAO, sprVBO, ovVAO, ovVBO;
 static GLuint texWall, texFloor, texCeil, texLocker, texBracket, texSpr[7], texOverlay, texMap;
 static int   floorStart, floorCount, ceilStart, ceilCount, wallCount;
@@ -1271,8 +1299,34 @@ static void draw_billboard(double wx, double wz, double w, double h, double base
     glDrawArrays(GL_TRIANGLES, 0, 6);
 }
 
+/* (re)allocate the offscreen scene buffer when the target size changes */
+static void ensure_fbo(int w, int h) {
+    if (w == fboW && h == fboH && sceneFBO) return;
+    if (!sceneFBO) { glGenFramebuffers_(1, &sceneFBO); glGenTextures(1, &sceneTex); glGenRenderbuffers_(1, &sceneDepth); }
+    glBindFramebuffer_(GL_FRAMEBUFFER, sceneFBO);
+    glBindTexture(GL_TEXTURE_2D, sceneTex);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, w, h, 0, GL_RGB, GL_UNSIGNED_BYTE, NULL);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glFramebufferTexture2D_(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, sceneTex, 0);
+    glBindRenderbuffer_(GL_RENDERBUFFER, sceneDepth);
+    glRenderbufferStorage_(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, w, h);
+    glFramebufferRenderbuffer_(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, sceneDepth);
+    glActiveTexture_(GL_TEXTURE0);
+    fboW = w; fboH = h;
+}
+
 static void render_3d(void) {
-    glViewport(0, 0, winW, winH);
+    /* cap the internal render resolution so fragment cost is bounded even at
+     * fullscreen; the result is upscaled to the window afterward.           */
+    rndW = winW; rndH = winH;
+    if (rndW > render_cap_w) { rndH = (int)((long)rndH * render_cap_w / rndW); rndW = render_cap_w; }
+    if (rndH < 1) rndH = 1;
+    ensure_fbo(rndW, rndH);
+    glBindFramebuffer_(GL_FRAMEBUFFER, sceneFBO);
+    glViewport(0, 0, rndW, rndH);
     glEnable(GL_DEPTH_TEST);
     glClearColor(0, 0, 0, 1);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
@@ -1280,7 +1334,7 @@ static void render_3d(void) {
     float dxc, dyc, dzc; cam_dir(&dxc, &dyc, &dzc);
     float ex = (float)posX, ey = 0.5f, ez = (float)posY;
     float proj[16], view[16], mvp[16];
-    mat_perspective(proj, 1.30f, (float)winW / winH, 0.05f, 40.0f);
+    mat_perspective(proj, 1.30f, (float)rndW / rndH, 0.05f, 40.0f);
     mat_lookat(view, ex, ey, ez, ex + dxc, ey + dyc, ez + dzc, 0, 1, 0);
     mat_mul(mvp, proj, view);
 
@@ -1295,22 +1349,40 @@ static void render_3d(void) {
     glUniform1f_(u_fogk, (float)(FOG_K * (1.0 + 0.08 * dd)));
     glUniform1f_(u_flick, (float)flicker);
     glUniform3f_(u_ambtint, (float)(0.075 + 0.010 * dd), (float)(0.08 - 0.005 * dd), (float)(0.10 - 0.008 * dd));
-    glUniform2f_(u_scrsize, (float)winW, (float)winH);
+    glUniform2f_(u_scrsize, (float)rndW, (float)rndH);
 
-    /* torch point lights: warm, individually flickering */
-    static float tp[MAX_TORCHES * 3], ti[MAX_TORCHES];
+    /* torch point lights: only the nearest few to the camera are sent to the
+     * shader each frame. Distant torches contribute nothing visible (fog eats
+     * them) but every extra light multiplies the per-pixel ray-march cost, so
+     * culling here is what keeps the fragment shader affordable -- especially
+     * at fullscreen, where the pixel count balloons.                        */
+#define MAX_ACTIVE_TORCHES 20
+#define TORCH_CULL_R 15.0f
+    static float tp[MAX_ACTIVE_TORCHES * 3], ti[MAX_ACTIVE_TORCHES];
+    static float cd[MAX_TORCHES]; static int ci[MAX_TORCHES];
+    int nc = 0;
     for (int i = 0; i < torch_count; i++) {
-        /* the light lives at the flame -- the handle tip, out in the room.
-         * Being off the wall face matters: a source sitting on the wall
-         * plane barely lights that wall (normal ~perpendicular to L).     */
-        tp[i * 3] = torchX[i] + torchNx[i] * TORCH_REACH; tp[i * 3 + 1] = TORCH_Y; tp[i * 3 + 2] = torchZ[i] + torchNz[i] * TORCH_REACH;
-        double f = 1.15 + 0.22 * sin(state_time * 7.0 + i * 1.7) + (frand() - 0.5) * 0.12;
-        ti[i] = (float)(f * 1.5 * flicker);       /* global flicker/surge affects torches now */
+        float lx = torchX[i] + torchNx[i] * TORCH_REACH, lz = torchZ[i] + torchNz[i] * TORCH_REACH;
+        float d2 = (lx - ex) * (lx - ex) + (lz - ez) * (lz - ez);
+        if (d2 > TORCH_CULL_R * TORCH_CULL_R) continue;
+        cd[nc] = d2; ci[nc] = i; nc++;
     }
-    glUniform1i_(u_tcount, torch_count);
-    if (torch_count > 0) {
-        glUniform3fv_(u_tpos, torch_count, tp);
-        glUniform1fv_(u_tint, torch_count, ti);
+    /* partial insertion sort: bubble the nearest toward the front */
+    for (int a = 0; a < nc && a < MAX_ACTIVE_TORCHES; a++)
+        for (int b = a + 1; b < nc; b++)
+            if (cd[b] < cd[a]) { float td = cd[a]; cd[a] = cd[b]; cd[b] = td; int ti2 = ci[a]; ci[a] = ci[b]; ci[b] = ti2; }
+    int active = nc < MAX_ACTIVE_TORCHES ? nc : MAX_ACTIVE_TORCHES;
+    for (int k = 0; k < active; k++) {
+        int i = ci[k];
+        /* the light lives at the flame -- the handle tip, out in the room. */
+        tp[k * 3] = torchX[i] + torchNx[i] * TORCH_REACH; tp[k * 3 + 1] = TORCH_Y; tp[k * 3 + 2] = torchZ[i] + torchNz[i] * TORCH_REACH;
+        double f = 1.15 + 0.22 * sin(state_time * 7.0 + i * 1.7) + (frand() - 0.5) * 0.12;
+        ti[k] = (float)(f * 1.5 * flicker);
+    }
+    glUniform1i_(u_tcount, active);
+    if (active > 0) {
+        glUniform3fv_(u_tpos, active, tp);
+        glUniform1fv_(u_tint, active, ti);
     }
     glUniform3f_(u_tcol, 1.0f, 0.52f, 0.18f);
     glUniform1i_(u_occl, occl_on);
@@ -1566,6 +1638,7 @@ int main(int argc, char **argv) {
     build_sprites();
     gl_init();
     if (getenv("NIGHTFALL_DEPTH")) depth = atoi(getenv("NIGHTFALL_DEPTH"));
+    if (getenv("NIGHTFALL_RCAP")) { render_cap_w = atoi(getenv("NIGHTFALL_RCAP")); if (render_cap_w < 320) render_cap_w = 320; }
     new_game();
     if (getenv("NIGHTFALL_DUMPMAP")) {
         const char *tn[] = {"entrance","key","storage","library","hall","exit"};
@@ -1780,7 +1853,12 @@ int main(int argc, char **argv) {
             glViewport(0, 0, winW, winH);
             glClearColor(0, 0, 0, 1); glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         } else {
-            render_3d();
+            render_3d();                                 /* into the offscreen FBO */
+            glBindFramebuffer_(GL_READ_FRAMEBUFFER, sceneFBO);
+            glBindFramebuffer_(GL_DRAW_FRAMEBUFFER, 0);
+            glBlitFramebuffer_(0, 0, rndW, rndH, 0, 0, winW, winH, GL_COLOR_BUFFER_BIT, GL_LINEAR);
+            glBindFramebuffer_(GL_FRAMEBUFFER, 0);
+            glViewport(0, 0, winW, winH);
         }
 
         /* dev screenshot: capture the pure 3D scene after a few settling frames */
