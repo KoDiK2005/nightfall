@@ -40,6 +40,7 @@
 #define CATCH_DIST  0.55
 #define PICKUP_DIST 0.55
 #define HIDE_DIST   1.0
+#define CHECK_DIST  0.8    /* how close it must get to rip open your locker */
 
 /* how the Stalker perceives you */
 #define SEE_RANGE   9.0    /* line-of-sight vision distance             */
@@ -497,8 +498,15 @@ static void update_ai(double dt, int moving, int sprinting) {
     } else {
         if (mon_state == AI_HUNT) {          /* just lost you: go look */
             mon_state = AI_SEARCH;
-            search_time = 7.0;
-            set_target((int)lastKnownX, (int)lastKnownY);
+            search_time = 8.0;
+            /* head for a locker near where you vanished — the obvious hidey-hole */
+            int tx = (int)lastKnownX, ty = (int)lastKnownY;
+            double bestd = 3.0;
+            for (int i = 0; i < NUM_LOCKERS; i++) {
+                double ld = fabs(lockers[i].x - lastKnownX) + fabs(lockers[i].y - lastKnownY);
+                if (ld < bestd) { bestd = ld; tx = (int)lockers[i].x; ty = (int)lockers[i].y; }
+            }
+            set_target(tx, ty);
         }
         if (mon_state == AI_SEARCH) {
             search_time -= dt;
@@ -889,15 +897,18 @@ int main(int argc, char **argv) {
         while (SDL_PollEvent(&e)) {
             if (e.type == SDL_QUIT) running = 0;
             if (e.type == SDL_KEYDOWN) {
-                SDL_Keycode k = e.key.keysym.sym;
-                if (k == SDLK_ESCAPE) running = 0;
-                if (k == SDLK_RETURN && game_state == ST_TITLE) {
+                /* scancodes = physical key position, so bindings work on any
+                 * keyboard layout (QWERTY, ЙЦУКЕН, AZERTY, …) */
+                SDL_Scancode k = e.key.keysym.scancode;
+                if (k == SDL_SCANCODE_ESCAPE) running = 0;
+                if ((k == SDL_SCANCODE_RETURN || k == SDL_SCANCODE_KP_ENTER ||
+                     k == SDL_SCANCODE_SPACE) && game_state == ST_TITLE) {
                     reset_level(); game_state = ST_PLAY; state_time = 0;
                 }
-                if (k == SDLK_r && (game_state == ST_CAUGHT || game_state == ST_WIN)) {
+                if (k == SDL_SCANCODE_R && (game_state == ST_CAUGHT || game_state == ST_WIN)) {
                     reset_level(); game_state = ST_PLAY; state_time = 0;
                 }
-                if (k == SDLK_e && game_state == ST_PLAY) {
+                if (k == SDL_SCANCODE_E && game_state == ST_PLAY) {
                     if (hidden) hidden = 0;                 /* step out */
                     else if (near_locker >= 0) {            /* tuck in  */
                         hidden = 1;
@@ -970,9 +981,19 @@ int main(int argc, char **argv) {
                 double ed = (posX - exitX) * (posX - exitX) + (posY - exitY) * (posY - exitY);
                 if (ed < 0.5) { game_state = ST_WIN; state_time = 0; }
             }
-            /* caught — but never while safely hidden */
+            /* caught, in one of two ways:
+             *  - out in the open, the Stalker reaches you, OR
+             *  - hiding, but it hunts/searches right up to your locker and
+             *    tears the door open. Wandering (unaware) it walks on by. */
             double md = sqrt((posX - monX) * (posX - monX) + (posY - monY) * (posY - monY));
-            if (md < CATCH_DIST && !hidden) {
+            int caught = (!hidden && md < CATCH_DIST);
+            if (hidden && near_locker >= 0 &&
+                (mon_state == AI_HUNT || mon_state == AI_SEARCH)) {
+                double ld = sqrt((monX - lockers[near_locker].x) * (monX - lockers[near_locker].x) +
+                                 (monY - lockers[near_locker].y) * (monY - lockers[near_locker].y));
+                if (ld < CHECK_DIST) { caught = 1; hidden = 0; }   /* door flung open */
+            }
+            if (caught) {
                 game_state = ST_CAUGHT; state_time = 0;
                 if (snd_scare) { Mix_VolumeChunk(snd_scare, 128); Mix_PlayChannel(4, snd_scare, 0); }
             }
