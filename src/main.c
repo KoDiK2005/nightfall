@@ -64,6 +64,11 @@ static int    gdist[MH][MW];            /* BFS flood field toward the target */
 static double stamina = 1.0;
 static int    exhausted = 0;
 static int    hidden = 0;               /* tucked inside a locker            */
+static double sanity = 1.0;             /* 1 = composed, 0 = unravelling     */
+static int    mon_sees = 0;             /* Stalker currently has eyes on you */
+static double whisper_timer = 0.0;      /* time to the next whisper          */
+static double event_timer = 0.0;        /* time to the next light surge      */
+static double surge = 0.0;              /* seconds left of a power surge     */
 
 /* The Stalker's mind: it only chases what it can perceive. */
 enum { AI_HUNT, AI_SEARCH, AI_WANDER };
@@ -98,7 +103,7 @@ static uint32_t spr_col[4][TEX * TEX];
 static uint8_t  spr_flg[4][TEX * TEX];
 
 /* audio */
-static Mix_Chunk *snd_ambient, *snd_heart, *snd_scare, *snd_pickup, *snd_step;
+static Mix_Chunk *snd_ambient, *snd_heart, *snd_scare, *snd_pickup, *snd_step, *snd_whisper;
 static double heart_timer = 0.0, step_timer = 0.0;
 static int    scare_played = 0;
 
@@ -429,6 +434,8 @@ static void reset_level(void) {
     tension = 0; flicker = 1; scare_played = 0;
     heart_timer = step_timer = 0;
     stamina = 1.0; exhausted = 0; hidden = 0; near_locker = -1;
+    sanity = 1.0; mon_sees = 0; surge = 0;
+    whisper_timer = 8.0; event_timer = 14.0;
     mon_state = AI_WANDER;
     lastKnownX = posX; lastKnownY = posY;
     hunt_recalc = search_time = 0;
@@ -472,8 +479,9 @@ static void update_monster(double dt) {
 static void update_ai(double dt, int moving, int sprinting) {
     double d = sqrt((posX - monX) * (posX - monX) + (posY - monY) * (posY - monY));
     int sensed = 0;
+    mon_sees = 0;
     if (!hidden) {
-        if (d < SEE_RANGE && has_los(monX, monY, posX, posY)) sensed = 1;
+        if (d < SEE_RANGE && has_los(monX, monY, posX, posY)) { sensed = 1; mon_sees = 1; }
         else if (moving && d < HEAR_WALK) sensed = 1;
         else if (sprinting && moving && d < HEAR_RUN) sensed = 1;
     }
@@ -699,6 +707,30 @@ static void draw_hidden_overlay(void) {
     draw_text_c(SCREEN_H - 70, 3, "HIDDEN   PRESS E TO STEP OUT", pack(180, 180, 190));
 }
 
+/* As sanity frays: a breathing vignette closes in and the shadows bleed red. */
+static void draw_sanity_fx(void) {
+    if (sanity > 0.9) return;
+    double dread = 1.0 - sanity;
+    double pulse = 0.6 + 0.4 * sin(state_time * (2.0 + dread * 5.0));
+    double edge = 0.55 * dread * (0.55 + 0.45 * pulse);
+    int redt = (int)(dread * dread * 60);
+    for (int y = 0; y < SCREEN_H; y++)
+        for (int x = 0; x < SCREEN_W; x++) {
+            double dx = (x - SCREEN_W / 2.0) / (SCREEN_W / 2.0);
+            double dy = (y - SCREEN_H / 2.0) / (SCREEN_H / 2.0);
+            double r = dx * dx + dy * dy;
+            if (r > 1) r = 1;
+            uint32_t c = fb[y * SCREEN_W + x];
+            double v = 1.0 - edge * r * r;
+            c = shade(c, v);
+            if (redt) {                          /* blood creeps into the murk */
+                int rr = ((c >> 16) & 255) + (int)(redt * r);
+                c = pack(rr, (c >> 8) & 255, c & 255);
+            }
+            fb[y * SCREEN_W + x] = c;
+        }
+}
+
 static void draw_hud(void) {
     char buf[32];
     snprintf(buf, sizeof(buf), "KEYS %d/%d", NUM_KEYS - keys_left, NUM_KEYS);
@@ -707,13 +739,21 @@ static void draw_hud(void) {
         draw_text(16, 48, 3, "THE EXIT IS OPEN. RUN.", pack(90, 255, 150));
 
     /* stamina bar, bottom-left; reddens when spent */
-    int bw = 220, bh = 16, bx = 16, by = SCREEN_H - 34;
+    int bw = 220, bh = 16, bx = 16, by = SCREEN_H - 80;
     fill_rect(bx - 2, by - 2, bw + 4, bh + 4, pack(20, 20, 24));
     int fillw = (int)(bw * stamina);
     uint32_t sc = exhausted ? pack(150, 40, 30)
                             : pack(70 + (int)(120 * (1 - stamina)), 160, 90);
     fill_rect(bx, by, fillw, bh, sc);
     draw_text(bx, by - 22, 2, "STAMINA", pack(120, 130, 130));
+
+    /* sanity ("MIND") bar just below; drains toward a sickly red */
+    int my = by + 26;
+    fill_rect(bx - 2, my - 2, bw + 4, bh + 4, pack(20, 20, 24));
+    int mfill = (int)(bw * sanity);
+    uint32_t mc = pack(120 + (int)(120 * (1 - sanity)), 60 + (int)(40 * sanity), 130 * sanity + 40);
+    fill_rect(bx, my, mfill, bh, mc);
+    draw_text(bx, my + bh + 4, 2, "MIND", pack(110, 100, 130));
 
     /* interaction hint near a locker */
     if (near_locker >= 0 && !hidden)
@@ -756,10 +796,46 @@ static void update_audio(double dt, int moving) {
     if (moving && game_state == ST_PLAY) {
         step_timer -= dt;
         if (step_timer <= 0) {
-            Mix_VolumeChunk(snd_step, 55);
+            Mix_VolumeChunk(snd_step, 60);
             Mix_PlayChannel(2, snd_step, 0);
             step_timer = 0.42;
         }
+    }
+}
+
+/* Dread: sanity erodes under the Stalker's gaze, and the dark answers back
+ * with whispers and failing lights — more often the less composed you are. */
+static void update_fear(double dt) {
+    double drain = 0.004                       /* the dark alone wears on you */
+                 + tension * 0.05
+                 + (mon_state == AI_HUNT ? 0.03 : 0.0)
+                 + (mon_sees ? 0.10 : 0.0);     /* being seen is the worst    */
+    if (tension < 0.12 && mon_state != AI_HUNT) /* a quiet moment heals a little */
+        sanity += dt * 0.02;
+    sanity -= dt * drain;
+    if (sanity < 0) sanity = 0;
+    if (sanity > 1) sanity = 1;
+
+    double dread = 1.0 - sanity;
+
+    /* whispers — closer together as sanity falls and the Stalker nears */
+    whisper_timer -= dt;
+    if (whisper_timer <= 0) {
+        if (snd_whisper) {
+            Mix_VolumeChunk(snd_whisper, (int)(25 + 80 * dread + 20 * tension));
+            Mix_PlayChannel(5, snd_whisper, 0);
+        }
+        whisper_timer = 3.0 + sanity * 16.0 - tension * 4.0 + frand() * 4.0;
+        if (whisper_timer < 2.0) whisper_timer = 2.0;
+    }
+
+    /* the lights surge and stutter as an unnerving event */
+    if (surge > 0) surge -= dt;
+    event_timer -= dt;
+    if (event_timer <= 0) {
+        surge = 0.35 + frand() * 0.5;
+        event_timer = 6.0 + sanity * 18.0 - tension * 5.0 + frand() * 6.0;
+        if (event_timer < 3.0) event_timer = 3.0;
     }
 }
 
@@ -787,6 +863,7 @@ int main(int argc, char **argv) {
     snd_scare   = Mix_LoadWAV("assets/scare.wav");
     snd_pickup  = Mix_LoadWAV("assets/pickup.wav");
     snd_step    = Mix_LoadWAV("assets/step.wav");
+    snd_whisper = Mix_LoadWAV("assets/whisper.wav");
     if (!snd_ambient)
         fprintf(stderr, "warning: assets not found — run 'make audio' first\n");
     if (snd_ambient) { Mix_Volume(0, 60); Mix_PlayChannel(0, snd_ambient, -1); }
@@ -866,9 +943,17 @@ int main(int argc, char **argv) {
             }
 
             update_ai(dt, moving, sprinting);
+            update_fear(dt);
 
-            /* flashlight flicker, heavier when the Stalker is near */
-            flicker = 1.0 - (frand() < 0.04 + tension * 0.15 ? frand() * (0.4 + tension * 0.4) : 0);
+            /* flashlight flicker: worse near the Stalker and as sanity frays;
+             * during a power surge the light stutters violently. */
+            if (surge > 0) {
+                flicker = (((int)(surge * 34)) & 1) ? 0.9 : 0.06;
+            } else {
+                double chance = 0.04 + tension * 0.15 + (1.0 - sanity) * 0.12;
+                double depth  = 0.4 + tension * 0.4 + (1.0 - sanity) * 0.3;
+                flicker = 1.0 - (frand() < chance ? frand() * depth : 0);
+            }
 
             /* pick up keys */
             for (int i = 0; i < NUM_KEYS; i++)
@@ -905,13 +990,22 @@ int main(int argc, char **argv) {
             render_world();
             render_sprites();
             draw_vignette();
+            draw_sanity_fx();
             if (hidden) draw_hidden_overlay();
             if (game_state == ST_WIN) draw_win();
             else draw_hud();
         }
 
         SDL_UpdateTexture(screen, NULL, fb, SCREEN_W * sizeof(uint32_t));
-        SDL_RenderCopy(ren, screen, NULL, NULL);
+        /* low sanity makes the whole frame tremble */
+        SDL_Rect dst = {0, 0, SCREEN_W, SCREEN_H};
+        if (game_state == ST_PLAY && sanity < 0.5) {
+            double amp = (0.5 - sanity) * 12.0;
+            dst.x = (int)(sin(state_time * 27.0) * amp);
+            dst.y = (int)(cos(state_time * 31.0) * amp);
+        }
+        SDL_RenderClear(ren);
+        SDL_RenderCopy(ren, screen, NULL, &dst);
         SDL_RenderPresent(ren);
     }
 
@@ -920,6 +1014,7 @@ int main(int argc, char **argv) {
     if (snd_scare)   Mix_FreeChunk(snd_scare);
     if (snd_pickup)  Mix_FreeChunk(snd_pickup);
     if (snd_step)    Mix_FreeChunk(snd_step);
+    if (snd_whisper) Mix_FreeChunk(snd_whisper);
     Mix_CloseAudio();
     SDL_DestroyTexture(screen);
     SDL_DestroyRenderer(ren);

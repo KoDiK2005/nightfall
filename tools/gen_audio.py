@@ -161,14 +161,56 @@ def make_pickup():
 
 
 def make_step():
-    n = int(0.16 * SR)
+    """A dull, muffled footfall — a soft body thud, no sharp click."""
+    n = int(0.17 * SR)
     out = [0.0] * n
-    prev = 0.0
+    lp1 = lp2 = 0.0
     for i in range(n):
         t = i / SR
         white = random.uniform(-1, 1)
-        prev = prev * 0.85 + white * 0.15
-        out[i] = prev * math.exp(-30 * t)
+        # two-pole low-pass: strips the high 'clap' frequencies right out
+        lp1 = lp1 * 0.93 + white * 0.07
+        lp2 = lp2 * 0.93 + lp1 * 0.07
+        attack = min(1.0, t / 0.014)          # ramped attack removes the click
+        env = attack * math.exp(-15 * t)
+        thud = math.exp(-32 * t) * math.sin(math.tau * 82 * t)  # low body
+        out[i] = env * lp2 * 2.6 + 0.55 * thud
+    return out
+
+
+def make_whisper(seconds=3.2):
+    """Breathy, band-limited, syllabic noise — a voice you can't quite hear."""
+    n = int(seconds * SR)
+    out = [0.0] * n
+    # syllable gate: bursts of 'voice' separated by breath and silence
+    env = [0.0] * n
+    i = 0
+    while i < n:
+        g = random.choice([0.0, 0.0, 0.5, 0.85, 1.0])
+        seg = int(SR * random.uniform(0.05, 0.20))
+        for k in range(seg):
+            if i + k < n:
+                env[i + k] = g
+        i += seg
+    # smooth the gate so syllables glide instead of clicking
+    sm = 0.0
+    for i in range(n):
+        sm += (env[i] - sm) * 0.004
+        env[i] = sm
+    lp = brt = 0.0
+    for i in range(n):
+        t = i / SR
+        white = random.uniform(-1, 1)
+        lp = lp * 0.90 + white * 0.10          # dark body
+        brt = brt * 0.40 + white * 0.60        # bright breath
+        band = brt - lp                        # emphasise the airy mid/highs
+        trem = 0.75 + 0.25 * math.sin(math.tau * 5.5 * t)
+        out[i] = band * env[i] * trem
+    fade = int(0.2 * SR)                        # ease the ends
+    for k in range(fade):
+        g = k / fade
+        out[k] *= g
+        out[n - 1 - k] *= g
     return out
 
 
@@ -181,6 +223,7 @@ def main():
     write_wav("scare.wav", make_scare())
     write_wav("pickup.wav", make_pickup())
     write_wav("step.wav", make_step())
+    write_wav("whisper.wav", make_whisper())
     print("Done.")
 
 
