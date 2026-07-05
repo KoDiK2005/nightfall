@@ -113,7 +113,12 @@ static uint32_t spr_rgba[7][TEX * TEX];    /* 0 mon,1 key,2 down,3 loc,4 flame,5
 static float  torchX[MAX_TORCHES], torchZ[MAX_TORCHES];   /* flame world pos  */
 static float  torchNx[MAX_TORCHES], torchNz[MAX_TORCHES]; /* into-corridor dir*/
 static int    torch_count = 0;
-#define TORCH_Y 0.62f
+/* torch geometry: a wooden handle mounted on the wall (base) angling up and
+ * out into the corridor to a tip, where the burning rag + flame sit.        */
+#define TORCH_BASE_Y 0.40f     /* where the handle meets the wall            */
+#define TORCH_TIP_Y  0.56f     /* the far, upper end of the handle           */
+#define TORCH_REACH  0.26f     /* how far the tip protrudes from the wall    */
+#define TORCH_Y      0.66f     /* flame / point-light centre height          */
 
 /* per-locker orientation: unit vector from cell centre toward its backing wall */
 static double lockWX[NUM_LOCKERS], lockWY[NUM_LOCKERS];
@@ -278,9 +283,10 @@ static void build_textures(void) {
             int handle = (x >= 48 && x <= 54 && y >= 30 && y <= 40);
             int mv = m; if (seam) mv -= 22; if (slat) mv -= 28;
             lockmetal[i] = handle ? pack(180, 168, 120) : pack(mv, mv + 4, mv + 9);
-            /* dark, plain wrought-iron for the little torch brackets */
-            int d = 26 + (int)(frand() * 8);
-            brackmetal[i] = pack(d, d * 0.86, d * 0.72);
+            /* wooden torch handle: warm brown with vertical grain streaks */
+            int grain = (int)(6.0 * sin(x * 0.9) + 4.0 * sin(x * 2.7));
+            int wb = 48 + grain + (int)(frand() * 6);
+            brackmetal[i] = pack(wb, wb * 0.60, wb * 0.32);
         }
 }
 
@@ -373,22 +379,29 @@ static void build_sprites(void) {
             if (handle) put_spr(3, x, y, pack(180, 170, 120), 1);
             else put_spr(3, x, y, pack(v, v + 4, v + 8), 1);
         }
-    /* 4: TORCH FLAME — a soft glowing teardrop for additive blending.
-     * rgb IS the emitted light, fading smoothly to black at the edges so it
-     * blends seamlessly; sampled with a warm white-hot core.               */
+    /* 4: TORCH FLAME — a licking teardrop tongue for additive blending.
+     * rgb IS the emitted light: a white-hot core low & centre, ramping out
+     * through yellow and orange to a dim red at the flickering tips. The
+     * silhouette narrows to a point at the top with a slight sideways lean
+     * so it reads as fire, not a symmetric blob.                          */
     for (int y = 0; y < TEX; y++)
         for (int x = 0; x < TEX; x++) {
-            double fx = (x - 32.0) / 15.0;                 /* -1..1 across    */
-            double u = (y - 14.0) / 44.0;                  /* 0 tip .. 1 base */
-            if (u < 0 || u > 1) continue;
-            double width = 0.15 + 0.95 * sin(u * 3.14159); /* teardrop        */
-            double r = fabs(fx) / width;
-            if (r > 1.0) continue;
-            double core = (1.0 - r) * (1.0 - r);           /* soft radial     */
-            double body = core * (0.55 + 0.45 * (1.0 - u));/* brighter at base*/
-            int R = (int)(255 * body);
-            int G = (int)(255 * body * (0.72 - 0.35 * r)); /* toward orange   */
-            int B = (int)(255 * body * (0.32 - 0.30 * r)); /* red-ish edges   */
+            double fy = (54.0 - y) / 46.0;                 /* 0 base .. 1 tip */
+            if (fy < 0.0 || fy > 1.0) continue;
+            double lean = 3.2 * sin(fy * 2.1);             /* tongue leans/curls */
+            double fx = (x - 32.0) - lean;
+            double w = 13.0 * pow(1.0 - fy, 0.72);         /* taper to a point  */
+            w *= 0.7 + 0.3 * sin(fy * 3.14159);            /* slight mid bulge  */
+            if (w < 0.5 || fabs(fx) > w) continue;
+            double r = fabs(fx) / w;                       /* 0 centre .. 1 edge */
+            double heat = (1.0 - r * r) * (1.0 - 0.65 * fy);
+            if (heat < 0.0) heat = 0.0;
+            int R = (int)(255 * (0.35 + 0.75 * heat));
+            int G = (int)(255 * (0.05 + 0.85 * heat * heat));
+            int B = (int)(255 * (0.55 * heat * heat * heat));
+            if (R > 255) R = 255;
+            if (G > 255) G = 255;
+            if (B > 255) B = 255;
             put_spr(4, x, y, pack(R, G, B), 2);
         }
     /* 5: NOTE — a pale glowing sheet of paper with faint writing */
@@ -843,9 +856,49 @@ static void add_box(float *buf, int *n, double bx, double bz, double dix, double
 static void add_locker_box(float *buf, int *n, double cx, double cz, double wdx, double wdz) {
     add_box(buf, n, cx + wdx * 0.46, cz + wdz * 0.46, -wdx, -wdz, 0.30, 0.34, 0.0, 0.92);
 }
-/* a small steel bracket under a torch so the flame isn't floating in the air */
-static void add_torch_bracket(float *buf, int *n, double tx, double tz, double dix, double diz) {
-    add_box(buf, n, tx - dix * 0.02, tz - diz * 0.02, dix, diz, 0.055, 0.14, 0.40, 0.58);
+/* a thin square-section beam between two arbitrary world points (radius hw).
+ * Used for the angled wooden torch handle; four side faces + an end cap. */
+static void add_beam(float *buf, int *n, float x0, float y0, float z0,
+                     float x1, float y1, float z1, float hw) {
+    float dx = x1 - x0, dy = y1 - y0, dz = z1 - z0;
+    float len = sqrtf(dx * dx + dy * dy + dz * dz); if (len < 1e-4f) return;
+    dx /= len; dy /= len; dz /= len;
+    /* two unit perpendiculars to the axis */
+    float rx, ry, rz;
+    if (fabsf(dy) < 0.9f) { rx = dz; ry = 0.0f; rz = -dx; }   /* cross(d, up) */
+    else                  { rx = 1.0f; ry = 0.0f; rz = 0.0f; }
+    float rl = sqrtf(rx * rx + ry * ry + rz * rz); rx /= rl; ry /= rl; rz /= rl;
+    float sx = dy * rz - dz * ry, sy = dz * rx - dx * rz, sz = dx * ry - dy * rx;
+    float g1[4] = {1, -1, -1, 1}, g2[4] = {1, 1, -1, -1};
+    float base[4][3], tip[4][3];
+    for (int c = 0; c < 4; c++) {
+        float ox = rx * hw * g1[c] + sx * hw * g2[c];
+        float oy = ry * hw * g1[c] + sy * hw * g2[c];
+        float oz = rz * hw * g1[c] + sz * hw * g2[c];
+        base[c][0] = x0 + ox; base[c][1] = y0 + oy; base[c][2] = z0 + oz;
+        tip[c][0]  = x1 + ox; tip[c][1]  = y1 + oy; tip[c][2]  = z1 + oz;
+    }
+    for (int c = 0; c < 4; c++) {
+        int d2 = (c + 1) & 3;
+        float nxv = (base[c][0] - x0) + (base[d2][0] - x0);
+        float nyv = (base[c][1] - y0) + (base[d2][1] - y0);
+        float nzv = (base[c][2] - z0) + (base[d2][2] - z0);
+        push_quad(buf, n, base[c], base[d2], tip[d2], tip[c], nxv, nyv, nzv, 1);
+    }
+    push_quad(buf, n, tip[0], tip[1], tip[2], tip[3], dx, dy, dz, 1);   /* end cap */
+}
+
+/* a wooden wall torch: a handle angling up into the corridor with a fatter
+ * wrapped rag bundle at the tip (where the flame billboard is drawn).      */
+static void add_torch(float *buf, int *n, double tx, double tz, double dix, double diz) {
+    float bx = (float)tx, bz = (float)tz;                              /* on the wall */
+    float ttx = (float)(tx + dix * TORCH_REACH);
+    float ttz = (float)(tz + diz * TORCH_REACH);
+    add_beam(buf, n, bx, TORCH_BASE_Y, bz, ttx, TORCH_TIP_Y, ttz, 0.032f);   /* handle */
+    /* the rag bundle: a short, fatter segment at the tip                          */
+    add_beam(buf, n, ttx, TORCH_TIP_Y, ttz,
+             (float)(tx + dix * (TORCH_REACH + 0.03)), TORCH_TIP_Y + 0.05f,
+             (float)(tz + diz * (TORCH_REACH + 0.03)), 0.055f);
 }
 
 /* Evenly scatter wall torches (Poisson-disc): shuffle every wall-adjacent
@@ -894,7 +947,7 @@ static void place_torches(void) {
 
 /* Rebuild the world mesh for the current maze (walls, floor, ceiling, lockers). */
 static void build_world_mesh(void) {
-    static float buf[(MW * MH * 36 + (NUM_LOCKERS + MAX_TORCHES) * 24 + 64) * 8];
+    static float buf[(MW * MH * 36 + NUM_LOCKERS * 24 + MAX_TORCHES * 72 + 64) * 8];
     int n = 0;
     place_torches();
     /* walls: a face for every wall cell that borders an open cell */
@@ -925,10 +978,10 @@ static void build_world_mesh(void) {
     for (int i = 0; i < NUM_LOCKERS; i++)
         add_locker_box(buf, &n, lockers[i].x, lockers[i].y, lockWX[i], lockWY[i]);
     lockCount = n - lockStart;
-    /* torch brackets (dark iron) */
+    /* wooden torch handles */
     brkStart = n;
     for (int i = 0; i < torch_count; i++)
-        add_torch_bracket(buf, &n, torchX[i], torchZ[i], torchNx[i], torchNz[i]);
+        add_torch(buf, &n, torchX[i], torchZ[i], torchNx[i], torchNz[i]);
     brkCount = n - brkStart;
 
     glBindVertexArray_(worldVAO);
@@ -1086,13 +1139,10 @@ static void render_3d(void) {
     /* torch point lights: warm, individually flickering */
     static float tp[MAX_TORCHES * 3], ti[MAX_TORCHES];
     for (int i = 0; i < torch_count; i++) {
-        /* pull the light source out into the room, off the wall face --
-         * otherwise it sits almost exactly on the wall plane and the wall
-         * it's mounted on barely lights up (surface normal ~perpendicular
-         * to the light vector, so the diffuse term reads near zero). Keep
-         * it close to the visible flame sprite (+0.07) so the brightest
-         * spot doesn't visibly detach from where the flame is drawn.      */
-        tp[i * 3] = torchX[i] + torchNx[i] * 0.16f; tp[i * 3 + 1] = TORCH_Y; tp[i * 3 + 2] = torchZ[i] + torchNz[i] * 0.16f;
+        /* the light lives at the flame -- the handle tip, out in the room.
+         * Being off the wall face matters: a source sitting on the wall
+         * plane barely lights that wall (normal ~perpendicular to L).     */
+        tp[i * 3] = torchX[i] + torchNx[i] * TORCH_REACH; tp[i * 3 + 1] = TORCH_Y; tp[i * 3 + 2] = torchZ[i] + torchNz[i] * TORCH_REACH;
         double f = 1.15 + 0.22 * sin(state_time * 7.0 + i * 1.7) + (frand() - 0.5) * 0.12;
         ti[i] = (float)(f * 1.5 * flicker);       /* global flicker/surge affects torches now */
     }
@@ -1130,14 +1180,21 @@ static void render_3d(void) {
     draw_billboard(exitX, exitY, 0.95, 0.95, 0.02, 2, mvp);          /* stairs down */
     if (has_up) draw_billboard(upX, upY, 0.95, 0.95, 0.02, 6, mvp);  /* stairs up   */
 
-    /* torch flames: additive glow so they read as fire, not flat sprites */
+    /* torch flames: additive glow so they read as fire, not flat sprites.
+     * Two stacked billboards -- a broad tongue plus a smaller, brighter
+     * inner core (additive, so the overlap reads as white-hot).          */
     glEnable(GL_BLEND);
     glBlendFunc(GL_ONE, GL_ONE);
     glDepthMask(GL_FALSE);
     for (int i = 0; i < torch_count; i++) {
-        double s = 0.46 * (0.9 + 0.16 * sin(state_time * 9.0 + i * 2.1));
-        draw_billboard(torchX[i] + torchNx[i] * 0.07, torchZ[i] + torchNz[i] * 0.07,
-                       s, s, TORCH_Y - 0.04, 4, mvp);
+        double fl = 0.88 + 0.16 * sin(state_time * 9.0 + i * 2.1)
+                         + 0.05 * sin(state_time * 23.0 + i);        /* fast jitter */
+        double s = 0.27 * fl;
+        double fx = torchX[i] + torchNx[i] * TORCH_REACH;
+        double fz = torchZ[i] + torchNz[i] * TORCH_REACH;
+        double base = TORCH_TIP_Y - 0.02;
+        draw_billboard(fx, fz, s * 1.15, s * 1.7,  base,        4, mvp);   /* tongue */
+        draw_billboard(fx, fz, s * 0.62, s * 1.05, base + 0.04, 4, mvp);   /* core   */
     }
     glDepthMask(GL_TRUE);
     glDisable(GL_BLEND);
