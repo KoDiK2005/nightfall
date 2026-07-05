@@ -63,6 +63,9 @@ enum { ST_TITLE, ST_PLAY, ST_CAUGHT, ST_WIN, ST_READING };
 
 static char   map[MH][MW + 1];
 static double posX, posY;               /* position on the floor plane       */
+static double velX = 0.0, velY = 0.0;   /* smoothed movement velocity        */
+static double bob_phase = 0.0;          /* advances with distance walked     */
+static double bobY = 0.0, bobLat = 0.0; /* head-bob camera offsets           */
 static double yaw = 0.0, pitch = 0.0;   /* look direction                    */
 static double monX, monY;
 static int    gdist[MH][MW];
@@ -93,6 +96,7 @@ static int    near_locker = -1;
 
 typedef struct { double x, y; int active, text; } Note;
 static Note   notes[NUM_NOTES];
+static double noteWX[NUM_NOTES], noteWY[NUM_NOTES];   /* dir from cell to backing wall */
 static int    reading_note = 0;         /* which lore note is on screen       */
 
 static int    depth = 1;                /* current floor (1 = topmost)        */
@@ -256,17 +260,57 @@ static const unsigned char FONT[][7] = {
     {0x00,0x00,0x00,0x00,0x00,0x00,0x00},{0x01,0x02,0x02,0x04,0x08,0x08,0x10},
     {0x00,0x04,0x04,0x00,0x00,0x04,0x04},{0x04,0x04,0x04,0x04,0x04,0x00,0x04},
     {0x00,0x00,0x00,0x00,0x00,0x0C,0x0C},{0x00,0x00,0x00,0x1F,0x00,0x00,0x00},
+    /* --- Cyrillic uppercase, indices 42.. : А Б В Г Д Е Ж З И Й К Л М Н О П
+       Р С Т У Ф Х Ц Ч Ш Щ Ъ Ы Ь Э Ю Я Ё --- */
+    {0x0E,0x11,0x11,0x1F,0x11,0x11,0x11}, /*А*/ {0x1F,0x10,0x10,0x1E,0x11,0x11,0x1E}, /*Б*/
+    {0x1E,0x11,0x11,0x1E,0x11,0x11,0x1E}, /*В*/ {0x1F,0x10,0x10,0x10,0x10,0x10,0x10}, /*Г*/
+    {0x0E,0x0A,0x0A,0x0A,0x0A,0x1F,0x11}, /*Д*/ {0x1F,0x10,0x10,0x1E,0x10,0x10,0x1F}, /*Е*/
+    {0x15,0x15,0x0E,0x04,0x0E,0x15,0x15}, /*Ж*/ {0x0E,0x11,0x01,0x06,0x01,0x11,0x0E}, /*З*/
+    {0x11,0x11,0x13,0x15,0x19,0x11,0x11}, /*И*/ {0x0A,0x11,0x13,0x15,0x19,0x11,0x11}, /*Й*/
+    {0x11,0x12,0x14,0x18,0x14,0x12,0x11}, /*К*/ {0x0E,0x0A,0x0A,0x0A,0x0A,0x0A,0x1A}, /*Л*/
+    {0x11,0x1B,0x15,0x15,0x11,0x11,0x11}, /*М*/ {0x11,0x11,0x11,0x1F,0x11,0x11,0x11}, /*Н*/
+    {0x0E,0x11,0x11,0x11,0x11,0x11,0x0E}, /*О*/ {0x1F,0x11,0x11,0x11,0x11,0x11,0x11}, /*П*/
+    {0x1E,0x11,0x11,0x1E,0x10,0x10,0x10}, /*Р*/ {0x0E,0x11,0x10,0x10,0x10,0x11,0x0E}, /*С*/
+    {0x1F,0x04,0x04,0x04,0x04,0x04,0x04}, /*Т*/ {0x11,0x11,0x11,0x0F,0x01,0x02,0x0C}, /*У*/
+    {0x04,0x0E,0x15,0x15,0x15,0x0E,0x04}, /*Ф*/ {0x11,0x11,0x0A,0x04,0x0A,0x11,0x11}, /*Х*/
+    {0x11,0x11,0x11,0x11,0x11,0x1F,0x01}, /*Ц*/ {0x11,0x11,0x11,0x0F,0x01,0x01,0x01}, /*Ч*/
+    {0x15,0x15,0x15,0x15,0x15,0x15,0x1F}, /*Ш*/ {0x15,0x15,0x15,0x15,0x15,0x1F,0x01}, /*Щ*/
+    {0x18,0x08,0x08,0x0E,0x09,0x09,0x0E}, /*Ъ*/ {0x11,0x11,0x19,0x15,0x15,0x19,0x11}, /*Ы*/
+    {0x10,0x10,0x10,0x1E,0x11,0x11,0x1E}, /*Ь*/ {0x0E,0x11,0x01,0x07,0x01,0x11,0x0E}, /*Э*/
+    {0x12,0x15,0x15,0x1D,0x15,0x15,0x12}, /*Ю*/ {0x0F,0x11,0x11,0x0F,0x05,0x09,0x11}, /*Я*/
+    {0x0A,0x1F,0x10,0x1E,0x10,0x10,0x1F}, /*Ё*/
+    {0x00,0x00,0x00,0x00,0x0C,0x04,0x08}, /*,*/ {0x0E,0x11,0x01,0x02,0x04,0x00,0x04}, /*?*/
 };
+#define GLYPH_CYR  42          /* first Cyrillic glyph (А); Ё at +32          */
+#define GLYPH_COMMA 75
+#define GLYPH_QUEST 76
 static int glyph(char c) {
     if (c >= 'a' && c <= 'z') c -= 32;
     if (c >= 'A' && c <= 'Z') return c - 'A';
     if (c >= '0' && c <= '9') return 26 + (c - '0');
     switch (c) { case ' ': return 36; case '/': return 37; case ':': return 38;
-                 case '!': return 39; case '.': return 40; case '-': return 41; }
+                 case '!': return 39; case '.': return 40; case '-': return 41;
+                 case ',': return GLYPH_COMMA; case '?': return GLYPH_QUEST; }
     return 36;
 }
-static void draw_char(int x, int y, int s, char c, uint32_t col) {
-    const unsigned char *g = FONT[glyph(c)];
+/* decode one UTF-8 codepoint; returns bytes consumed */
+static int utf8_next(const char *t, unsigned *cp) {
+    unsigned char c = (unsigned char)t[0];
+    if (c < 0x80) { *cp = c; return 1; }
+    if ((c & 0xE0) == 0xC0 && t[1]) { *cp = ((c & 0x1F) << 6) | (t[1] & 0x3F); return 2; }
+    if ((c & 0xF0) == 0xE0 && t[1] && t[2]) { *cp = ((c & 0x0F) << 12) | ((t[1] & 0x3F) << 6) | (t[2] & 0x3F); return 3; }
+    *cp = '?'; return 1;
+}
+/* map a Unicode codepoint to a FONT glyph index (ASCII + Russian, either case) */
+static int glyph_cp(unsigned cp) {
+    if (cp < 128) return glyph((char)cp);
+    if (cp == 0x401 || cp == 0x451) return GLYPH_CYR + 32;           /* Ё / ё */
+    if (cp >= 0x410 && cp <= 0x42F) return GLYPH_CYR + (cp - 0x410); /* А..Я  */
+    if (cp >= 0x430 && cp <= 0x44F) return GLYPH_CYR + (cp - 0x430); /* а..я  */
+    return 36;                                                      /* space */
+}
+static void draw_glyph(int x, int y, int s, int gi, uint32_t col) {
+    const unsigned char *g = FONT[gi];
     for (int row = 0; row < 7; row++)
         for (int cx = 0; cx < 5; cx++)
             if (g[row] & (1 << (4 - cx)))
@@ -277,11 +321,18 @@ static void draw_char(int x, int y, int s, char c, uint32_t col) {
                             fb[Y * SCREEN_W + X] = col;
                     }
 }
+/* number of printable glyphs in a UTF-8 string (for centring) */
+static int text_len(const char *t) {
+    int n = 0; unsigned cp;
+    while (*t) { t += utf8_next(t, &cp); n++; }
+    return n;
+}
 static void draw_text(int x, int y, int s, const char *t, uint32_t col) {
-    for (; *t; t++) { draw_char(x, y, s, *t, col); x += 6 * s; }
+    unsigned cp;
+    while (*t) { t += utf8_next(t, &cp); draw_glyph(x, y, s, glyph_cp(cp), col); x += 6 * s; }
 }
 static void draw_text_c(int y, int s, const char *t, uint32_t col) {
-    int w = (int)strlen(t) * 6 * s;
+    int w = text_len(t) * 6 * s;
     draw_text((SCREEN_W - w) / 2, y, s, t, col);
 }
 static void fill_rect(int x, int y, int w, int h, uint32_t c) {
@@ -581,16 +632,20 @@ static int has_los(double ax, double ay, double bx, double by) {
     return 1;
 }
 
-/* Lore notes, shown when picked up. Each ends with a NULL line. */
+/* Lore notes, shown when picked up. Each ends with a NULL line. Russian. */
 static const char *NOTES[][6] = {
-    {"THE TORCHES GUTTER AND DIE", "ON THEIR OWN NOW.", "I RELIGHT THEM.", "IT KNOWS I AM DOWN HERE.", NULL},
-    {"THE STAIRS ONLY GO DOWN,", "THEY SAID.", "THEY LIED. THERE IS A WAY UP.", "IF YOU LIVE TO FIND IT.", NULL},
-    {"DO NOT RUN.", "IT HEARS EVERYTHING.", "WALK. BREATHE SLOW.", "THE LOCKERS ARE YOUR FRIENDS.", NULL},
-    {"THREE KEYS FOR EACH DOOR DOWN.", "WHY DOWN?", "WHAT IS IT KEEPING", "AT THE BOTTOM?", NULL},
-    {"I COUNTED FOURTEEN FLOORS", "BEFORE MY LAMP FAILED.", "THE WHISPERING", "NEVER STOPPED.", NULL},
-    {"IF YOU READ THIS,", "YOU ARE NOT THE FIRST.", "YOU WILL NOT BE THE LAST.", "IT IS NEVER FULL.", NULL},
+    {"ФАКЕЛЫ ГАСНУТ САМИ.", "Я ЗАЖИГАЮ ИХ СНОВА.", "ОНО ЗНАЕТ ЧТО Я ЗДЕСЬ.", "ВНИЗУ.", NULL},
+    {"НЕ БЕГИ.", "ОНО СЛЫШИТ КАЖДЫЙ ШАГ.", "ИДИ МЕДЛЕННО.", "ДЫШИ ТИХО.", NULL},
+    {"ТРИ КЛЮЧА НА КАЖДУЮ ДВЕРЬ.", "ЗАЧЕМ ВНИЗ?", "ЧТО ОНИ ДЕРЖАТ", "НА САМОМ ДНЕ?", NULL},
+    {"Я СЧИТАЛ ЭТАЖИ.", "ПОТОМ ЛАМПА ПОГАСЛА.", "ШЁПОТ", "НЕ ПРЕКРАЩАЛСЯ.", NULL},
+    {"ЕСЛИ ТЫ ЧИТАЕШЬ ЭТО -", "ТЫ НЕ ПЕРВЫЙ.", "И НЕ ПОСЛЕДНИЙ.", "ОНО НИКОГДА НЕ СЫТО.", NULL},
+    {"ШКАФЫ - ТВОИ ДРУЗЬЯ.", "НО ОНО ПРОВЕРЯЕТ ИХ.", "РАНО ИЛИ ПОЗДНО.", NULL},
+    {"Я ВИДЕЛ ЕГО ЛИЦО.", "БЕЛОЕ. ПУСТОЕ.", "ОНО УЛЫБАЛОСЬ МНЕ.", "Я БОЛЬШЕ НЕ СПЛЮ.", NULL},
+    {"ДВЕРЬ ВНИЗ - НЕ СПАСЕНИЕ.", "ЭТО ПРИГЛАШЕНИЕ.", "МЫ ВСЕ СПУСКАЕМСЯ.", "КАЖДЫЙ В СВОЙ ЧЕРЕД.", NULL},
+    {"СТЕНЫ ДЫШАТ КОГДА ТЕМНО.", "НЕ СМОТРИ ДОЛГО.", "ОНИ СМОТРЯТ В ОТВЕТ.", NULL},
+    {"МОЙ ФОНАРЬ УМЕР НА", "ЧЕТЫРНАДЦАТОМ ЭТАЖЕ.", "ДАЛЬШЕ ТОЛЬКО", "ГОЛОДНАЯ ТЬМА.", NULL},
 };
-static const int NOTE_POOL = 6;
+static const int NOTE_POOL = 10;
 
 /* flood from the entrance; true only if the exit and every key are reachable.
  * Used to reject any decorative pillar that would sever the floor.          */
@@ -677,23 +732,41 @@ static void reset_level(void) {
                 }
         }
 
-    /* lore notes rest in the library rooms (then anywhere) */
+    /* lore notes are pinned to the walls of library rooms (then any wall) */
     int ni = 0;
     for (int pass = 0; pass < 2 && ni < NUM_NOTES; pass++)
         for (int i = 0; i < room_count && ni < NUM_NOTES; i++) {
+            if (rooms[i].theme == RM_ENTRANCE || rooms[i].theme == RM_EXIT) continue;
             if (pass == 0 && rooms[i].theme != RM_LIBRARY) continue;
-            int cx, cy; room_center(&rooms[i], &cx, &cy);
-            if (!is_open(cx, cy) || abs(cx - startX) + abs(cy - startY) < 3) continue;
-            int dup = 0;
-            for (int j = 0; j < ni; j++) if (fabs(notes[j].x - (cx + 0.5)) < 0.1 && fabs(notes[j].y - (cy + 0.5)) < 0.1) dup = 1;
-            if (dup) continue;
-            notes[ni].x = cx + 0.5; notes[ni].y = cy + 0.5; notes[ni].active = 1;
-            notes[ni].text = rand() % NOTE_POOL; ni++;
+            Room *r = &rooms[i];
+            for (int yy = r->y; yy < r->y + r->h && ni < NUM_NOTES; yy++)
+                for (int xx = r->x; xx < r->x + r->w && ni < NUM_NOTES; xx++) {
+                    if (!is_open(xx, yy) || abs(xx - startX) + abs(yy - startY) < 3) continue;
+                    if (abs(xx - (int)exitX) + abs(yy - (int)exitY) < 2) continue;
+                    int wx = 0, wy = 0, found = 0;
+                    for (int k = 0; k < 4; k++)
+                        if (!is_open(xx + wdx[k], yy + wdy[k])) { wx = wdx[k]; wy = wdy[k]; found = 1; break; }
+                    if (!found) continue;
+                    int ok = 1;
+                    for (int j = 0; j < ni; j++)
+                        if (fabs(notes[j].x - (xx + 0.5)) + fabs(notes[j].y - (yy + 0.5)) < 2) ok = 0;
+                    for (int j = 0; j < NUM_LOCKERS; j++)
+                        if (fabs(lockers[j].x - (xx + 0.5)) + fabs(lockers[j].y - (yy + 0.5)) < 1.5) ok = 0;
+                    if (!ok) continue;
+                    notes[ni].x = xx + 0.5; notes[ni].y = yy + 0.5; notes[ni].active = 1;
+                    noteWX[ni] = wx; noteWY[ni] = wy;
+                    notes[ni].text = rand() % NOTE_POOL; ni++;
+                }
         }
-    while (ni < NUM_NOTES) {
+    while (ni < NUM_NOTES) {                               /* fallback: any wall cell */
         int x = 1 + rand() % (MW - 2), y = 1 + rand() % (MH - 2);
         if (!is_open(x, y)) continue;
+        int wx = 0, wy = 0, found = 0;
+        for (int k = 0; k < 4; k++)
+            if (!is_open(x + wdx[k], y + wdy[k])) { wx = wdx[k]; wy = wdy[k]; found = 1; break; }
+        if (!found) continue;
         notes[ni].x = x + 0.5; notes[ni].y = y + 0.5; notes[ni].active = 1;
+        noteWX[ni] = wx; noteWY[ni] = wy;
         notes[ni].text = rand() % NOTE_POOL; ni++;
     }
 
@@ -1275,14 +1348,14 @@ static void cam_dir(float *dx, float *dy, float *dz) {
     *dz = (float)(cos(pitch) * sin(yaw));
 }
 
-static void draw_billboard(double wx, double wz, double w, double h, double base, int type, float mvp[16]) {
-    /* camera-facing quad in the floor plane's right/up basis */
-    float rx = (float)-sin(yaw), rz = (float)cos(yaw);   /* screen-right on the ground */
-    float hx = rx * (float)(w * 0.5), hz = rz * (float)(w * 0.5);
+/* a vertical quad centred at (wx,wz) with an explicit horizontal right vector
+ * (rx,rz); used both for camera-facing billboards and wall-flat sprites.    */
+static void draw_sprite_dir(double wx, double wz, double rx, double rz,
+                            double w, double h, double base, int type, float mvp[16]) {
+    float hx = (float)(rx * w * 0.5), hz = (float)(rz * w * 0.5);
     float y0 = (float)base, y1 = (float)(base + h);
     float cx = (float)wx, cz = (float)wz;
     float buf[6 * 8]; int n = 0;
-    /* two triangles; normal unused for sprites */
     push_v(buf, &n, cx - hx, y0, cz - hz, 0, 1, 0, 0, 0);
     push_v(buf, &n, cx + hx, y0, cz + hz, 1, 1, 0, 0, 0);
     push_v(buf, &n, cx + hx, y1, cz + hz, 1, 0, 0, 0, 0);
@@ -1297,6 +1370,9 @@ static void draw_billboard(double wx, double wz, double w, double h, double base
     glActiveTexture_(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, texSpr[type]);
     glDrawArrays(GL_TRIANGLES, 0, 6);
+}
+static void draw_billboard(double wx, double wz, double w, double h, double base, int type, float mvp[16]) {
+    draw_sprite_dir(wx, wz, -sin(yaw), cos(yaw), w, h, base, type, mvp);   /* face the camera */
 }
 
 /* (re)allocate the offscreen scene buffer when the target size changes */
@@ -1332,7 +1408,9 @@ static void render_3d(void) {
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
     float dxc, dyc, dzc; cam_dir(&dxc, &dyc, &dzc);
-    float ex = (float)posX, ey = 0.5f, ez = (float)posY;
+    /* head bob: bounce the eye height and sway it side to side along the view-right */
+    float rgx = (float)-sin(yaw), rgz = (float)cos(yaw);
+    float ex = (float)(posX + rgx * bobLat), ey = (float)(0.5 + bobY), ez = (float)(posY + rgz * bobLat);
     float proj[16], view[16], mvp[16];
     mat_perspective(proj, 1.30f, (float)rndW / rndH, 0.05f, 40.0f);
     mat_lookat(view, ex, ey, ez, ex + dxc, ey + dyc, ez + dzc, 0, 1, 0);
@@ -1409,7 +1487,11 @@ static void render_3d(void) {
     for (int i = 0; i < NUM_KEYS; i++)
         if (keys[i].active) draw_billboard(keys[i].x, keys[i].y, 0.4, 0.4, 0.35, 1, mvp);
     for (int i = 0; i < NUM_NOTES; i++)
-        if (notes[i].active) draw_billboard(notes[i].x, notes[i].y, 0.32, 0.32, 0.25, 5, mvp);
+        if (notes[i].active) {
+            /* pinned flat to the wall: sit on the wall face, tangent along it */
+            double px = notes[i].x + noteWX[i] * 0.44, pz = notes[i].y + noteWY[i] * 0.44;
+            draw_sprite_dir(px, pz, -noteWY[i], noteWX[i], 0.34, 0.40, 0.34, 5, mvp);
+        }
     if (has_up) draw_billboard(upX, upY, 0.95, 0.95, 0.02, 6, mvp);  /* stairs up   */
 
     /* additive glows: torch flames, and the door's portal light once open */
@@ -1454,7 +1536,7 @@ static void draw_hidden_overlay(void) {
             fb[y * SCREEN_W + x] = packa(0, 0, 0, a);
         }
     }
-    draw_text_c(SCREEN_H - 60, 3, "HIDDEN   PRESS E TO STEP OUT", pack(190, 190, 200));
+    draw_text_c(SCREEN_H - 60, 3, "ТЫ СПРЯТАЛСЯ   E - ВЫЙТИ", pack(190, 190, 200));
 }
 static void draw_sanity_fx(void) {
     if (sanity > 0.9) return;
@@ -1478,27 +1560,27 @@ static void draw_note(void) {
     fill_rect(px, py, pw, ph, packa(24, 22, 18, 240));
     fill_rect(px, py, pw, 4, packa(90, 80, 60, 255));
     fill_rect(px, py + ph - 4, pw, 4, packa(90, 80, 60, 255));
-    draw_text_c(py + 26, 3, "A SCRAP OF PAPER", pack(180, 160, 120));
+    draw_text_c(py + 26, 3, "КЛОЧОК БУМАГИ", pack(180, 160, 120));
     const char **lines = NOTES[reading_note];
     int ty = py + 90;
     for (int i = 0; i < 6 && lines[i]; i++) { draw_text_c(ty, 3, lines[i], pack(210, 200, 175)); ty += 34; }
-    draw_text_c(py + ph - 34, 2, "PRESS E TO PUT IT DOWN", pack(130, 120, 100));
+    draw_text_c(py + ph - 34, 2, "E - ПОЛОЖИТЬ ОБРАТНО", pack(130, 120, 100));
 }
 
 static void draw_hud(void) {
     char buf[32];
-    snprintf(buf, sizeof(buf), "FLOOR %d", depth);
+    snprintf(buf, sizeof(buf), "ЭТАЖ %d", depth);
     draw_text(16, 16, 3, buf, pack(150, 170, 220));
-    snprintf(buf, sizeof(buf), "KEYS %d/%d", NUM_KEYS - keys_left, NUM_KEYS);
+    snprintf(buf, sizeof(buf), "КЛЮЧИ %d/%d", NUM_KEYS - keys_left, NUM_KEYS);
     draw_text(16, 44, 3, buf, pack(230, 210, 120));
 
     /* contextual stair prompts */
     double ed = fabs(posX - exitX) + fabs(posY - exitY);
     if (ed < 1.6) draw_text_c(SCREEN_H - 150, 3,
-        keys_left == 0 ? "THE DOOR - STEP THROUGH TO DESCEND" : "THE DOOR - SEALED, FIND THE KEYS", pack(90, 255, 150));
+        keys_left == 0 ? "ДВЕРЬ - ВОЙДИ ЧТОБЫ СПУСТИТЬСЯ" : "ДВЕРЬ ЗАПЕРТА - НАЙДИ КЛЮЧИ", pack(90, 255, 150));
     if (has_up) {
         double ud = fabs(posX - upX) + fabs(posY - upY);
-        if (ud < 1.4) draw_text_c(SCREEN_H - 150, 3, "STAIRS UP - STEP ON TO CLIMB", pack(120, 190, 255));
+        if (ud < 1.4) draw_text_c(SCREEN_H - 150, 3, "ЛЕСТНИЦА ВВЕРХ - ВСТАНЬ ЧТОБЫ ПОДНЯТЬСЯ", pack(120, 190, 255));
     }
 
     int bw = 220, bh = 16, bx = 16, by = SCREEN_H - 80;
@@ -1506,15 +1588,15 @@ static void draw_hud(void) {
     int fillw = (int)(bw * stamina);
     uint32_t sc = exhausted ? pack(150, 40, 30) : pack(70 + (int)(120 * (1 - stamina)), 160, 90);
     fill_rect(bx, by, fillw, bh, sc);
-    draw_text(bx, by - 22, 2, "STAMINA", pack(120, 130, 130));
+    draw_text(bx, by - 22, 2, "СИЛЫ", pack(120, 130, 130));
 
     int my = by + 26;
     fill_rect(bx - 2, my - 2, bw + 4, bh + 4, pack(20, 20, 24));
     fill_rect(bx, my, (int)(bw * sanity), bh,
               pack(120 + (int)(120 * (1 - sanity)), 60 + (int)(40 * sanity), 130 * sanity + 40));
-    draw_text(bx, my + bh + 4, 2, "MIND", pack(110, 100, 130));
+    draw_text(bx, my + bh + 4, 2, "РАССУДОК", pack(110, 100, 130));
 
-    if (near_locker >= 0 && !hidden) draw_text_c(SCREEN_H - 110, 3, "PRESS E TO HIDE", pack(200, 200, 160));
+    if (near_locker >= 0 && !hidden) draw_text_c(SCREEN_H - 110, 3, "E - СПРЯТАТЬСЯ", pack(200, 200, 160));
 
     if (tension > 0.4) {                                  /* red edge bleed */
         int a = (int)((tension - 0.4) * 150);
@@ -1528,7 +1610,7 @@ static void draw_hud(void) {
                     fb[y * SCREEN_W + x] = packa(150, 20, 16, na);
                 }
             }
-        if (tension > 0.75 && ((int)(state_time * 8) % 2)) draw_text_c(90, 3, "IT IS CLOSE", pack(255, 40, 30));
+        if (tension > 0.75 && ((int)(state_time * 8) % 2)) draw_text_c(90, 3, "ОНО РЯДОМ", pack(255, 40, 30));
     }
 }
 static void draw_title(void) {
@@ -1539,11 +1621,11 @@ static void draw_title(void) {
         }
     uint32_t red = pack(190 + (int)(40 * sin(state_time * 3)), 20, 16);
     draw_text_c(150, 9, "NIGHTFALL", red);
-    draw_text_c(270, 3, "SOMETHING IN THE DARK IS AWAKE.", pack(150, 150, 160));
-    draw_text_c(305, 3, "FIND THREE KEYS. REACH THE EXIT.", pack(120, 120, 130));
-    if ((int)(state_time * 2) % 2) draw_text_c(380, 4, "PRESS ENTER", pack(220, 220, 220));
-    draw_text_c(SCREEN_H - 84, 2, "CONTROLS USE PHYSICAL KEYS - IF THEY FAIL, SWITCH TO ENGLISH LAYOUT", pack(150, 120, 60));
-    draw_text_c(SCREEN_H - 60, 2, "WASD MOVE   MOUSE LOOK   SHIFT RUN   E HIDE   ESC QUIT", pack(90, 90, 100));
+    draw_text_c(270, 3, "ЧТО-ТО В ТЕМНОТЕ ПРОСНУЛОСЬ.", pack(150, 150, 160));
+    draw_text_c(305, 3, "НАЙДИ ТРИ КЛЮЧА. НАЙДИ ДВЕРЬ.", pack(120, 120, 130));
+    if ((int)(state_time * 2) % 2) draw_text_c(380, 4, "НАЖМИ ENTER", pack(220, 220, 220));
+    draw_text_c(SCREEN_H - 84, 2, "КЛАВИШИ ПО РАСКЛАДКЕ - ЕСЛИ НЕ РАБОТАЮТ, ВКЛЮЧИ ENG", pack(150, 120, 60));
+    draw_text_c(SCREEN_H - 60, 2, "WASD - ХОДИТЬ   МЫШЬ - ОБЗОР   SHIFT - БЕГ   E - ПРЯТАТЬСЯ   ESC - ВЫХОД", pack(90, 90, 100));
 }
 static void draw_jumpscare(void) {
     double t = state_time, shake = (t < 1.2) ? 6 * sin(t * 90) : 0;
@@ -1566,8 +1648,8 @@ static void draw_jumpscare(void) {
             fb[y * SCREEN_W + x] = c;                     /* opaque: hides 3D */
         }
     if (t > 1.4) {
-        draw_text_c(SCREEN_H / 2 - 40, 6, "IT FOUND YOU", pack(255, 30, 20));
-        draw_text_c(SCREEN_H / 2 + 40, 3, "PRESS R TO GO BACK IN", pack(180, 180, 180));
+        draw_text_c(SCREEN_H / 2 - 40, 6, "ОНО НАШЛО ТЕБЯ", pack(255, 30, 20));
+        draw_text_c(SCREEN_H / 2 + 40, 3, "R - ВЕРНУТЬСЯ", pack(180, 180, 180));
     }
 }
 
@@ -1663,7 +1745,7 @@ int main(int argc, char **argv) {
     SDL_SetRelativeMouseMode(SDL_TRUE);
     const char *shotpath = getenv("NIGHTFALL_SHOT");
     int shot_frame = 0;
-    if (getenv("NIGHTFALL_AUTOPLAY") || shotpath) { game_state = ST_PLAY; state_time = 0; }
+    if ((getenv("NIGHTFALL_AUTOPLAY") || shotpath) && !getenv("NIGHTFALL_SHOTTITLE")) { game_state = ST_PLAY; state_time = 0; }
     /* dev screenshot: stand in front of a torch looking at it */
     if (shotpath && torch_count > 0) {
         int bi = 0;                                     /* first torch */
@@ -1704,6 +1786,12 @@ int main(int argc, char **argv) {
                         yaw = atan2(kz - pz, kx - px); pitch = -0.05; }
                 }
             }
+        }
+        if (getenv("NIGHTFALL_SHOWWNOTE")) {           /* face a wall-pinned note */
+            double nx = notes[0].x, nz = notes[0].y;
+            double bx = nx - noteWX[0] * 1.6, bz = nz - noteWY[0] * 1.6;   /* step into the room */
+            if (is_open((int)bx, (int)bz)) { posX = bx; posY = bz; }
+            yaw = atan2(noteWY[0], noteWX[0]); pitch = -0.02;
         }
         fprintf(stderr, "torches=%d\n", torch_count);
     }
@@ -1763,17 +1851,38 @@ int main(int argc, char **argv) {
             int want_run = ks[SDL_SCANCODE_LSHIFT] && !exhausted && stamina > 0.05;
             int moving = 0;
             if (!hidden) {
-                double spd = (want_run ? PLAYER_RUN : PLAYER_WALK) * dt;
                 double fx = cos(yaw), fz = sin(yaw), rx = -sin(yaw), rz = cos(yaw);
-                double nx = posX, ny = posY;
-                if (ks[SDL_SCANCODE_W]) { nx += fx * spd; ny += fz * spd; moving = 1; }
-                if (ks[SDL_SCANCODE_S]) { nx -= fx * spd; ny -= fz * spd; moving = 1; }
-                if (ks[SDL_SCANCODE_D]) { nx += rx * spd; ny += rz * spd; moving = 1; }
-                if (ks[SDL_SCANCODE_A]) { nx -= rx * spd; ny -= rz * spd; moving = 1; }
+                /* build a normalised input direction so diagonals aren't faster */
+                double ix = 0, iy = 0;
+                if (ks[SDL_SCANCODE_W]) { ix += fx; iy += fz; }
+                if (ks[SDL_SCANCODE_S]) { ix -= fx; iy -= fz; }
+                if (ks[SDL_SCANCODE_D]) { ix += rx; iy += rz; }
+                if (ks[SDL_SCANCODE_A]) { ix -= rx; iy -= rz; }
                 if (ks[SDL_SCANCODE_LEFT])  yaw -= 1.8 * dt;
                 if (ks[SDL_SCANCODE_RIGHT]) yaw += 1.8 * dt;
-                if (moving) try_move(nx, ny, 0.15);
-            }
+                double il = sqrt(ix * ix + iy * iy);
+                double tvx = 0, tvy = 0, target = want_run ? PLAYER_RUN : PLAYER_WALK;
+                if (il > 1e-4) { ix /= il; iy /= il; tvx = ix * target; tvy = iy * target; }
+                /* ease velocity toward the target (quick to start, quicker to stop) */
+                double rate = (il > 1e-4 ? 11.0 : 14.0) * dt; if (rate > 1.0) rate = 1.0;
+                velX += (tvx - velX) * rate;
+                velY += (tvy - velY) * rate;
+                double sp = sqrt(velX * velX + velY * velY);
+                if (sp > 0.05) {
+                    double ox = posX, oy = posY;
+                    try_move(posX + velX * dt, posY + velY * dt, 0.18);
+                    /* kill velocity on an axis we couldn't move along (hit a wall) */
+                    if (fabs(posX - ox) < 1e-6) velX *= 0.2;
+                    if (fabs(posY - oy) < 1e-6) velY *= 0.2;
+                }
+                moving = sp > 0.6;
+                /* head bob: advance by distance, amplitude scales with speed */
+                bob_phase += sp * dt * 3.4;
+                double amp = (want_run ? 0.055 : 0.035) * (sp / PLAYER_WALK);
+                if (amp > 0.07) amp = 0.07;
+                bobY   = sin(bob_phase * 2.0) * amp;
+                bobLat = sin(bob_phase) * amp * 0.6;
+            } else { velX = velY = 0; bobY = bobLat = 0; }
             int sprinting = want_run && moving;
             stamina += (sprinting ? -STAM_DRAIN : STAM_REGEN) * dt;
             if (stamina < 0) stamina = 0;
@@ -1803,7 +1912,8 @@ int main(int argc, char **argv) {
                         if (keys_left == 0) build_world_mesh();   /* the door's slab drops */
                     }
                 }
-            /* pick up and read a lore note */
+            /* pick up and read a lore note (never during a dev screenshot) */
+            if (!shotpath)
             for (int i = 0; i < NUM_NOTES; i++)
                 if (notes[i].active) {
                     double nd = (posX - notes[i].x) * (posX - notes[i].x) + (posY - notes[i].y) * (posY - notes[i].y);
@@ -1862,7 +1972,7 @@ int main(int argc, char **argv) {
         }
 
         /* dev screenshot: capture the pure 3D scene after a few settling frames */
-        if (shotpath && game_state == ST_PLAY && ++shot_frame >= 24) {
+        if (shotpath && !getenv("NIGHTFALL_SHOWNOTE") && game_state == ST_PLAY && ++shot_frame >= 24) {
             save_ppm(shotpath);
             running = 0;
         }
@@ -1885,6 +1995,12 @@ int main(int argc, char **argv) {
             for (int i = 0; i < SCREEN_W * SCREEN_H; i++) fb[i] = px;
         }
         present_overlay();
+
+        /* dev: capture the composited overlay (note panel / title / HUD) */
+        if (shotpath && (getenv("NIGHTFALL_SHOWNOTE") || getenv("NIGHTFALL_SHOTTITLE")) && ++shot_frame >= 6) {
+            if (getenv("NIGHTFALL_SHOWNOTE")) { reading_note = atoi(getenv("NIGHTFALL_SHOWNOTE")); game_state = ST_READING; }
+            if (shot_frame >= 10) { save_ppm(shotpath); running = 0; }
+        }
 
         SDL_GL_SwapWindow(win);
     }
