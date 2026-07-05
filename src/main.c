@@ -55,7 +55,7 @@
 #define MOUSE_SENS  0.0022
 #define AMBIENT     0.015   /* almost black; all real light comes from torches */
 #define FOG_K       0.10
-#define MAX_TORCHES 32
+#define MAX_TORCHES 48
 
 /* ------------------------------------------------------------------- state */
 enum { ST_TITLE, ST_PLAY, ST_CAUGHT, ST_WIN, ST_READING };
@@ -696,7 +696,7 @@ static const char *FSRC =
     "uniform float uAmbient; uniform float uFogK; uniform float uFlicker;\n"
     "uniform vec3 uAmbTint; uniform vec2 uScreenSize;\n"
     "uniform int uMode;\n"                 /* 0 world, 1 sprite */
-    "#define MAXT 32\n"
+    "#define MAXT 48\n"
     "uniform int uTorchCount;\n"
     "uniform vec3 uTorchPos[MAXT];\n"
     "uniform float uTorchInt[MAXT];\n"
@@ -838,7 +838,7 @@ static void add_torch_bracket(float *buf, int *n, double tx, double tz, double d
  * cell, then place a torch only where none is already within TORCH_SPACING.
  * Trying every candidate guarantees full coverage (no cell is more than
  * TORCH_SPACING from a torch) while the spacing rule prevents clustering. */
-#define TORCH_SPACING 3.4f
+#define TORCH_SPACING 2.6f
 static void place_torches(void) {
     torch_count = 0;
     int dx[] = {1, -1, 0, 0}, dy[] = {0, 0, 1, -1};
