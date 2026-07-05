@@ -880,7 +880,7 @@ static void update_ai(double dt, int moving, int sprinting) {
                 Mix_VolumeChunk(snd_roar, (int)(55 + 73 * (1.0 - fmin(d, 12.0) / 12.0)));
                 Mix_PlayChannel(6, snd_roar, 0);
             }
-            growl_timer = 2.6 + frand() * 1.6;
+            growl_timer = 5.5 + frand() * 2.0;            /* let the long roar breathe */
         }
         mon_state = AI_HUNT; lastKnownX = posX; lastKnownY = posY;
         hunt_recalc -= dt;
@@ -891,7 +891,7 @@ static void update_ai(double dt, int moving, int sprinting) {
         if (growl_timer <= 0) {
             if (snd_growl) {
                 Mix_VolumeChunk(snd_growl, (int)(40 + 68 * (1.0 - fmin(d, 12.0) / 12.0)));
-                Mix_PlayChannel(6, snd_growl, 0);
+                Mix_PlayChannel(7, snd_growl, 0);         /* own channel, won't cut the roar */
             }
             growl_timer = 1.8 + frand() * 2.4;
         }

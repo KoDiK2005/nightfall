@@ -260,7 +260,9 @@ def main():
     write_wav("pickup.wav", make_pickup())
     write_wav("step.wav", make_step())
     write_wav("whisper.wav", make_whisper())
-    write_wav("roar.wav", make_roar())
+    # roar.wav is now a hand-picked custom recording (converted to WAV), not
+    # procedural -- do NOT regenerate it here or it would clobber that asset.
+    # (make_roar() is kept above as a fallback if you want to restore it.)
     write_wav("growl.wav", make_growl())
     print("Done.")
 
