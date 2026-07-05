@@ -706,16 +706,29 @@ static const char *FSRC =
     "uniform int uOccl;\n"                 /* 1 = shadow torches behind walls */
     "out vec4 frag;\n"
     /* march the floor-plane segment from the fragment to a torch; if it
-     * crosses a wall cell the torch is occluded (no light-through-walls). */
-    "bool blocked(vec2 p, vec2 q){\n"
+     * crosses a wall cell the torch is occluded (no light-through-walls).
+     * Three parallel rays (offset perpendicular to the light direction)
+     * are averaged into a soft 0..1 factor instead of a hard yes/no --
+     * a single ray produces a hard, jittery cutoff right at corners where
+     * grazing rays flip in/out of a wall cell from one pixel to the next. */
+    "bool hit_wall(vec2 c){\n"
+    "  ivec2 ci = clamp(ivec2(int(c.x), int(c.y)), ivec2(0), ivec2(uMapSize)-1);\n"
+    "  return texelFetch(uMap, ci, 0).r > 0.5;\n"
+    "}\n"
+    "float occlusion(vec2 p, vec2 q){\n"
     "  vec2 d = q - p; float len = length(d);\n"
-    "  int steps = int(len / 0.3) + 1; if(steps > 64) steps = 64;\n"
-    "  for(int s = 1; s < steps; s++){\n"
-    "    vec2 c = p + d * (float(s)/float(steps));\n"
-    "    ivec2 ci = clamp(ivec2(int(c.x), int(c.y)), ivec2(0), ivec2(uMapSize)-1);\n"
-    "    if(texelFetch(uMap, ci, 0).r > 0.5) return true;\n"
+    "  vec2 perp = (len > 1e-4) ? normalize(vec2(-d.y, d.x)) : vec2(0.0);\n"
+    "  int steps = int(len / 0.2) + 1; if(steps > 48) steps = 48;\n"
+    "  float occ = 0.0;\n"
+    "  for(int t = -1; t <= 1; t++){\n"
+    "    vec2 pt = p + perp * (float(t) * 0.09);\n"
+    "    bool hit = false;\n"
+    "    for(int s = 1; s < steps; s++){\n"
+    "      if(hit_wall(pt + d * (float(s)/float(steps)))) { hit = true; break; }\n"
+    "    }\n"
+    "    if(hit) occ += 1.0/3.0;\n"
     "  }\n"
-    "  return false;\n"
+    "  return occ;\n"
     "}\n"
     "void main(){\n"
     "  vec4 t = texture(uTex, vUV);\n"
@@ -732,10 +745,16 @@ static const char *FSRC =
     "    float att = uTorchInt[i] / (1.0 + 0.35*td + 0.55*td*td);\n"
     "    if(att < 0.02) continue;\n"                 /* too dim to bother     */
     "    float lxz = length(L.xz);\n"
-    "    vec2 start = vW.xz + (lxz > 1e-3 ? L.xz/lxz : vec2(0.0)) * 0.06;\n"
-    "    if(uMode==0 && uOccl==1 && blocked(start, uTorchPos[i].xz)) continue;\n"  /* wall between */
+    /* nudge the ray start toward the torch AND off the surface along its
+     * normal, so the march doesn't begin sitting exactly on a wall cell's
+     * own boundary -- that grazing case is what caused shadow acne right
+     * at corners where two walls meet.                                   */
+    "    vec2 start = vW.xz + (lxz > 1e-3 ? L.xz/lxz : vec2(0.0)) * 0.06 + nrm.xz * 0.05;\n"
+    "    float vis = 1.0;\n"
+    "    if(uMode==0 && uOccl==1) vis = 1.0 - occlusion(start, uTorchPos[i].xz);\n"
+    "    if(vis <= 0.0) continue;\n"                    /* fully in shadow       */
     "    float facing = (uMode==0) ? (0.35 + 0.65*max(dot(nrm, L/max(td,1e-3)), 0.0)) : 1.0;\n"
-    "    lit += uTorchCol * att * facing;\n"
+    "    lit += uTorchCol * att * facing * vis;\n"
     "  }\n"
     "  vec3 col = t.rgb * lit;\n"
     "  col = mix(col, t.rgb * (0.55 + 0.45*fog), emissive);\n"  /* glow ignores lighting */
