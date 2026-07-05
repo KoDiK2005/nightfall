@@ -96,6 +96,7 @@ static uint32_t fb[SCREEN_W * SCREEN_H];
 /* CPU-side procedural pixels, later uploaded as GL textures */
 static uint32_t tex[3][TEX * TEX];         /* 0 wall, 1 floor, 2 ceiling     */
 static uint32_t lockmetal[TEX * TEX];      /* opaque steel for locker boxes  */
+static uint32_t brackmetal[TEX * TEX];     /* dark iron for torch brackets   */
 static uint32_t spr_rgba[5][TEX * TEX];    /* 0 monster,1 key,2 exit,3 loc,4 flame */
 
 /* torches fixed to walls: warm point lights that flicker */
@@ -245,11 +246,12 @@ static void build_textures(void) {
             int brick_h = 16, brick_w = 32, row = y / brick_h;
             int ox = (row & 1) ? brick_w / 2 : 0;
             int mortar = ((x + ox) % brick_w < 2) || (y % brick_h < 2);
-            int base = 46 + (int)(frand() * 16);
-            if (mortar) tex[0][i] = pack(base / 3, base / 4, base / 4);
+            int base = 52 + (int)(frand() * 18);
+            if (mortar) tex[0][i] = pack(base * 0.30, base * 0.32, base * 0.36);
             else {
-                int r = base, g = base * 0.42, b = base * 0.38;
-                if (frand() < 0.05) r += 40;
+                /* cold grey-brown stone; picks up warmth from the torches */
+                int r = base * 0.92, g = base * 0.86, b = base * 0.80;
+                if (frand() < 0.05) { r -= 16; g -= 16; b -= 14; }   /* dark stains */
                 tex[0][i] = pack(r, g, b);
             }
             int f = 30 + (int)(frand() * 14);
@@ -264,6 +266,9 @@ static void build_textures(void) {
             int handle = (x >= 48 && x <= 54 && y >= 30 && y <= 40);
             int mv = m; if (seam) mv -= 22; if (slat) mv -= 28;
             lockmetal[i] = handle ? pack(180, 168, 120) : pack(mv, mv + 4, mv + 9);
+            /* dark, plain wrought-iron for the little torch brackets */
+            int d = 26 + (int)(frand() * 8);
+            brackmetal[i] = pack(d, d * 0.86, d * 0.72);
         }
 }
 
@@ -617,12 +622,13 @@ static const char *FSRC =
     "  vec3 nrm = normalize(vN);\n"
     "  float dist = length(vW - uCamPos);\n"
     "  float fog = 1.0 / (1.0 + dist*dist*uFogK);\n"
-    /* no flashlight anymore — only the faintest ambient plus the torches */
-    "  vec3 lit = vec3(uAmbient);\n"
+    /* cool moonlight ambient so geometry is faintly readable in the dark, */
+    /* plus warm torch point lights that carry the real illumination.      */
+    "  vec3 lit = vec3(0.05, 0.055, 0.075);\n"
     "  for(int i=0;i<uTorchCount;i++){\n"
     "    vec3 L = uTorchPos[i] - vW; float td = length(L);\n"
-    "    float att = uTorchInt[i] / (1.0 + 0.55*td + 1.4*td*td);\n"
-    "    float facing = (uMode==0) ? max(dot(nrm, L/max(td,1e-3)), 0.0) : 1.0;\n"
+    "    float att = uTorchInt[i] / (1.0 + 0.35*td + 0.55*td*td);\n"
+    "    float facing = (uMode==0) ? (0.35 + 0.65*max(dot(nrm, L/max(td,1e-3)), 0.0)) : 1.0;\n"
     "    lit += uTorchCol * att * facing;\n"
     "  }\n"
     "  vec3 col = t.rgb * lit;\n"
@@ -642,8 +648,9 @@ static GLuint prog3d, progOv;
 static GLint u_mvp, u_campos, u_camdir, u_amb, u_fogk, u_flick, u_mode;
 static GLint u_tcount, u_tpos, u_tint, u_tcol;
 static GLuint worldVAO, worldVBO, sprVAO, sprVBO, ovVAO, ovVBO;
-static GLuint texWall, texFloor, texCeil, texLocker, texSpr[5], texOverlay;
-static int   floorStart, floorCount, ceilStart, ceilCount, wallCount, lockStart, lockCount;
+static GLuint texWall, texFloor, texCeil, texLocker, texBracket, texSpr[5], texOverlay;
+static int   floorStart, floorCount, ceilStart, ceilCount, wallCount;
+static int   lockStart, lockCount, brkStart, brkCount;
 
 static GLuint compile(GLenum type, const char *src) {
     GLuint s = glCreateShader_(type);
@@ -721,14 +728,14 @@ static void place_torches(void) {
     int dx[] = {1, -1, 0, 0}, dy[] = {0, 0, 1, -1};
     for (int y = 1; y < MH - 1 && torch_count < MAX_TORCHES; y++)
         for (int x = 1; x < MW - 1 && torch_count < MAX_TORCHES; x++) {
-            if (!is_open(x, y) || frand() < 0.55) continue;
+            if (!is_open(x, y) || frand() < 0.35) continue;
             for (int k = 0; k < 4; k++) {
                 if (is_open(x + dx[k], y + dy[k])) continue;    /* need a wall  */
                 float tx = x + 0.5f + dx[k] * 0.48f, tz = y + 0.5f + dy[k] * 0.48f;
                 int ok = 1;
                 for (int j = 0; j < torch_count; j++) {
                     float ddx = tx - torchX[j], ddz = tz - torchZ[j];
-                    if (ddx * ddx + ddz * ddz < 6.0f) { ok = 0; break; }
+                    if (ddx * ddx + ddz * ddz < 3.2f) { ok = 0; break; }
                 }
                 if (!ok) continue;
                 torchX[torch_count] = tx; torchZ[torch_count] = tz;
@@ -767,13 +774,16 @@ static void build_world_mesh(void) {
         for (int x = 0; x < MW; x++)
             if (is_open(x, y)) { float a[3]={x,1,y+1}, b[3]={x+1,1,y+1}, c[3]={x+1,1,y}, d[3]={x,1,y}; push_quad(buf,&n,a,b,c,d,0,-1,0,1); }
     ceilCount = n - ceilStart;
-    /* steel props: locker cabinets and torch brackets (all one texture) */
+    /* locker cabinets (steel) */
     lockStart = n;
     for (int i = 0; i < NUM_LOCKERS; i++)
         add_locker_box(buf, &n, lockers[i].x, lockers[i].y, lockWX[i], lockWY[i]);
+    lockCount = n - lockStart;
+    /* torch brackets (dark iron) */
+    brkStart = n;
     for (int i = 0; i < torch_count; i++)
         add_torch_bracket(buf, &n, torchX[i], torchZ[i], torchNx[i], torchNz[i]);
-    lockCount = n - lockStart;
+    brkCount = n - brkStart;
 
     glBindVertexArray_(worldVAO);
     glBindBuffer_(GL_ARRAY_BUFFER, worldVBO);
@@ -824,6 +834,7 @@ static void gl_init(void) {
 
     texWall = make_texture(tex[0]); texFloor = make_texture(tex[1]); texCeil = make_texture(tex[2]);
     texLocker = make_texture(lockmetal);
+    texBracket = make_texture(brackmetal);
     for (int i = 0; i < 5; i++) texSpr[i] = make_texture(spr_rgba[i]);
     glGenTextures(1, &texOverlay);
     glBindTexture(GL_TEXTURE_2D, texOverlay);
@@ -891,7 +902,7 @@ static void render_3d(void) {
     for (int i = 0; i < torch_count; i++) {
         tp[i * 3] = torchX[i]; tp[i * 3 + 1] = TORCH_Y; tp[i * 3 + 2] = torchZ[i];
         double f = 1.15 + 0.22 * sin(state_time * 7.0 + i * 1.7) + (frand() - 0.5) * 0.12;
-        ti[i] = (float)(f * 1.7 * flicker);       /* global flicker/surge affects torches now */
+        ti[i] = (float)(f * 1.5 * flicker);       /* global flicker/surge affects torches now */
     }
     glUniform1i_(u_tcount, torch_count);
     if (torch_count > 0) {
@@ -907,7 +918,8 @@ static void render_3d(void) {
     glBindTexture(GL_TEXTURE_2D, texWall);   glDrawArrays(GL_TRIANGLES, 0, wallCount);
     glBindTexture(GL_TEXTURE_2D, texFloor);  glDrawArrays(GL_TRIANGLES, floorStart, floorCount);
     glBindTexture(GL_TEXTURE_2D, texCeil);   glDrawArrays(GL_TRIANGLES, ceilStart, ceilCount);
-    glBindTexture(GL_TEXTURE_2D, texLocker); glDrawArrays(GL_TRIANGLES, lockStart, lockCount);
+    glBindTexture(GL_TEXTURE_2D, texLocker);  glDrawArrays(GL_TRIANGLES, lockStart, lockCount);
+    glBindTexture(GL_TEXTURE_2D, texBracket); glDrawArrays(GL_TRIANGLES, brkStart, brkCount);
 
     /* opaque-ish sprites (billboards) — depth tested, alpha discarded */
     if (!hidden) draw_billboard(monX, monY, 1.15, 0.0, 0, mvp);
@@ -920,9 +932,9 @@ static void render_3d(void) {
     glBlendFunc(GL_ONE, GL_ONE);
     glDepthMask(GL_FALSE);
     for (int i = 0; i < torch_count; i++) {
-        double s = 0.32 * (0.9 + 0.16 * sin(state_time * 9.0 + i * 2.1));
-        draw_billboard(torchX[i] + torchNx[i] * 0.06, torchZ[i] + torchNz[i] * 0.06,
-                       s, TORCH_Y - 0.14, 4, mvp);
+        double s = 0.46 * (0.9 + 0.16 * sin(state_time * 9.0 + i * 2.1));
+        draw_billboard(torchX[i] + torchNx[i] * 0.07, torchZ[i] + torchNz[i] * 0.07,
+                       s, TORCH_Y - 0.04, 4, mvp);
     }
     glDepthMask(GL_TRUE);
     glDisable(GL_BLEND);
@@ -1045,6 +1057,21 @@ static void draw_jumpscare(void) {
     }
 }
 
+/* Dump the current back buffer to a binary PPM (for dev screenshots). */
+static void save_ppm(const char *path) {
+    unsigned char *px = malloc(SCREEN_W * SCREEN_H * 3);
+    if (!px) return;
+    glReadPixels(0, 0, SCREEN_W, SCREEN_H, GL_RGB, GL_UNSIGNED_BYTE, px);
+    FILE *f = fopen(path, "wb");
+    if (f) {
+        fprintf(f, "P6\n%d %d\n255\n", SCREEN_W, SCREEN_H);
+        for (int y = SCREEN_H - 1; y >= 0; y--)          /* flip: GL is bottom-up */
+            fwrite(px + y * SCREEN_W * 3, 1, SCREEN_W * 3, f);
+        fclose(f);
+    }
+    free(px);
+}
+
 static void present_overlay(void) {
     glDisable(GL_DEPTH_TEST);
     glEnable(GL_BLEND);
@@ -1098,7 +1125,24 @@ int main(int argc, char **argv) {
     new_game();
 
     SDL_SetRelativeMouseMode(SDL_TRUE);
-    if (getenv("NIGHTFALL_AUTOPLAY")) { game_state = ST_PLAY; state_time = 0; }
+    const char *shotpath = getenv("NIGHTFALL_SHOT");
+    int shot_frame = 0;
+    if (getenv("NIGHTFALL_AUTOPLAY") || shotpath) { game_state = ST_PLAY; state_time = 0; }
+    /* dev screenshot: stand in front of a torch looking at it */
+    if (shotpath && torch_count > 0) {
+        int bi = 0;                                     /* first torch */
+        double cx = torchX[bi] + torchNx[bi] * 0.48, cz = torchZ[bi] + torchNz[bi] * 0.48;
+        double tx = -torchNz[bi], tz = torchNx[bi];     /* along the wall */
+        int rp = 0, rn = 0;
+        for (int s = 1; s <= 4; s++) { if (is_open((int)(cx + tx * s), (int)(cz + tz * s))) rp++; else break; }
+        for (int s = 1; s <= 4; s++) { if (is_open((int)(cx - tx * s), (int)(cz - tz * s))) rn++; else break; }
+        double sgn = (rp >= rn) ? 1.0 : -1.0;
+        posX = cx; posY = cz;
+        double bx = cx - tx * sgn, bz = cz - tz * sgn;  /* step back so torch is ahead-side */
+        if (is_open((int)bx, (int)bz)) { posX = bx; posY = bz; }
+        yaw = atan2(tz * sgn, tx * sgn);
+        pitch = -0.12;
+    }
     Uint64 prev = SDL_GetPerformanceCounter();
     double freq = (double)SDL_GetPerformanceFrequency();
     int running = 1;
@@ -1201,6 +1245,12 @@ int main(int argc, char **argv) {
             glClearColor(0, 0, 0, 1); glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         } else {
             render_3d();
+        }
+
+        /* dev screenshot: capture the pure 3D scene after a few settling frames */
+        if (shotpath && game_state == ST_PLAY && ++shot_frame >= 24) {
+            save_ppm(shotpath);
+            running = 0;
         }
 
         ov_clear();
