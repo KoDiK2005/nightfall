@@ -118,6 +118,11 @@ static int    startX, startY;           /* player spawn cell (entrance room)  */
 static int    pcellX[MAX_PILLARS], pcellY[MAX_PILLARS];   /* pillar candidates  */
 static int    pillar_count = 0;
 static double pedX[NUM_KEYS], pedZ[NUM_KEYS];             /* altar pedestals    */
+/* clutter that gives each room type its own character: crates, shelves, debris */
+typedef struct { double x, z, hwx, hwz, y0, y1; } Prop;
+#define MAX_PROPS 90
+static Prop   props[MAX_PROPS];
+static int    prop_count = 0;
 
 static int    game_state = ST_TITLE;
 static double state_time = 0.0;
@@ -661,6 +666,49 @@ static int reach_ok(void) {
     return 1;
 }
 
+/* scatter theme-appropriate clutter: crates in storage, bookshelves in the
+ * library, low debris elsewhere. Deterministic per level (stored, not rebuilt
+ * each frame) so it survives the door-open mesh rebuild.                     */
+static void generate_props(void) {
+    prop_count = 0;
+    int wdx[4] = {1, -1, 0, 0}, wdy[4] = {0, 0, 1, -1};
+    for (int i = 0; i < room_count && prop_count < MAX_PROPS; i++) {
+        Room *r = &rooms[i];
+        if (r->theme == RM_ENTRANCE || r->theme == RM_EXIT) continue;
+        int budget = (r->theme == RM_STORAGE || r->theme == RM_LIBRARY) ? 4 : 3;
+        int placed = 0;
+        for (int yy = r->y; yy < r->y + r->h && placed < budget && prop_count < MAX_PROPS; yy++)
+            for (int xx = r->x; xx < r->x + r->w && placed < budget && prop_count < MAX_PROPS; xx++) {
+                if (!is_open(xx, yy)) continue;
+                if (abs(xx - startX) + abs(yy - startY) < 3) continue;
+                if (abs(xx - (int)exitX) + abs(yy - (int)exitY) < 2) continue;
+                int busy = 0;
+                for (int j = 0; j < NUM_KEYS; j++)   if ((int)keys[j].x == xx && (int)keys[j].y == yy) busy = 1;
+                for (int j = 0; j < NUM_LOCKERS; j++) if ((int)lockers[j].x == xx && (int)lockers[j].y == yy) busy = 1;
+                for (int j = 0; j < NUM_NOTES; j++)  if ((int)notes[j].x == xx && (int)notes[j].y == yy) busy = 1;
+                if (busy) continue;
+                if (placed > 0 && (rand() & 3) != 0) continue;      /* spread them out */
+                int wx = 0, wy = 0, wall = 0;
+                for (int k = 0; k < 4; k++)
+                    if (!is_open(xx + wdx[k], yy + wdy[k])) { wx = wdx[k]; wy = wdy[k]; wall = 1; break; }
+                double cx = xx + 0.5, cz = yy + 0.5;
+                if (r->theme == RM_STORAGE && wall) {               /* stacked crates */
+                    double px = cx + wx * 0.18, pz = cz + wy * 0.18, top = 0.28 + frand() * 0.12;
+                    props[prop_count++] = (Prop){px, pz, 0.26, 0.26, 0.0, top};
+                    if (prop_count < MAX_PROPS && frand() < 0.45)
+                        props[prop_count++] = (Prop){px + 0.06, pz - 0.05, 0.17, 0.17, top, top + 0.24};
+                } else if (r->theme == RM_LIBRARY && wall) {        /* bookshelf */
+                    double px = cx + wx * 0.34, pz = cz + wy * 0.34;
+                    double hwx = (wx != 0) ? 0.11 : 0.38, hwz = (wx != 0) ? 0.38 : 0.11;
+                    props[prop_count++] = (Prop){px, pz, hwx, hwz, 0.0, 0.86 + frand() * 0.08};
+                } else {                                            /* low debris pile */
+                    props[prop_count++] = (Prop){cx, cz, 0.22 + frand() * 0.1, 0.22 + frand() * 0.1, 0.0, 0.10 + frand() * 0.10};
+                }
+                placed++;
+            }
+    }
+}
+
 static void reset_level(void) {
     generate_rooms();
     posX = startX + 0.5; posY = startY + 0.5; yaw = 0; pitch = 0;
@@ -783,6 +831,8 @@ static void reset_level(void) {
                   if (d > bd) { bd = d; bx = x; by = y; }
               }
       monX = bx + 0.5; monY = by + 0.5; }
+
+    generate_props();
 
     tension = 0; flicker = 1;
     heart_timer = step_timer = 0;
@@ -1250,7 +1300,7 @@ static void place_torches(void) {
 
 /* Rebuild the world mesh for the current maze (walls, floor, ceiling, lockers). */
 static void build_world_mesh(void) {
-    static float buf[(MW * MH * 36 + NUM_LOCKERS * 24 + NUM_KEYS * 32 + MAX_TORCHES * 72 + 256) * 8];
+    static float buf[(MW * MH * 36 + NUM_LOCKERS * 24 + NUM_KEYS * 32 + MAX_TORCHES * 72 + MAX_PROPS * 32 + 256) * 8];
     int n = 0;
     place_torches();
     /* walls: a face for every wall cell that borders an open cell */
@@ -1284,10 +1334,12 @@ static void build_world_mesh(void) {
         add_box2(buf, &n, pedX[i], pedZ[i], 0.17, 0.17, 0.0, 0.30);   /* shrine plinth */
     add_door(buf, &n, exitX, exitY, doorNx, keys_left > 0);
     lockCount = n - lockStart;
-    /* wooden torch handles */
+    /* wooden torch handles + room clutter (crates, shelves, debris) */
     brkStart = n;
     for (int i = 0; i < torch_count; i++)
         add_torch(buf, &n, torchX[i], torchZ[i], torchNx[i], torchNz[i]);
+    for (int i = 0; i < prop_count; i++)
+        add_box2(buf, &n, props[i].x, props[i].z, props[i].hwx, props[i].hwz, props[i].y0, props[i].y1);
     brkCount = n - brkStart;
 
     glBindVertexArray_(worldVAO);
@@ -1843,6 +1895,18 @@ int main(int argc, char **argv) {
                         yaw = atan2(kz - pz, kx - px); pitch = -0.05; }
                 }
             }
+        }
+        if (getenv("NIGHTFALL_SHOWPROP") && prop_count > 0) {   /* face room clutter */
+            int pi = atoi(getenv("NIGHTFALL_SHOWPROP"));
+            if (pi < 0 || pi >= prop_count) pi = 0;
+            double tx = props[pi].x, tz = props[pi].z;
+            for (double s = 2.5; s >= 1.5; s -= 0.5)
+                for (int d = 0; d < 4; d++) {
+                    double ox = (d==0)-(d==1), oz = (d==2)-(d==3);
+                    double px = tx + ox * s, pz = tz + oz * s;
+                    if (is_open((int)px, (int)pz)) { posX = px; posY = pz;
+                        yaw = atan2(tz - pz, tx - px); pitch = -0.05; }
+                }
         }
         if (getenv("NIGHTFALL_SHOWWNOTE")) {           /* face a wall-pinned note */
             double nx = notes[0].x, nz = notes[0].y;
