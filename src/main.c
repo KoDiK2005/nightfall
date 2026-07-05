@@ -32,12 +32,23 @@
 #define MW 21          /* maze width  (odd) */
 #define MH 15          /* maze height (odd) */
 #define NUM_KEYS 3
+#define NUM_LOCKERS 5
 
 #define PLAYER_WALK 3.1
 #define PLAYER_RUN  4.7
 #define MONSTER_SPD 2.15
 #define CATCH_DIST  0.55
 #define PICKUP_DIST 0.55
+#define HIDE_DIST   1.0
+
+/* how the Stalker perceives you */
+#define SEE_RANGE   9.0    /* line-of-sight vision distance             */
+#define HEAR_WALK   3.0    /* footsteps heard while walking             */
+#define HEAR_RUN    6.5    /* running is loud                           */
+
+/* stamina economy (fraction per second) */
+#define STAM_DRAIN  0.34
+#define STAM_REGEN  0.22
 
 #define CONE     0.62   /* flashlight cone half-width in camera units */
 #define AMBIENT  0.045  /* how dark the world is outside the beam      */
@@ -49,12 +60,26 @@ enum { ST_TITLE, ST_PLAY, ST_CAUGHT, ST_WIN };
 static char  map[MH][MW + 1];
 static double posX, posY, dirX, dirY, planeX, planeY;
 static double monX, monY;
-static int    gdist[MH][MW];            /* BFS flood field from the player   */
+static int    gdist[MH][MW];            /* BFS flood field toward the target */
+static double stamina = 1.0;
+static int    exhausted = 0;
+static int    hidden = 0;               /* tucked inside a locker            */
+
+/* The Stalker's mind: it only chases what it can perceive. */
+enum { AI_HUNT, AI_SEARCH, AI_WANDER };
+static int    mon_state = AI_WANDER;
+static int    tgtX, tgtY;               /* current flood-field source cell   */
+static double lastKnownX, lastKnownY;   /* where it last sensed you          */
+static double hunt_recalc = 0.0, search_time = 0.0;
 
 typedef struct { double x, y; int active; } Key;
 static Key   keys[NUM_KEYS];
 static int   keys_left;
 static double exitX, exitY;
+
+typedef struct { double x, y; } Locker;
+static Locker lockers[NUM_LOCKERS];
+static int    near_locker = -1;
 
 static int    game_state = ST_TITLE;
 static double state_time = 0.0;         /* seconds spent in current state     */
@@ -67,10 +92,10 @@ static double   zbuf[SCREEN_W];
 /* textures: 0 wall, 1 floor, 2 ceiling */
 static uint32_t tex[3][TEX * TEX];
 
-/* sprites: monster / key / exit share a small procedural texture set.
+/* sprites: 0 monster, 1 key, 2 exit, 3 locker.
  * flags: 0 = transparent, 1 = shaded normally, 2 = self-lit glow.          */
-static uint32_t spr_col[3][TEX * TEX];
-static uint8_t  spr_flg[3][TEX * TEX];
+static uint32_t spr_col[4][TEX * TEX];
+static uint8_t  spr_flg[4][TEX * TEX];
 
 /* audio */
 static Mix_Chunk *snd_ambient, *snd_heart, *snd_scare, *snd_pickup, *snd_step;
@@ -262,6 +287,21 @@ static void build_sprites(void) {
                 put_sprite_px(2, x, y, pack(10, g < 0 ? 0 : g, 40), 2);
             }
         }
+    /* 3: LOCKER — a battered steel cabinet with louvred slats */
+    for (int y = 0; y < TEX; y++)
+        for (int x = 0; x < TEX; x++) {
+            if (x < 18 || x > 46 || y < 2 || y > 63) continue;
+            int body = 70 + (int)(frand() * 12);
+            int rust = (frand() < 0.06) ? -30 : 0;
+            int door_edge = (x == 18 || x == 46 || y == 2);
+            int slat = (y > 8 && y < 40 && (y % 5 < 2));   /* vent louvres */
+            int handle = (x >= 41 && x <= 44 && y >= 34 && y <= 42);
+            int v = body + rust;
+            if (door_edge) v -= 25;
+            if (slat)      v -= 34;                         /* dark gaps    */
+            if (handle) put_sprite_px(3, x, y, pack(180, 170, 120), 1);
+            else put_sprite_px(3, x, y, pack(v, v + 4, v + 8), 1);
+        }
 }
 
 /* --------------------------------------------------------------- maze build */
@@ -298,12 +338,12 @@ static int is_open(int x, int y) {
     return x >= 0 && x < MW && y >= 0 && y < MH && map[y][x] != '#';
 }
 
-/* BFS flood field: gdist = walking distance from the player's cell. */
-static void flood_from_player(void) {
+/* BFS flood field: gdist = walking distance to (sx,sy). The Stalker walks
+ * down this gradient toward whatever cell it is currently focused on.       */
+static void flood_from_cell(int sx, int sy) {
     for (int y = 0; y < MH; y++) for (int x = 0; x < MW; x++) gdist[y][x] = 1 << 20;
     int qx[MW * MH], qy[MW * MH], h = 0, t = 0;
-    int px = (int)posX, py = (int)posY;
-    gdist[py][px] = 0; qx[t] = px; qy[t] = py; t++;
+    gdist[sy][sx] = 0; qx[t] = sx; qy[t] = sy; t++;
     int dx[] = {0, 0, -1, 1}, dy[] = {-1, 1, 0, 0};
     while (h < t) {
         int x = qx[h], y = qy[h]; h++;
@@ -315,6 +355,27 @@ static void flood_from_player(void) {
             }
         }
     }
+}
+static void set_target(int cx, int cy) {
+    tgtX = cx; tgtY = cy;
+    flood_from_cell(cx, cy);
+}
+static void pick_wander(void) {
+    for (int i = 0; i < 64; i++) {
+        int x = 1 + rand() % (MW - 2), y = 1 + rand() % (MH - 2);
+        if (is_open(x, y)) { set_target(x, y); return; }
+    }
+}
+/* Clear line of sight between two world points (no wall in the way). */
+static int has_los(double ax, double ay, double bx, double by) {
+    double dx = bx - ax, dy = by - ay;
+    double d = sqrt(dx * dx + dy * dy);
+    int steps = (int)(d * 8) + 1;
+    for (int i = 1; i < steps; i++) {
+        double t = (double)i / steps;
+        if (!is_open((int)(ax + dx * t), (int)(ay + dy * t))) return 0;
+    }
+    return 1;
 }
 
 static void reset_level(void) {
@@ -342,7 +403,23 @@ static void reset_level(void) {
             break;
         }
     }
-    /* the Stalker starts across the maze from you */
+    /* lockers to hide in, spread across the maze away from the start */
+    for (int i = 0; i < NUM_LOCKERS; i++) {
+        for (;;) {
+            int x = 1 + rand() % (MW - 2), y = 1 + rand() % (MH - 2);
+            if (!is_open(x, y)) continue;
+            if (abs(x - 1) + abs(y - 1) < 3) continue;
+            int ok = 1;
+            for (int j = 0; j < i; j++)
+                if (fabs(lockers[j].x - (x + 0.5)) + fabs(lockers[j].y - (y + 0.5)) < 3) ok = 0;
+            for (int j = 0; j < NUM_KEYS; j++)
+                if (fabs(keys[j].x - (x + 0.5)) + fabs(keys[j].y - (y + 0.5)) < 1) ok = 0;
+            if (!ok) continue;
+            lockers[i].x = x + 0.5; lockers[i].y = y + 0.5;
+            break;
+        }
+    }
+    /* the Stalker starts across the maze from you, unaware, wandering */
     for (;;) {
         int x = 1 + rand() % (MW - 2), y = 1 + rand() % (MH - 2);
         if (is_open(x, y) && abs(x - 1) + abs(y - 1) > MW / 2) {
@@ -351,7 +428,11 @@ static void reset_level(void) {
     }
     tension = 0; flicker = 1; scare_played = 0;
     heart_timer = step_timer = 0;
-    flood_from_player();
+    stamina = 1.0; exhausted = 0; hidden = 0; near_locker = -1;
+    mon_state = AI_WANDER;
+    lastKnownX = posX; lastKnownY = posY;
+    hunt_recalc = search_time = 0;
+    pick_wander();
 }
 
 /* ------------------------------------------------------------------ physics */
@@ -385,6 +466,43 @@ static void update_monster(double dt) {
         monX += vx / len * step;
         monY += vy / len * step;
     }
+}
+
+/* The Stalker's decision loop: perceive, then hunt / search / wander. */
+static void update_ai(double dt, int moving, int sprinting) {
+    double d = sqrt((posX - monX) * (posX - monX) + (posY - monY) * (posY - monY));
+    int sensed = 0;
+    if (!hidden) {
+        if (d < SEE_RANGE && has_los(monX, monY, posX, posY)) sensed = 1;
+        else if (moving && d < HEAR_WALK) sensed = 1;
+        else if (sprinting && moving && d < HEAR_RUN) sensed = 1;
+    }
+
+    if (sensed) {
+        mon_state = AI_HUNT;
+        lastKnownX = posX; lastKnownY = posY;
+        hunt_recalc -= dt;
+        if (hunt_recalc <= 0 || tgtX != (int)posX || tgtY != (int)posY) {
+            set_target((int)posX, (int)posY);
+            hunt_recalc = 0.2;
+        }
+    } else {
+        if (mon_state == AI_HUNT) {          /* just lost you: go look */
+            mon_state = AI_SEARCH;
+            search_time = 7.0;
+            set_target((int)lastKnownX, (int)lastKnownY);
+        }
+        if (mon_state == AI_SEARCH) {
+            search_time -= dt;
+            if (((int)monX == tgtX && (int)monY == tgtY) || search_time <= 0) {
+                mon_state = AI_WANDER;
+                pick_wander();
+            }
+        } else if (mon_state == AI_WANDER) {
+            if ((int)monX == tgtX && (int)monY == tgtY) pick_wander();
+        }
+    }
+    update_monster(dt);
 }
 
 /* --------------------------------------------------------------- rendering */
@@ -447,11 +565,12 @@ static void render_world(void) {
 
 typedef struct { double dist; double x, y; int type; } Sprite;
 static void render_sprites(void) {
-    Sprite s[NUM_KEYS + 2];
+    Sprite s[NUM_KEYS + NUM_LOCKERS + 2];
     int n = 0;
-    if (game_state == ST_PLAY) { s[n].x = monX; s[n].y = monY; s[n].type = 0; n++; }
+    if (game_state == ST_PLAY && !hidden) { s[n].x = monX; s[n].y = monY; s[n].type = 0; n++; }
     for (int i = 0; i < NUM_KEYS; i++)
         if (keys[i].active) { s[n].x = keys[i].x; s[n].y = keys[i].y; s[n].type = 1; n++; }
+    for (int i = 0; i < NUM_LOCKERS; i++) { s[n].x = lockers[i].x; s[n].y = lockers[i].y; s[n].type = 3; n++; }
     if (keys_left == 0) { s[n].x = exitX; s[n].y = exitY; s[n].type = 2; n++; }
     for (int i = 0; i < n; i++)
         s[i].dist = (posX - s[i].x) * (posX - s[i].x) + (posY - s[i].y) * (posY - s[i].y);
@@ -466,9 +585,12 @@ static void render_sprites(void) {
         double ty = inv * (-planeY * spx + planeX * spy);
         if (ty <= 0.05) continue;
         int screenX = (int)((SCREEN_W / 2) * (1 + tx / ty));
-        double scale = (s[i].type == 0) ? 1.15 : 0.6;   /* monster looms larger */
+        /* per-type billboard height and vertical seat on the floor */
+        double scale = 0.6, floorSeat = 0.35;
+        if (s[i].type == 0) { scale = 1.15; floorSeat = 0.0; }   /* monster looms */
+        else if (s[i].type == 3) { scale = 0.95; floorSeat = 0.15; } /* locker    */
         int h = abs((int)(SCREEN_H / ty * scale));
-        int vOff = (int)((s[i].type == 0 ? 0.0 : 0.35) * SCREEN_H / ty);
+        int vOff = (int)(floorSeat * SCREEN_H / ty);
         int y0 = -h / 2 + SCREEN_H / 2 + vOff;
         int y1 =  h / 2 + SCREEN_H / 2 + vOff;
         int w = h;
@@ -559,12 +681,43 @@ static void draw_win(void) {
     draw_text_c(SCREEN_H / 2 + 70, 3, "PRESS R TO GO BACK IN", pack(150, 150, 150));
 }
 
+static void fill_rect(int x, int y, int w, int h, uint32_t c) {
+    for (int j = y; j < y + h; j++)
+        for (int i = x; i < x + w; i++)
+            if (i >= 0 && i < SCREEN_W && j >= 0 && j < SCREEN_H)
+                fb[j * SCREEN_W + i] = c;
+}
+
+/* the slatted locker door drawn over the world while you hide */
+static void draw_hidden_overlay(void) {
+    for (int y = 0; y < SCREEN_H; y++)
+        for (int x = 0; x < SCREEN_W; x++) {
+            int gap = (x % 70) < 10;                       /* peek through slats */
+            double f = gap ? 0.72 : 0.05;
+            fb[y * SCREEN_W + x] = shade(fb[y * SCREEN_W + x], f);
+        }
+    draw_text_c(SCREEN_H - 70, 3, "HIDDEN   PRESS E TO STEP OUT", pack(180, 180, 190));
+}
+
 static void draw_hud(void) {
     char buf[32];
     snprintf(buf, sizeof(buf), "KEYS %d/%d", NUM_KEYS - keys_left, NUM_KEYS);
     draw_text(16, 16, 3, buf, pack(230, 210, 120));
     if (keys_left == 0)
         draw_text(16, 48, 3, "THE EXIT IS OPEN. RUN.", pack(90, 255, 150));
+
+    /* stamina bar, bottom-left; reddens when spent */
+    int bw = 220, bh = 16, bx = 16, by = SCREEN_H - 34;
+    fill_rect(bx - 2, by - 2, bw + 4, bh + 4, pack(20, 20, 24));
+    int fillw = (int)(bw * stamina);
+    uint32_t sc = exhausted ? pack(150, 40, 30)
+                            : pack(70 + (int)(120 * (1 - stamina)), 160, 90);
+    fill_rect(bx, by, fillw, bh, sc);
+    draw_text(bx, by - 22, 2, "STAMINA", pack(120, 130, 130));
+
+    /* interaction hint near a locker */
+    if (near_locker >= 0 && !hidden)
+        draw_text_c(SCREEN_H - 110, 3, "PRESS E TO HIDE", pack(200, 200, 160));
     /* proximity warning bleeds in as it nears */
     if (tension > 0.35) {
         int a = (int)(tension * 90);
@@ -644,7 +797,6 @@ int main(int argc, char **argv) {
 
     SDL_SetRelativeMouseMode(SDL_TRUE);
     if (getenv("NIGHTFALL_AUTOPLAY")) { game_state = ST_PLAY; state_time = 0; }
-    double recalc = 0;
     Uint64 prev = SDL_GetPerformanceCounter();
     double freq = (double)SDL_GetPerformanceFrequency();
     int running = 1;
@@ -668,27 +820,52 @@ int main(int argc, char **argv) {
                 if (k == SDLK_r && (game_state == ST_CAUGHT || game_state == ST_WIN)) {
                     reset_level(); game_state = ST_PLAY; state_time = 0;
                 }
+                if (k == SDLK_e && game_state == ST_PLAY) {
+                    if (hidden) hidden = 0;                 /* step out */
+                    else if (near_locker >= 0) {            /* tuck in  */
+                        hidden = 1;
+                        posX = lockers[near_locker].x;
+                        posY = lockers[near_locker].y;
+                    }
+                }
             }
-            if (e.type == SDL_MOUSEMOTION && game_state == ST_PLAY)
+            if (e.type == SDL_MOUSEMOTION && game_state == ST_PLAY && !hidden)
                 rotate(e.motion.xrel * 0.0025);
         }
 
         if (game_state == ST_PLAY) {
             const Uint8 *ks = SDL_GetKeyboardState(NULL);
-            double spd = (ks[SDL_SCANCODE_LSHIFT] ? PLAYER_RUN : PLAYER_WALK) * dt;
-            int moving = 0;
-            double nx = posX, ny = posY;
-            if (ks[SDL_SCANCODE_W]) { nx += dirX * spd; ny += dirY * spd; moving = 1; }
-            if (ks[SDL_SCANCODE_S]) { nx -= dirX * spd; ny -= dirY * spd; moving = 1; }
-            if (ks[SDL_SCANCODE_D]) { nx += planeX * spd; ny += planeY * spd; moving = 1; }
-            if (ks[SDL_SCANCODE_A]) { nx -= planeX * spd; ny -= planeY * spd; moving = 1; }
-            if (ks[SDL_SCANCODE_LEFT])  rotate(-1.8 * dt);
-            if (ks[SDL_SCANCODE_RIGHT]) rotate( 1.8 * dt);
-            if (moving) try_move(nx, ny, 0.15);
 
-            recalc -= dt;
-            if (recalc <= 0) { flood_from_player(); recalc = 0.22; }
-            update_monster(dt);
+            /* stamina: running drains, standing/walking recovers (hysteresis) */
+            int want_run = ks[SDL_SCANCODE_LSHIFT] && !exhausted && stamina > 0.05;
+            int moving = 0;
+            if (!hidden) {
+                double spd = (want_run ? PLAYER_RUN : PLAYER_WALK) * dt;
+                double nx = posX, ny = posY;
+                if (ks[SDL_SCANCODE_W]) { nx += dirX * spd; ny += dirY * spd; moving = 1; }
+                if (ks[SDL_SCANCODE_S]) { nx -= dirX * spd; ny -= dirY * spd; moving = 1; }
+                if (ks[SDL_SCANCODE_D]) { nx += planeX * spd; ny += planeY * spd; moving = 1; }
+                if (ks[SDL_SCANCODE_A]) { nx -= planeX * spd; ny -= planeY * spd; moving = 1; }
+                if (ks[SDL_SCANCODE_LEFT])  rotate(-1.8 * dt);
+                if (ks[SDL_SCANCODE_RIGHT]) rotate( 1.8 * dt);
+                if (moving) try_move(nx, ny, 0.15);
+            }
+            int sprinting = want_run && moving;
+            if (sprinting) stamina -= STAM_DRAIN * dt;
+            else           stamina += STAM_REGEN * dt;
+            if (stamina < 0) stamina = 0;
+            if (stamina > 1) stamina = 1;
+            if (stamina <= 0.02) exhausted = 1;
+            if (stamina >= 0.30) exhausted = 0;
+
+            /* which locker (if any) is in reach */
+            near_locker = -1;
+            for (int i = 0; i < NUM_LOCKERS; i++) {
+                double d = fabs(posX - lockers[i].x) + fabs(posY - lockers[i].y);
+                if (d < HIDE_DIST) { near_locker = i; break; }
+            }
+
+            update_ai(dt, moving, sprinting);
 
             /* flashlight flicker, heavier when the Stalker is near */
             flicker = 1.0 - (frand() < 0.04 + tension * 0.15 ? frand() * (0.4 + tension * 0.4) : 0);
@@ -708,9 +885,9 @@ int main(int argc, char **argv) {
                 double ed = (posX - exitX) * (posX - exitX) + (posY - exitY) * (posY - exitY);
                 if (ed < 0.5) { game_state = ST_WIN; state_time = 0; }
             }
-            /* caught */
+            /* caught — but never while safely hidden */
             double md = sqrt((posX - monX) * (posX - monX) + (posY - monY) * (posY - monY));
-            if (md < CATCH_DIST) {
+            if (md < CATCH_DIST && !hidden) {
                 game_state = ST_CAUGHT; state_time = 0;
                 if (snd_scare) { Mix_VolumeChunk(snd_scare, 128); Mix_PlayChannel(4, snd_scare, 0); }
             }
@@ -728,6 +905,7 @@ int main(int argc, char **argv) {
             render_world();
             render_sprites();
             draw_vignette();
+            if (hidden) draw_hidden_overlay();
             if (game_state == ST_WIN) draw_win();
             else draw_hud();
         }

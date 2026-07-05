@@ -19,9 +19,15 @@ doesn't find you first. When it does, it fills the screen.
 
 - **True raycasting renderer** into a software framebuffer — textured walls,
   cast floors & ceiling, billboarded sprites with a per-column depth buffer.
-- **The Stalker** — an AI that hunts you through the maze using a
-  breadth-first flood-field recomputed from your position several times a
-  second. It is slower than you. It never stops.
+- **The Stalker** — an AI with real perception. It **hunts** what it can see
+  (line-of-sight) or hear (footsteps — running is loud). Break its line of
+  sight and it drops to **search** mode, walking to where it last sensed you,
+  then **wanders** the halls until it catches your trail again. Navigation is
+  a breadth-first flood-field toward its current focus. It is slower than you.
+  It never truly stops.
+- **Stamina & stealth** — sprinting is fast but burns a stamina bar; run dry
+  and you're stuck at a walk while it recovers. Walk to stay quiet, or dive
+  into a **locker** (press `E`) to break line of sight and let it lose you.
 - **A flashlight, not a sun** — the world is near-black; a narrow cone of
   light and distance fog is all you get, and it *flickers* when the monster
   is close.
@@ -52,7 +58,8 @@ make        # generates audio + compiles
 |----------------|---------------|
 | `W` `A` `S` `D`| Move          |
 | Mouse          | Look          |
-| `Shift`        | Run           |
+| `Shift`        | Run (uses stamina) |
+| `E`            | Hide in / leave a locker |
 | `Enter`        | Start         |
 | `R`            | Retry / replay|
 | `Esc`          | Quit          |
