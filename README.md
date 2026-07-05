@@ -1,8 +1,12 @@
 # 🕯️ NIGHTFALL
 
 A first-person **horror game for Linux**, written in C on a hand-rolled
-raycasting engine (SDL2 + SDL2_mixer). No game engine, no external art —
+engine (SDL2 + OpenGL 3.3 + SDL2_mixer). No game engine, no external art —
 the walls, the monster and the sound are all generated in code.
+
+The primary build renders the maze as **real 3D geometry** through an OpenGL
+pipeline with free mouse-look (yaw *and* pitch). The original **raycasting**
+renderer is kept as a GPU-free fallback (`make run-classic`).
 
 You wake in a pitch-black maze with a dying flashlight. **Something is in
 here with you.** Find three keys, reach the exit — and pray *The Stalker*
@@ -17,8 +21,12 @@ doesn't find you first. When it does, it fills the screen.
 
 ## Features
 
-- **True raycasting renderer** into a software framebuffer — textured walls,
-  cast floors & ceiling, billboarded sprites with a per-column depth buffer.
+- **Real-3D OpenGL renderer** — the maze is genuine textured 3D geometry
+  (walls, floor, ceiling) drawn through an OpenGL 3.3 core pipeline with a
+  perspective camera, free mouse-look, a fragment-shader flashlight + fog,
+  and camera-facing billboards for every entity. HUD, menus and the jumpscare
+  are drawn into a software buffer and composited over the scene as an overlay.
+  (A software raycaster fallback ships as `nightfall-classic`.)
 - **The Stalker** — an AI with real perception. It **hunts** what it can see
   (line-of-sight) or hear (footsteps — running is loud). Break its line of
   sight and it drops to **search** mode, walking to where it last sensed you,
@@ -47,14 +55,16 @@ doesn't find you first. When it does, it fills the screen.
 Install the dependencies (Debian / Ubuntu):
 
 ```bash
-sudo apt install -y libsdl2-dev libsdl2-mixer-dev build-essential python3
+sudo apt install -y libsdl2-dev libsdl2-mixer-dev libgl1-mesa-dev build-essential python3
 ```
 
 Then:
 
 ```bash
-make        # generates audio + compiles
-./nightfall # or: make run
+make            # generates audio + compiles the 3D build
+./nightfall     # or: make run
+
+make run-classic  # GPU-free software raycaster fallback
 ```
 
 ## Controls
@@ -62,7 +72,7 @@ make        # generates audio + compiles
 | Key            | Action        |
 |----------------|---------------|
 | `W` `A` `S` `D`| Move          |
-| Mouse          | Look          |
+| Mouse          | Look (free, up/down too) |
 | `Shift`        | Run (uses stamina) |
 | `E`            | Hide in / leave a locker |
 | `Enter`        | Start         |
@@ -73,10 +83,11 @@ make        # generates audio + compiles
 
 | File                | Role                                                        |
 |---------------------|-------------------------------------------------------------|
-| `src/main.c`        | Engine + game: raycaster, sprites, monster AI, audio, states|
+| `src/main.c`        | 3D build: OpenGL renderer + game (AI, stealth, sanity, audio)|
+| `src/raycast.c`     | Classic software-raycaster build (`nightfall-classic`)      |
 | `tools/gen_audio.py`| Synthesises every `.wav` from scratch                        |
 | `assets/`           | Generated sounds (committed so the repo runs out of the box)|
-| `Makefile`          | `make` builds, `make run` plays, `make audio` re-synths     |
+| `Makefile`          | `make` builds 3D, `make classic` the fallback, `make audio` |
 
 ## License
 
