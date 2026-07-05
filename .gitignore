@@ -1,0 +1,10 @@
+# build artifact
+/nightfall
+
+# object files
+*.o
+
+# editor / OS cruft
+*.swp
+.vscode/
+.DS_Store
