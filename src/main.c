@@ -707,26 +707,20 @@ static const char *FSRC =
     "out vec4 frag;\n"
     /* march the floor-plane segment from the fragment to a torch; if it
      * crosses a wall cell the torch is occluded (no light-through-walls).
-     * Three parallel rays (offset perpendicular to the light direction)
-     * are averaged into a soft 0..1 factor instead of a hard yes/no --
-     * a single ray produces a hard, jittery cutoff right at corners where
-     * grazing rays flip in/out of a wall cell from one pixel to the next. */
-    "bool hit_wall(vec2 c){\n"
-    "  ivec2 ci = clamp(ivec2(int(c.x), int(c.y)), ivec2(0), ivec2(uMapSize)-1);\n"
-    "  return texelFetch(uMap, ci, 0).r > 0.5;\n"
-    "}\n"
+     * uMap is sampled with hardware bilinear filtering (not texelFetch),
+     * so each map cell blends smoothly into its neighbours over the last
+     * half-texel -- a single ray already reads a soft 0..1 value right at
+     * a cell boundary instead of a hard yes/no, with no extra ray taps
+     * (cheap, and immune to the corner light-leak a perpendicular offset
+     * hack would risk).                                                  */
     "float occlusion(vec2 p, vec2 q){\n"
     "  vec2 d = q - p; float len = length(d);\n"
-    "  vec2 perp = (len > 1e-4) ? normalize(vec2(-d.y, d.x)) : vec2(0.0);\n"
-    "  int steps = int(len / 0.2) + 1; if(steps > 48) steps = 48;\n"
+    "  int steps = int(len / 0.25) + 1; if(steps > 40) steps = 40;\n"
     "  float occ = 0.0;\n"
-    "  for(int t = -1; t <= 1; t++){\n"
-    "    vec2 pt = p + perp * (float(t) * 0.035);\n"
-    "    bool hit = false;\n"
-    "    for(int s = 1; s < steps; s++){\n"
-    "      if(hit_wall(pt + d * (float(s)/float(steps)))) { hit = true; break; }\n"
-    "    }\n"
-    "    if(hit) occ += 1.0/3.0;\n"
+    "  for(int s = 1; s < steps; s++){\n"
+    "    vec2 c = p + d * (float(s)/float(steps));\n"
+    "    occ = max(occ, texture(uMap, c / uMapSize).r);\n"
+    "    if(occ > 0.98) break;\n"
     "  }\n"
     "  return occ;\n"
     "}\n"
@@ -778,6 +772,7 @@ static GLint u_mvp, u_campos, u_camdir, u_amb, u_fogk, u_flick, u_mode;
 static GLint u_ambtint, u_scrsize;
 static GLint u_tcount, u_tpos, u_tint, u_tcol, u_tex, u_map, u_mapsize, u_occl;
 static int   occl_on = 1;
+static int   winW = SCREEN_W, winH = SCREEN_H;   /* actual drawable size (resize/fullscreen) */
 static GLuint worldVAO, worldVBO, sprVAO, sprVBO, ovVAO, ovVBO;
 static GLuint texWall, texFloor, texCeil, texLocker, texBracket, texSpr[7], texOverlay, texMap;
 static int   floorStart, floorCount, ceilStart, ceilCount, wallCount;
@@ -951,8 +946,11 @@ static void upload_map(void) {
     glBindTexture(GL_TEXTURE_2D, texMap);
     glPixelStorei(GL_UNPACK_ALIGNMENT, 1);         /* rows aren't 4-byte aligned */
     glTexImage2D(GL_TEXTURE_2D, 0, GL_R8, MW, MH, 0, GL_RED, GL_UNSIGNED_BYTE, bytes);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    /* linear: the occlusion shader samples this with texture() (not
+     * texelFetch) so cell boundaries blend smoothly over the last
+     * half-texel instead of an abrupt step.                             */
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glActiveTexture_(GL_TEXTURE0);
@@ -1060,7 +1058,7 @@ static void draw_billboard(double wx, double wz, double w, double h, double base
 }
 
 static void render_3d(void) {
-    glViewport(0, 0, SCREEN_W, SCREEN_H);
+    glViewport(0, 0, winW, winH);
     glEnable(GL_DEPTH_TEST);
     glClearColor(0, 0, 0, 1);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
@@ -1068,7 +1066,7 @@ static void render_3d(void) {
     float dxc, dyc, dzc; cam_dir(&dxc, &dyc, &dzc);
     float ex = (float)posX, ey = 0.5f, ez = (float)posY;
     float proj[16], view[16], mvp[16];
-    mat_perspective(proj, 1.30f, (float)SCREEN_W / SCREEN_H, 0.05f, 40.0f);
+    mat_perspective(proj, 1.30f, (float)winW / winH, 0.05f, 40.0f);
     mat_lookat(view, ex, ey, ez, ex + dxc, ey + dyc, ez + dzc, 0, 1, 0);
     mat_mul(mvp, proj, view);
 
@@ -1083,7 +1081,7 @@ static void render_3d(void) {
     glUniform1f_(u_fogk, (float)(FOG_K * (1.0 + 0.08 * dd)));
     glUniform1f_(u_flick, (float)flicker);
     glUniform3f_(u_ambtint, (float)(0.075 + 0.010 * dd), (float)(0.08 - 0.005 * dd), (float)(0.10 - 0.008 * dd));
-    glUniform2f_(u_scrsize, (float)SCREEN_W, (float)SCREEN_H);
+    glUniform2f_(u_scrsize, (float)winW, (float)winH);
 
     /* torch point lights: warm, individually flickering */
     static float tp[MAX_TORCHES * 3], ti[MAX_TORCHES];
@@ -1324,7 +1322,7 @@ int main(int argc, char **argv) {
 
     SDL_Window *win = SDL_CreateWindow("NIGHTFALL",
         SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-        SCREEN_W, SCREEN_H, SDL_WINDOW_OPENGL | SDL_WINDOW_SHOWN);
+        SCREEN_W, SCREEN_H, SDL_WINDOW_OPENGL | SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE);
     if (!win) { fprintf(stderr, "window: %s\n", SDL_GetError()); return 1; }
     SDL_GLContext ctx = SDL_GL_CreateContext(win);
     if (!ctx) { fprintf(stderr, "GL context: %s\n", SDL_GetError()); return 1; }
@@ -1379,6 +1377,8 @@ int main(int argc, char **argv) {
     Uint64 prev = SDL_GetPerformanceCounter();
     double freq = (double)SDL_GetPerformanceFrequency();
     int running = 1;
+    int fullscreen = 0;
+    SDL_GL_GetDrawableSize(win, &winW, &winH);
 
     while (running) {
         Uint64 now = SDL_GetPerformanceCounter();
@@ -1388,9 +1388,18 @@ int main(int argc, char **argv) {
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
             if (e.type == SDL_QUIT) running = 0;
+            if (e.type == SDL_WINDOWEVENT &&
+                (e.window.event == SDL_WINDOWEVENT_SIZE_CHANGED || e.window.event == SDL_WINDOWEVENT_RESIZED)) {
+                SDL_GL_GetDrawableSize(win, &winW, &winH);
+            }
             if (e.type == SDL_KEYDOWN) {
                 SDL_Scancode k = e.key.keysym.scancode;
                 if (k == SDL_SCANCODE_ESCAPE) running = 0;
+                if (k == SDL_SCANCODE_F11) {
+                    fullscreen = !fullscreen;
+                    SDL_SetWindowFullscreen(win, fullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0);
+                    SDL_GL_GetDrawableSize(win, &winW, &winH);
+                }
                 if ((k == SDL_SCANCODE_RETURN || k == SDL_SCANCODE_KP_ENTER ||
                      k == SDL_SCANCODE_SPACE) && game_state == ST_TITLE) {
                     depth = 1; new_game(); game_state = ST_PLAY; state_time = 0;
@@ -1495,7 +1504,7 @@ int main(int argc, char **argv) {
 
         /* ---- render: 3D scene, then 2D overlay ---- */
         if (game_state == ST_TITLE || game_state == ST_CAUGHT) {
-            glViewport(0, 0, SCREEN_W, SCREEN_H);
+            glViewport(0, 0, winW, winH);
             glClearColor(0, 0, 0, 1); glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         } else {
             render_3d();
