@@ -52,8 +52,9 @@
 #define STAM_REGEN  0.22
 
 #define MOUSE_SENS  0.0022
-#define AMBIENT     0.05
+#define AMBIENT     0.025   /* corridors are darker now; torches do the lighting */
 #define FOG_K       0.10
+#define MAX_TORCHES 32
 
 /* ------------------------------------------------------------------- state */
 enum { ST_TITLE, ST_PLAY, ST_CAUGHT, ST_WIN };
@@ -94,7 +95,17 @@ static uint32_t fb[SCREEN_W * SCREEN_H];
 
 /* CPU-side procedural pixels, later uploaded as GL textures */
 static uint32_t tex[3][TEX * TEX];         /* 0 wall, 1 floor, 2 ceiling     */
-static uint32_t spr_rgba[4][TEX * TEX];    /* 0 monster,1 key,2 exit,3 locker*/
+static uint32_t lockmetal[TEX * TEX];      /* opaque steel for locker boxes  */
+static uint32_t spr_rgba[5][TEX * TEX];    /* 0 monster,1 key,2 exit,3 loc,4 flame */
+
+/* torches fixed to walls: warm point lights that flicker */
+static float  torchX[MAX_TORCHES], torchZ[MAX_TORCHES];   /* flame world pos  */
+static float  torchNx[MAX_TORCHES], torchNz[MAX_TORCHES]; /* into-corridor dir*/
+static int    torch_count = 0;
+#define TORCH_Y 0.62f
+
+/* per-locker orientation: unit vector from cell centre toward its backing wall */
+static double lockWX[NUM_LOCKERS], lockWY[NUM_LOCKERS];
 
 /* audio */
 static Mix_Chunk *snd_ambient, *snd_heart, *snd_scare, *snd_pickup, *snd_step, *snd_whisper;
@@ -126,6 +137,8 @@ static PFNGLUNIFORMMATRIX4FVPROC        glUniformMatrix4fv_;
 static PFNGLUNIFORM3FPROC               glUniform3f_;
 static PFNGLUNIFORM1FPROC               glUniform1f_;
 static PFNGLUNIFORM1IPROC               glUniform1i_;
+static PFNGLUNIFORM3FVPROC              glUniform3fv_;
+static PFNGLUNIFORM1FVPROC              glUniform1fv_;
 static PFNGLACTIVETEXTUREPROC           glActiveTexture_;
 
 static void load_gl(void) {
@@ -153,6 +166,8 @@ static void load_gl(void) {
     glUniform3f_             = (PFNGLUNIFORM3FPROC)               SDL_GL_GetProcAddress("glUniform3f");
     glUniform1f_             = (PFNGLUNIFORM1FPROC)               SDL_GL_GetProcAddress("glUniform1f");
     glUniform1i_             = (PFNGLUNIFORM1IPROC)               SDL_GL_GetProcAddress("glUniform1i");
+    glUniform3fv_            = (PFNGLUNIFORM3FVPROC)              SDL_GL_GetProcAddress("glUniform3fv");
+    glUniform1fv_            = (PFNGLUNIFORM1FVPROC)              SDL_GL_GetProcAddress("glUniform1fv");
     glActiveTexture_          = (PFNGLACTIVETEXTUREPROC)           SDL_GL_GetProcAddress("glActiveTexture");
 }
 
@@ -242,6 +257,13 @@ static void build_textures(void) {
             tex[1][i] = crack ? pack(8, 9, 10) : pack(f, f, f + 4);
             int c = 12 + (int)(frand() * 6);
             tex[2][i] = pack(c, c, c + 2);
+            /* opaque steel for the locker cabinets */
+            int m = 74 + (int)(frand() * 10);
+            int seam = (x % 21 < 2);
+            int slat = (y > 8 && y < 34 && (y % 6 < 2));
+            int handle = (x >= 48 && x <= 54 && y >= 30 && y <= 40);
+            int mv = m; if (seam) mv -= 22; if (slat) mv -= 28;
+            lockmetal[i] = handle ? pack(180, 168, 120) : pack(mv, mv + 4, mv + 9);
         }
 }
 
@@ -249,7 +271,7 @@ static void build_textures(void) {
  *   a = 0   transparent (discarded)
  *   a = 128 shaded by the flashlight
  *   a = 255 self-lit glow                                                    */
-static uint8_t spr_flg[4][TEX * TEX];
+static uint8_t spr_flg[5][TEX * TEX];
 static void put_spr(int t, int x, int y, uint32_t col, uint8_t flg) {
     if (x < 0 || x >= TEX || y < 0 || y >= TEX) return;
     spr_flg[t][y * TEX + x] = flg;
@@ -305,8 +327,24 @@ static void build_sprites(void) {
             if (handle) put_spr(3, x, y, pack(180, 170, 120), 1);
             else put_spr(3, x, y, pack(v, v + 4, v + 8), 1);
         }
+    /* 4: TORCH FLAME — a glowing teardrop, self-lit */
+    for (int y = 0; y < TEX; y++)
+        for (int x = 0; x < TEX; x++) {
+            double fx = x - 32.0;
+            double top = 16.0, bot = 58.0;
+            if (y < top || y > bot) continue;
+            double u = (y - top) / (bot - top);           /* 0 tip .. 1 base */
+            double half = 3.0 + 15.0 * sin(u * 3.14159);  /* teardrop width  */
+            double a = fabs(fx) / half;
+            if (a > 1.0) continue;
+            /* colour: white-hot core -> yellow -> orange -> red edge */
+            int r = 255;
+            int g = (int)(230 - a * 150 - u * 40);
+            int b = (int)(140 - a * 140 - u * 60);
+            put_spr(4, x, y, pack(r, g, b), 2);
+        }
     /* bake the flag into the alpha byte for the shader */
-    for (int t = 0; t < 4; t++)
+    for (int t = 0; t < 5; t++)
         for (int i = 0; i < TEX * TEX; i++) {
             int a = spr_flg[t][i] == 0 ? 0 : (spr_flg[t][i] == 1 ? 128 : 255);
             spr_rgba[t][i] = (spr_rgba[t][i] & 0x00FFFFFF) | ((uint32_t)a << 24);
@@ -392,13 +430,22 @@ static void reset_level(void) {
         for (;;) {
             int x = 1 + rand() % (MW - 2), y = 1 + rand() % (MH - 2);
             if (!is_open(x, y) || abs(x - 1) + abs(y - 1) < 3) continue;
+            /* needs a wall to stand against */
+            int wx = 0, wy = 0;
+            if (!is_open(x + 1, y)) { wx = 1; wy = 0; }
+            else if (!is_open(x - 1, y)) { wx = -1; wy = 0; }
+            else if (!is_open(x, y + 1)) { wx = 0; wy = 1; }
+            else if (!is_open(x, y - 1)) { wx = 0; wy = -1; }
+            else continue;
             int ok = 1;
             for (int j = 0; j < i; j++)
                 if (fabs(lockers[j].x - (x + 0.5)) + fabs(lockers[j].y - (y + 0.5)) < 3) ok = 0;
             for (int j = 0; j < NUM_KEYS; j++)
                 if (fabs(keys[j].x - (x + 0.5)) + fabs(keys[j].y - (y + 0.5)) < 1) ok = 0;
             if (!ok) continue;
-            lockers[i].x = x + 0.5; lockers[i].y = y + 0.5; break;
+            lockers[i].x = x + 0.5; lockers[i].y = y + 0.5;
+            lockWX[i] = wx; lockWY[i] = wy;
+            break;
         }
     }
     for (;;) {
@@ -555,22 +602,34 @@ static const char *FSRC =
     "uniform vec3 uCamPos; uniform vec3 uCamDir;\n"
     "uniform float uAmbient; uniform float uFogK; uniform float uFlicker;\n"
     "uniform int uMode;\n"                 /* 0 world, 1 sprite */
+    "#define MAXT 32\n"
+    "uniform int uTorchCount;\n"
+    "uniform vec3 uTorchPos[MAXT];\n"
+    "uniform float uTorchInt[MAXT];\n"
+    "uniform vec3 uTorchCol;\n"
     "out vec4 frag;\n"
     "void main(){\n"
     "  vec4 t = texture(uTex, vUV);\n"
     "  float emissive = 0.0;\n"
     "  if(uMode==1){ if(t.a < 0.25) discard; emissive = step(0.75, t.a); }\n"
+    "  vec3 nrm = normalize(vN);\n"
     "  vec3 d = vW - uCamPos; float dist = length(d);\n"
     "  vec3 dn = dist > 1e-4 ? d/dist : vec3(0,0,1);\n"
+    /* hand-held flashlight: narrow cone, distance fog, flickers */
     "  float cone = dot(dn, normalize(uCamDir));\n"
     "  float coneF = clamp((cone - 0.55) / 0.45, 0.0, 1.0); coneF *= coneF;\n"
     "  float fog = 1.0 / (1.0 + dist*dist*uFogK);\n"
-    "  float b = uAmbient + (1.0 - uAmbient) * coneF;\n"
-    "  b *= (0.12 + 0.88 * fog);\n"
-    "  if(uMode==0){ float nf = max(dot(normalize(vN), -dn), 0.15); b *= (0.55 + 0.45*nf); }\n"
-    "  b *= uFlicker;\n"
-    "  vec3 col = t.rgb * b;\n"
-    "  col = mix(col, t.rgb * (0.4 + 0.6*fog), emissive);\n"
+    "  float flash = coneF * (0.12 + 0.88 * fog) * uFlicker;\n"
+    "  vec3 lit = vec3(uAmbient) + vec3(flash);\n"
+    /* warm torch point lights */
+    "  for(int i=0;i<uTorchCount;i++){\n"
+    "    vec3 L = uTorchPos[i] - vW; float td = length(L);\n"
+    "    float att = uTorchInt[i] / (1.0 + 0.8*td + 2.2*td*td);\n"
+    "    float facing = (uMode==0) ? max(dot(nrm, L/max(td,1e-3)), 0.0) : 1.0;\n"
+    "    lit += uTorchCol * att * facing;\n"
+    "  }\n"
+    "  vec3 col = t.rgb * lit;\n"
+    "  col = mix(col, t.rgb * (0.55 + 0.45*fog), emissive);\n"  /* glow ignores lighting */
     "  frag = vec4(col, 1.0);\n"
     "}\n";
 static const char *OVS =
@@ -584,9 +643,10 @@ static const char *OFS =
 
 static GLuint prog3d, progOv;
 static GLint u_mvp, u_campos, u_camdir, u_amb, u_fogk, u_flick, u_mode;
+static GLint u_tcount, u_tpos, u_tint, u_tcol;
 static GLuint worldVAO, worldVBO, sprVAO, sprVBO, ovVAO, ovVBO;
-static GLuint texWall, texFloor, texCeil, texSpr[4], texOverlay;
-static int   floorStart, floorCount, ceilStart, ceilCount, wallCount;
+static GLuint texWall, texFloor, texCeil, texLocker, texSpr[5], texOverlay;
+static int   floorStart, floorCount, ceilStart, ceilCount, wallCount, lockStart, lockCount;
 
 static GLuint compile(GLenum type, const char *src) {
     GLuint s = glCreateShader_(type);
@@ -634,9 +694,49 @@ static void push_quad(float *buf, int *n, float a[3], float b[3], float c[3], fl
     push_v(buf, n, d[0], d[1], d[2], 0, 0, nx, ny, nz);
 }
 
-/* Rebuild the world mesh for the current maze (walls, then floor, then ceil). */
+/* a solid cabinet box standing against its backing wall (wdir -> the wall) */
+static void add_locker_box(float *buf, int *n, double cx, double cz, double wdx, double wdz) {
+    double tdx = -wdz, tdz = wdx;                 /* tangent along the wall    */
+    double hw = 0.30, depth = 0.34, ht = 0.92;
+    double bx = cx + wdx * 0.46,  bz = cz + wdz * 0.46;         /* back centre  */
+    double fx = cx + wdx * (0.46 - depth), fz = cz + wdz * (0.46 - depth); /* front */
+    float FL[3]={fx+tdx*hw,0,fz+tdz*hw},  FR[3]={fx-tdx*hw,0,fz-tdz*hw};
+    float BL[3]={bx+tdx*hw,0,bz+tdz*hw},  BR[3]={bx-tdx*hw,0,bz-tdz*hw};
+    float FLt[3]={FL[0],ht,FL[2]}, FRt[3]={FR[0],ht,FR[2]};
+    float BLt[3]={BL[0],ht,BL[2]}, BRt[3]={BR[0],ht,BR[2]};
+    push_quad(buf, n, FL, FR, FRt, FLt, -wdx, 0, -wdz, 1);      /* front (door) */
+    push_quad(buf, n, BL, FL, FLt, BLt, tdx, 0, tdz, 1);        /* left side    */
+    push_quad(buf, n, FR, BR, BRt, FRt, -tdx, 0, -tdz, 1);      /* right side   */
+    push_quad(buf, n, FLt, FRt, BRt, BLt, 0, 1, 0, 1);          /* top          */
+}
+
+/* Scatter flickering wall torches through the maze, well spaced. */
+static void place_torches(void) {
+    torch_count = 0;
+    int dx[] = {1, -1, 0, 0}, dy[] = {0, 0, 1, -1};
+    for (int y = 1; y < MH - 1 && torch_count < MAX_TORCHES; y++)
+        for (int x = 1; x < MW - 1 && torch_count < MAX_TORCHES; x++) {
+            if (!is_open(x, y) || frand() < 0.55) continue;
+            for (int k = 0; k < 4; k++) {
+                if (is_open(x + dx[k], y + dy[k])) continue;    /* need a wall  */
+                float tx = x + 0.5f + dx[k] * 0.48f, tz = y + 0.5f + dy[k] * 0.48f;
+                int ok = 1;
+                for (int j = 0; j < torch_count; j++) {
+                    float ddx = tx - torchX[j], ddz = tz - torchZ[j];
+                    if (ddx * ddx + ddz * ddz < 6.0f) { ok = 0; break; }
+                }
+                if (!ok) continue;
+                torchX[torch_count] = tx; torchZ[torch_count] = tz;
+                torchNx[torch_count] = -dx[k]; torchNz[torch_count] = -dy[k];
+                torch_count++;
+                break;
+            }
+        }
+}
+
+/* Rebuild the world mesh for the current maze (walls, floor, ceiling, lockers). */
 static void build_world_mesh(void) {
-    static float buf[MW * MH * 36 * 8];
+    static float buf[(MW * MH * 36 + NUM_LOCKERS * 24 + 64) * 8];
     int n = 0;
     /* walls: a face for every wall cell that borders an open cell */
     for (int y = 0; y < MH; y++)
@@ -661,10 +761,17 @@ static void build_world_mesh(void) {
         for (int x = 0; x < MW; x++)
             if (is_open(x, y)) { float a[3]={x,1,y+1}, b[3]={x+1,1,y+1}, c[3]={x+1,1,y}, d[3]={x,1,y}; push_quad(buf,&n,a,b,c,d,0,-1,0,1); }
     ceilCount = n - ceilStart;
+    /* locker cabinets — solid boxes against their walls */
+    lockStart = n;
+    for (int i = 0; i < NUM_LOCKERS; i++)
+        add_locker_box(buf, &n, lockers[i].x, lockers[i].y, lockWX[i], lockWY[i]);
+    lockCount = n - lockStart;
 
     glBindVertexArray_(worldVAO);
     glBindBuffer_(GL_ARRAY_BUFFER, worldVBO);
     glBufferData_(GL_ARRAY_BUFFER, n * 8 * sizeof(float), buf, GL_STATIC_DRAW);
+
+    place_torches();
 }
 
 static void new_game(void) { reset_level(); build_world_mesh(); }
@@ -687,6 +794,10 @@ static void gl_init(void) {
     u_fogk = glGetUniformLocation_(prog3d, "uFogK");
     u_flick = glGetUniformLocation_(prog3d, "uFlicker");
     u_mode = glGetUniformLocation_(prog3d, "uMode");
+    u_tcount = glGetUniformLocation_(prog3d, "uTorchCount");
+    u_tpos = glGetUniformLocation_(prog3d, "uTorchPos");
+    u_tint = glGetUniformLocation_(prog3d, "uTorchInt");
+    u_tcol = glGetUniformLocation_(prog3d, "uTorchCol");
 
     glGenVertexArrays_(1, &worldVAO); glGenBuffers_(1, &worldVBO);
     glBindVertexArray_(worldVAO); glBindBuffer_(GL_ARRAY_BUFFER, worldVBO); setup_attribs();
@@ -706,7 +817,8 @@ static void gl_init(void) {
     glEnableVertexAttribArray_(1);
 
     texWall = make_texture(tex[0]); texFloor = make_texture(tex[1]); texCeil = make_texture(tex[2]);
-    for (int i = 0; i < 4; i++) texSpr[i] = make_texture(spr_rgba[i]);
+    texLocker = make_texture(lockmetal);
+    for (int i = 0; i < 5; i++) texSpr[i] = make_texture(spr_rgba[i]);
     glGenTextures(1, &texOverlay);
     glBindTexture(GL_TEXTURE_2D, texOverlay);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, SCREEN_W, SCREEN_H, 0, GL_BGRA, GL_UNSIGNED_BYTE, fb);
@@ -768,21 +880,38 @@ static void render_3d(void) {
     glUniform1f_(u_fogk, (float)FOG_K);
     glUniform1f_(u_flick, (float)flicker);
 
+    /* torch point lights: warm, individually flickering */
+    static float tp[MAX_TORCHES * 3], ti[MAX_TORCHES];
+    for (int i = 0; i < torch_count; i++) {
+        tp[i * 3] = torchX[i]; tp[i * 3 + 1] = TORCH_Y; tp[i * 3 + 2] = torchZ[i];
+        double f = 1.15 + 0.22 * sin(state_time * 7.0 + i * 1.7) + (frand() - 0.5) * 0.12;
+        ti[i] = (float)(f * 1.35);
+    }
+    glUniform1i_(u_tcount, torch_count);
+    if (torch_count > 0) {
+        glUniform3fv_(u_tpos, torch_count, tp);
+        glUniform1fv_(u_tint, torch_count, ti);
+    }
+    glUniform3f_(u_tcol, 1.0f, 0.52f, 0.18f);
+
     /* world */
     glUniform1i_(u_mode, 0);
     glBindVertexArray_(worldVAO);
     glActiveTexture_(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, texWall);  glDrawArrays(GL_TRIANGLES, 0, wallCount);
-    glBindTexture(GL_TEXTURE_2D, texFloor); glDrawArrays(GL_TRIANGLES, floorStart, floorCount);
-    glBindTexture(GL_TEXTURE_2D, texCeil);  glDrawArrays(GL_TRIANGLES, ceilStart, ceilCount);
+    glBindTexture(GL_TEXTURE_2D, texWall);   glDrawArrays(GL_TRIANGLES, 0, wallCount);
+    glBindTexture(GL_TEXTURE_2D, texFloor);  glDrawArrays(GL_TRIANGLES, floorStart, floorCount);
+    glBindTexture(GL_TEXTURE_2D, texCeil);   glDrawArrays(GL_TRIANGLES, ceilStart, ceilCount);
+    glBindTexture(GL_TEXTURE_2D, texLocker); glDrawArrays(GL_TRIANGLES, lockStart, lockCount);
 
     /* sprites (billboards) — depth tested, alpha discarded in shader */
     if (!hidden) draw_billboard(monX, monY, 1.15, 0.0, 0, mvp);
     for (int i = 0; i < NUM_KEYS; i++)
         if (keys[i].active) draw_billboard(keys[i].x, keys[i].y, 0.4, 0.35, 1, mvp);
-    for (int i = 0; i < NUM_LOCKERS; i++)
-        draw_billboard(lockers[i].x, lockers[i].y, 0.9, 0.0, 3, mvp);
     if (keys_left == 0) draw_billboard(exitX, exitY, 0.95, 0.02, 2, mvp);
+    /* torch flames, nudged just off the wall into the corridor */
+    for (int i = 0; i < torch_count; i++)
+        draw_billboard(torchX[i] + torchNx[i] * 0.06, torchZ[i] + torchNz[i] * 0.06,
+                       0.34, TORCH_Y - 0.17, 4, mvp);
 }
 
 /* --------------------------------------------------- 2D overlay (into fb) */
