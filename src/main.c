@@ -32,11 +32,12 @@
 #define SCREEN_H 576
 #define TEX      64
 
-#define MW 21
-#define MH 15
+#define MW 29
+#define MH 21
 #define NUM_KEYS 3
 #define NUM_LOCKERS 5
 #define NUM_NOTES 2
+#define MAX_ROOMS 14
 
 #define PLAYER_WALK 3.1
 #define PLAYER_RUN  4.7
@@ -95,6 +96,18 @@ static int    depth = 1;                /* current floor (1 = topmost)        */
 static double mon_speed = MONSTER_SPD;  /* scales with depth                  */
 static double upX, upY;                 /* stairs back up (only when depth>1) */
 static int    has_up = 0;
+
+/* the floor is built from themed rectangular rooms joined by corridors,
+ * instead of a featureless maze. Each room's theme decides what it holds. */
+enum { RM_ENTRANCE, RM_KEY, RM_STORAGE, RM_LIBRARY, RM_HALL, RM_EXIT };
+typedef struct { int x, y, w, h, theme; } Room;
+static Room   rooms[MAX_ROOMS];
+static int    room_count = 0;
+static int    startX, startY;           /* player spawn cell (entrance room)  */
+#define MAX_PILLARS 24
+static int    pcellX[MAX_PILLARS], pcellY[MAX_PILLARS];   /* pillar candidates  */
+static int    pillar_count = 0;
+static double pedX[NUM_KEYS], pedZ[NUM_KEYS];             /* altar pedestals    */
 
 static int    game_state = ST_TITLE;
 static double state_time = 0.0;
@@ -431,32 +444,87 @@ static void build_sprites(void) {
         }
 }
 
-/* --------------------------------------------------------------- maze build */
-static void carve(void) {
+/* --------------------------------------------------------------- floor build */
+static int is_open(int x, int y) { return x >= 0 && x < MW && y >= 0 && y < MH && map[y][x] != '#'; }
+
+static void room_center(const Room *r, int *cx, int *cy) { *cx = r->x + r->w / 2; *cy = r->y + r->h / 2; }
+
+static void carve_rect(int x0, int y0, int w, int h) {
+    for (int y = y0; y < y0 + h; y++)
+        for (int x = x0; x < x0 + w; x++)
+            if (x > 0 && x < MW - 1 && y > 0 && y < MH - 1) map[y][x] = '.';
+}
+static void carve_h(int x0, int x1, int y) {
+    if (x0 > x1) { int t = x0; x0 = x1; x1 = t; }
+    for (int x = x0; x <= x1; x++) if (y > 0 && y < MH - 1 && x > 0 && x < MW - 1) map[y][x] = '.';
+}
+static void carve_v(int y0, int y1, int x) {
+    if (y0 > y1) { int t = y0; y0 = y1; y1 = t; }
+    for (int y = y0; y <= y1; y++) if (x > 0 && x < MW - 1 && y > 0 && y < MH - 1) map[y][x] = '.';
+}
+
+/* Build the floor from non-overlapping rectangular rooms joined by L-shaped
+ * corridors. Rooms are themed afterwards so each has a purpose. */
+static void generate_rooms(void) {
     for (int y = 0; y < MH; y++) { for (int x = 0; x < MW; x++) map[y][x] = '#'; map[y][MW] = 0; }
-    int sx[MW * MH], sy[MW * MH], sp = 0, cx = 1, cy = 1;
-    map[cy][cx] = '.'; sx[sp] = cx; sy[sp] = cy; sp++;
-    int dx[] = {0, 0, -2, 2}, dy[] = {-2, 2, 0, 0};
-    while (sp > 0) {
-        cx = sx[sp - 1]; cy = sy[sp - 1];
-        int o[4] = {0, 1, 2, 3};
-        for (int i = 3; i > 0; i--) { int j = rand() % (i + 1), t = o[i]; o[i] = o[j]; o[j] = t; }
-        int moved = 0;
-        for (int k = 0; k < 4; k++) {
-            int nx = cx + dx[o[k]], ny = cy + dy[o[k]];
-            if (nx > 0 && nx < MW - 1 && ny > 0 && ny < MH - 1 && map[ny][nx] == '#') {
-                map[cy + dy[o[k]] / 2][cx + dx[o[k]] / 2] = '.';
-                map[ny][nx] = '.'; sx[sp] = nx; sy[sp] = ny; sp++; moved = 1; break;
+    room_count = 0;
+    int target = 7 + rand() % 4;                         /* 7..10 rooms         */
+    for (int att = 0; att < 300 && room_count < target; att++) {
+        int w = 4 + rand() % 5, h = 3 + rand() % 4;       /* 4..8 x 3..6        */
+        int x = 1 + rand() % (MW - w - 1), y = 1 + rand() % (MH - h - 1);
+        int ok = 1;
+        for (int i = 0; i < room_count; i++) {            /* keep a 1-cell gap  */
+            Room *r = &rooms[i];
+            if (x - 1 < r->x + r->w && x + w + 1 > r->x &&
+                y - 1 < r->y + r->h && y + h + 1 > r->y) { ok = 0; break; }
+        }
+        if (!ok) continue;
+        rooms[room_count].x = x; rooms[room_count].y = y;
+        rooms[room_count].w = w; rooms[room_count].h = h;
+        rooms[room_count].theme = RM_HALL;
+        room_count++;
+        carve_rect(x, y, w, h);
+    }
+    /* connect each room to the previous one (guarantees full connectivity) */
+    for (int i = 1; i < room_count; i++) {
+        int ax, ay, bx, by;
+        room_center(&rooms[i - 1], &ax, &ay);
+        room_center(&rooms[i], &bx, &by);
+        if (rand() & 1) { carve_h(ax, bx, ay); carve_v(ay, by, bx); }
+        else            { carve_v(ay, by, ax); carve_h(ax, bx, by); }
+    }
+    /* -------- assign themes -------- */
+    rooms[0].theme = RM_ENTRANCE;
+    room_center(&rooms[0], &startX, &startY);
+    /* exit = room whose centre is farthest from the entrance */
+    int best = 0; long bestd = -1;
+    for (int i = 1; i < room_count; i++) {
+        int cx, cy; room_center(&rooms[i], &cx, &cy);
+        long d = (long)(cx - startX) * (cx - startX) + (long)(cy - startY) * (cy - startY);
+        if (d > bestd) { bestd = d; best = i; }
+    }
+    rooms[best].theme = RM_EXIT;
+    /* the first few remaining rooms hold keys (shrines); then storage/library */
+    int keyrooms = 0;
+    for (int i = 1; i < room_count; i++) {
+        if (rooms[i].theme != RM_HALL) continue;
+        if (keyrooms < NUM_KEYS) { rooms[i].theme = RM_KEY; keyrooms++; }
+        else rooms[i].theme = (i & 1) ? RM_STORAGE : RM_LIBRARY;
+    }
+    /* -------- pillar candidates in the larger halls (columns for cover) ----- */
+    pillar_count = 0;
+    for (int i = 0; i < room_count && pillar_count < MAX_PILLARS; i++) {
+        Room *r = &rooms[i];
+        if (r->theme == RM_ENTRANCE || r->theme == RM_EXIT) continue;
+        if (r->w >= 6 && r->h >= 5) {                     /* big enough for cover */
+            int px[2] = { r->x + 1, r->x + r->w - 2 };
+            int py = r->y + r->h / 2;
+            for (int k = 0; k < 2 && pillar_count < MAX_PILLARS; k++) {
+                pcellX[pillar_count] = px[k]; pcellY[pillar_count] = py; pillar_count++;
             }
         }
-        if (!moved) sp--;
-    }
-    for (int i = 0; i < MW * MH / 12; i++) {
-        int x = 1 + rand() % (MW - 2), y = 1 + rand() % (MH - 2);
-        if (map[y][x] == '#') map[y][x] = '.';
     }
 }
-static int is_open(int x, int y) { return x >= 0 && x < MW && y >= 0 && y < MH && map[y][x] != '#'; }
 
 static void flood_from_cell(int sx, int sy) {
     for (int y = 0; y < MH; y++) for (int x = 0; x < MW; x++) gdist[y][x] = 1 << 20;
@@ -501,63 +569,114 @@ static const char *NOTES[][6] = {
 };
 static const int NOTE_POOL = 6;
 
+/* flood from the entrance; true only if the exit and every key are reachable.
+ * Used to reject any decorative pillar that would sever the floor.          */
+static int reach_ok(void) {
+    flood_from_cell(startX, startY);
+    if (gdist[(int)exitY][(int)exitX] >= (1 << 20)) return 0;
+    for (int i = 0; i < NUM_KEYS; i++)
+        if (gdist[(int)keys[i].y][(int)keys[i].x] >= (1 << 20)) return 0;
+    return 1;
+}
+
 static void reset_level(void) {
-    carve();
-    posX = 1.5; posY = 1.5; yaw = 0; pitch = 0;
+    generate_rooms();
+    posX = startX + 0.5; posY = startY + 0.5; yaw = 0; pitch = 0;
     mon_speed = MONSTER_SPD + (depth - 1) * 0.10;
     if (mon_speed > 3.2) mon_speed = 3.2;
-    /* stairs down at the far corner; stairs up near start on deeper floors */
-    exitX = MW - 2 + 0.5; exitY = MH - 2 + 0.5; map[MH - 2][MW - 2] = '.';
+
+    /* stairs down live in the exit room; stairs up in a corner of the entrance */
+    for (int i = 0; i < room_count; i++)
+        if (rooms[i].theme == RM_EXIT) { int cx, cy; room_center(&rooms[i], &cx, &cy); exitX = cx + 0.5; exitY = cy + 0.5; }
     has_up = (depth > 1);
-    upX = 1 + 0.5; upY = MH - 2 + 0.5; map[MH - 2][1] = '.';
+    int ux = rooms[0].x + 1, uy = rooms[0].y + 1;
+    if (ux == startX && uy == startY) ux = rooms[0].x + rooms[0].w - 2;
+    upX = ux + 0.5; upY = uy + 0.5;
+
+    /* keys sit on pedestals at the heart of the shrine (RM_KEY) rooms */
     keys_left = NUM_KEYS;
-    for (int i = 0; i < NUM_KEYS; i++) {
-        for (;;) {
-            int x = 1 + rand() % (MW - 2), y = 1 + rand() % (MH - 2);
-            if (!is_open(x, y) || abs(x - 1) + abs(y - 1) < 6) continue;
-            int ok = 1;
-            for (int j = 0; j < i; j++)
-                if (fabs(keys[j].x - (x + 0.5)) + fabs(keys[j].y - (y + 0.5)) < 4) ok = 0;
-            if (!ok) continue;
-            keys[i].x = x + 0.5; keys[i].y = y + 0.5; keys[i].active = 1; break;
-        }
+    int ki = 0;
+    for (int i = 0; i < room_count && ki < NUM_KEYS; i++) {
+        if (rooms[i].theme != RM_KEY) continue;
+        int cx, cy; room_center(&rooms[i], &cx, &cy);
+        keys[ki].x = cx + 0.5; keys[ki].y = cy + 0.5; keys[ki].active = 1;
+        pedX[ki] = cx + 0.5; pedZ[ki] = cy + 0.5; ki++;
     }
-    for (int i = 0; i < NUM_LOCKERS; i++) {
-        for (;;) {
-            int x = 1 + rand() % (MW - 2), y = 1 + rand() % (MH - 2);
-            if (!is_open(x, y) || abs(x - 1) + abs(y - 1) < 3) continue;
-            /* needs a wall to stand against */
-            int wx = 0, wy = 0;
-            if (!is_open(x + 1, y)) { wx = 1; wy = 0; }
-            else if (!is_open(x - 1, y)) { wx = -1; wy = 0; }
-            else if (!is_open(x, y + 1)) { wx = 0; wy = 1; }
-            else if (!is_open(x, y - 1)) { wx = 0; wy = -1; }
-            else continue;
-            int ok = 1;
-            for (int j = 0; j < i; j++)
-                if (fabs(lockers[j].x - (x + 0.5)) + fabs(lockers[j].y - (y + 0.5)) < 3) ok = 0;
-            for (int j = 0; j < NUM_KEYS; j++)
-                if (fabs(keys[j].x - (x + 0.5)) + fabs(keys[j].y - (y + 0.5)) < 1) ok = 0;
-            if (!ok) continue;
-            lockers[i].x = x + 0.5; lockers[i].y = y + 0.5;
-            lockWX[i] = wx; lockWY[i] = wy;
-            break;
-        }
-    }
-    /* lore notes on open cells away from the start */
-    for (int i = 0; i < NUM_NOTES; i++) {
-        for (;;) {
-            int x = 1 + rand() % (MW - 2), y = 1 + rand() % (MH - 2);
-            if (!is_open(x, y) || abs(x - 1) + abs(y - 1) < 4) continue;
-            notes[i].x = x + 0.5; notes[i].y = y + 0.5; notes[i].active = 1;
-            notes[i].text = rand() % NOTE_POOL;
-            break;
-        }
-    }
-    for (;;) {
+    while (ki < NUM_KEYS) {                                /* fallback scatter    */
         int x = 1 + rand() % (MW - 2), y = 1 + rand() % (MH - 2);
-        if (is_open(x, y) && abs(x - 1) + abs(y - 1) > MW / 2) { monX = x + 0.5; monY = y + 0.5; break; }
+        if (!is_open(x, y) || (abs(x - startX) + abs(y - startY)) < 4) continue;
+        keys[ki].x = x + 0.5; keys[ki].y = y + 0.5; keys[ki].active = 1;
+        pedX[ki] = x + 0.5; pedZ[ki] = y + 0.5; ki++;
     }
+
+    /* raise the candidate pillars into columns, skipping any that would block
+     * a key, the exit, the spawn, or sever the floor's connectivity.        */
+    for (int p = 0; p < pillar_count; p++) {
+        int px = pcellX[p], py = pcellY[p];
+        if (!is_open(px, py) || (px == startX && py == startY)) continue;
+        if ((int)exitX == px && (int)exitY == py) continue;
+        int skip = 0;
+        for (int i = 0; i < NUM_KEYS; i++) if ((int)keys[i].x == px && (int)keys[i].y == py) skip = 1;
+        if (skip) continue;
+        map[py][px] = '#';
+        if (!reach_ok()) map[py][px] = '.';               /* undo: it disconnects */
+    }
+
+    /* lockers line the walls of storage rooms (then anywhere, to fill quota) */
+    int wdx[4] = {1, -1, 0, 0}, wdy[4] = {0, 0, 1, -1};
+    int li = 0;
+    for (int pass = 0; pass < 2 && li < NUM_LOCKERS; pass++)
+        for (int i = 0; i < room_count && li < NUM_LOCKERS; i++) {
+            if (pass == 0 && rooms[i].theme != RM_STORAGE) continue;
+            Room *r = &rooms[i];
+            for (int yy = r->y; yy < r->y + r->h && li < NUM_LOCKERS; yy++)
+                for (int xx = r->x; xx < r->x + r->w && li < NUM_LOCKERS; xx++) {
+                    if (!is_open(xx, yy) || abs(xx - startX) + abs(yy - startY) < 3) continue;
+                    int wx = 0, wy = 0, found = 0;
+                    for (int k = 0; k < 4; k++)
+                        if (!is_open(xx + wdx[k], yy + wdy[k])) { wx = wdx[k]; wy = wdy[k]; found = 1; break; }
+                    if (!found) continue;
+                    int ok = 1;
+                    for (int j = 0; j < li; j++)
+                        if (fabs(lockers[j].x - (xx + 0.5)) + fabs(lockers[j].y - (yy + 0.5)) < 2) ok = 0;
+                    for (int j = 0; j < NUM_KEYS; j++)
+                        if (fabs(keys[j].x - (xx + 0.5)) + fabs(keys[j].y - (yy + 0.5)) < 1.5) ok = 0;
+                    if (!ok) continue;
+                    lockers[li].x = xx + 0.5; lockers[li].y = yy + 0.5;
+                    lockWX[li] = wx; lockWY[li] = wy; li++;
+                }
+        }
+
+    /* lore notes rest in the library rooms (then anywhere) */
+    int ni = 0;
+    for (int pass = 0; pass < 2 && ni < NUM_NOTES; pass++)
+        for (int i = 0; i < room_count && ni < NUM_NOTES; i++) {
+            if (pass == 0 && rooms[i].theme != RM_LIBRARY) continue;
+            int cx, cy; room_center(&rooms[i], &cx, &cy);
+            if (!is_open(cx, cy) || abs(cx - startX) + abs(cy - startY) < 3) continue;
+            int dup = 0;
+            for (int j = 0; j < ni; j++) if (fabs(notes[j].x - (cx + 0.5)) < 0.1 && fabs(notes[j].y - (cy + 0.5)) < 0.1) dup = 1;
+            if (dup) continue;
+            notes[ni].x = cx + 0.5; notes[ni].y = cy + 0.5; notes[ni].active = 1;
+            notes[ni].text = rand() % NOTE_POOL; ni++;
+        }
+    while (ni < NUM_NOTES) {
+        int x = 1 + rand() % (MW - 2), y = 1 + rand() % (MH - 2);
+        if (!is_open(x, y)) continue;
+        notes[ni].x = x + 0.5; notes[ni].y = y + 0.5; notes[ni].active = 1;
+        notes[ni].text = rand() % NOTE_POOL; ni++;
+    }
+
+    /* the Stalker starts as far from the entrance as the floor allows */
+    { int bx = startX, by = startY; long bd = -1;
+      for (int y = 1; y < MH - 1; y++)
+          for (int x = 1; x < MW - 1; x++)
+              if (is_open(x, y)) {
+                  long d = (long)(x - startX) * (x - startX) + (long)(y - startY) * (y - startY);
+                  if (d > bd) { bd = d; bx = x; by = y; }
+              }
+      monX = bx + 0.5; monY = by + 0.5; }
+
     tension = 0; flicker = 1;
     heart_timer = step_timer = 0;
     stamina = 1.0; exhausted = 0; hidden = 0; near_locker = -1;
@@ -888,6 +1007,18 @@ static void add_beam(float *buf, int *n, float x0, float y0, float z0,
     push_quad(buf, n, tip[0], tip[1], tip[2], tip[3], dx, dy, dz, 1);   /* end cap */
 }
 
+/* a freestanding centred box (4 sides + top): altar pedestals, plinths */
+static void add_prop_box(float *buf, int *n, double cx, double cz, double hw, double y0, double y1) {
+    float x0 = cx - hw, x1 = cx + hw, z0 = cz - hw, z1 = cz + hw;
+    float A[3]={x0,y0,z0}, B[3]={x1,y0,z0}, C[3]={x1,y0,z1}, D[3]={x0,y0,z1};
+    float At[3]={x0,y1,z0}, Bt[3]={x1,y1,z0}, Ct[3]={x1,y1,z1}, Dt[3]={x0,y1,z1};
+    push_quad(buf, n, A, B, Bt, At, 0, 0, -1, 1);
+    push_quad(buf, n, B, C, Ct, Bt, 1, 0, 0, 1);
+    push_quad(buf, n, C, D, Dt, Ct, 0, 0, 1, 1);
+    push_quad(buf, n, D, A, At, Dt, -1, 0, 0, 1);
+    push_quad(buf, n, At, Bt, Ct, Dt, 0, 1, 0, 1);
+}
+
 /* a wooden wall torch: a handle angling up into the corridor with a fatter
  * wrapped rag bundle at the tip (where the flame billboard is drawn).      */
 static void add_torch(float *buf, int *n, double tx, double tz, double dix, double diz) {
@@ -947,7 +1078,7 @@ static void place_torches(void) {
 
 /* Rebuild the world mesh for the current maze (walls, floor, ceiling, lockers). */
 static void build_world_mesh(void) {
-    static float buf[(MW * MH * 36 + NUM_LOCKERS * 24 + MAX_TORCHES * 72 + 64) * 8];
+    static float buf[(MW * MH * 36 + NUM_LOCKERS * 24 + NUM_KEYS * 32 + MAX_TORCHES * 72 + 64) * 8];
     int n = 0;
     place_torches();
     /* walls: a face for every wall cell that borders an open cell */
@@ -973,10 +1104,12 @@ static void build_world_mesh(void) {
         for (int x = 0; x < MW; x++)
             if (is_open(x, y)) { float a[3]={x,1,y+1}, b[3]={x+1,1,y+1}, c[3]={x+1,1,y}, d[3]={x,1,y}; push_quad(buf,&n,a,b,c,d,0,-1,0,1); }
     ceilCount = n - ceilStart;
-    /* locker cabinets (steel) */
+    /* locker cabinets + altar pedestals (both steel) */
     lockStart = n;
     for (int i = 0; i < NUM_LOCKERS; i++)
         add_locker_box(buf, &n, lockers[i].x, lockers[i].y, lockWX[i], lockWY[i]);
+    for (int i = 0; i < NUM_KEYS; i++)
+        add_prop_box(buf, &n, pedX[i], pedZ[i], 0.17, 0.0, 0.30);   /* shrine plinth */
     lockCount = n - lockStart;
     /* wooden torch handles */
     brkStart = n;
@@ -1403,6 +1536,25 @@ int main(int argc, char **argv) {
     gl_init();
     if (getenv("NIGHTFALL_DEPTH")) depth = atoi(getenv("NIGHTFALL_DEPTH"));
     new_game();
+    if (getenv("NIGHTFALL_DUMPMAP")) {
+        const char *tn[] = {"entrance","key","storage","library","hall","exit"};
+        fprintf(stderr, "rooms=%d\n", room_count);
+        for (int i = 0; i < room_count; i++)
+            fprintf(stderr, "  room %d: %dx%d at (%d,%d) theme=%s\n",
+                    i, rooms[i].w, rooms[i].h, rooms[i].x, rooms[i].y, tn[rooms[i].theme]);
+        for (int y = 0; y < MH; y++) {
+            char line[MW + 1];
+            for (int x = 0; x < MW; x++) {
+                char c = is_open(x, y) ? '.' : '#';
+                if (x == startX && y == startY) c = '@';
+                else if ((int)exitX == x && (int)exitY == y) c = 'X';
+                else for (int k = 0; k < NUM_KEYS; k++) if ((int)keys[k].x == x && (int)keys[k].y == y) c = 'K';
+                line[x] = c;
+            }
+            line[MW] = 0;
+            fprintf(stderr, "%s\n", line);
+        }
+    }
 
     SDL_SetRelativeMouseMode(SDL_TRUE);
     const char *shotpath = getenv("NIGHTFALL_SHOT");
@@ -1428,6 +1580,17 @@ int main(int argc, char **argv) {
                 if (is_open((int)mx, (int)my)) { monX = mx; monY = my; break; }
             }
             pitch = 0.02;
+        }
+        if (getenv("NIGHTFALL_SHOWKEY")) {              /* stand back from a shrine */
+            double kx = pedX[0], kz = pedZ[0];
+            for (double s = 2.5; s >= 1.5; s -= 0.5) {
+                for (int d = 0; d < 4; d++) {
+                    double ox = (d==0)-(d==1), oz = (d==2)-(d==3);
+                    double px = kx + ox * s, pz = kz + oz * s;
+                    if (is_open((int)px, (int)pz)) { posX = px; posY = pz;
+                        yaw = atan2(kz - pz, kx - px); pitch = -0.05; }
+                }
+            }
         }
         fprintf(stderr, "torches=%d\n", torch_count);
     }
