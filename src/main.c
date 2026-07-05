@@ -74,6 +74,9 @@ static int    exhausted = 0;
 static int    hidden = 0;
 static double sanity = 1.0;
 static int    mon_sees = 0;
+static double phantomX = 0, phantomY = 0;      /* hallucinated Stalker position */
+static double phantom_t = 0.0;                  /* time the apparition lingers   */
+static double phantom_timer = 10.0;             /* countdown to the next one     */
 static double whisper_timer = 0.0, event_timer = 0.0, surge = 0.0;
 
 enum { AI_HUNT, AI_SEARCH, AI_WANDER };
@@ -785,6 +788,7 @@ static void reset_level(void) {
     heart_timer = step_timer = 0;
     stamina = 1.0; exhausted = 0; hidden = 0; near_locker = -1;
     sanity = 1.0; mon_sees = 0; surge = 0;
+    phantom_t = 0.0; phantom_timer = 10.0;
     whisper_timer = 8.0; event_timer = 14.0;
     mon_state = AI_WANDER; lastKnownX = posX; lastKnownY = posY;
     hunt_recalc = search_time = 0;
@@ -811,10 +815,14 @@ static void update_monster(double dt) {
 static void update_ai(double dt, int moving, int sprinting) {
     double d = sqrt((posX - monX) * (posX - monX) + (posY - monY) * (posY - monY));
     int sensed = 0; mon_sees = 0;
+    /* low sanity = ragged panic breathing: the Stalker hears you from farther */
+    double dread = 1.0 - sanity;
+    double hear_walk = HEAR_WALK * (1.0 + dread * 0.6);
+    double hear_run  = HEAR_RUN  * (1.0 + dread * 0.4);
     if (!hidden) {
         if (d < SEE_RANGE && has_los(monX, monY, posX, posY)) { sensed = 1; mon_sees = 1; }
-        else if (moving && d < HEAR_WALK) sensed = 1;
-        else if (sprinting && moving && d < HEAR_RUN) sensed = 1;
+        else if (moving && d < hear_walk) sensed = 1;
+        else if (sprinting && moving && d < hear_run) sensed = 1;
     }
     if (sensed) {
         if (mon_state != AI_HUNT) {                       /* just caught your trail */
@@ -896,6 +904,26 @@ static void update_fear(double dt) {
         surge = 0.35 + frand() * 0.5;
         event_timer = 6.0 + sanity * 18.0 - tension * 5.0 + frand() * 6.0;
         if (event_timer < 3.0) event_timer = 3.0;
+    }
+
+    /* hallucinations: when your mind frays, the Stalker appears where it is
+     * not -- down the corridor you're facing -- then is gone. Purely visual. */
+    if (phantom_t > 0.0) phantom_t -= dt;
+    phantom_timer -= dt;
+    if (phantom_timer <= 0.0) {
+        phantom_timer = 6.0 + frand() * 9.0 - dread * 4.0;
+        if (phantom_timer < 3.0) phantom_timer = 3.0;
+        if (dread > 0.35 && mon_state != AI_HUNT && phantom_t <= 0.0) {
+            double fx = cos(yaw), fy = sin(yaw), best = 0.0;
+            for (double s = 2.0; s <= 7.0; s += 0.5) {
+                if (!is_open((int)(posX + fx * s), (int)(posY + fy * s))) break;
+                phantomX = posX + fx * s; phantomY = posY + fy * s; best = s;
+            }
+            if (best >= 2.0) {
+                phantom_t = 0.45 + frand() * 0.5;
+                if (snd_whisper) { Mix_VolumeChunk(snd_whisper, 110); Mix_PlayChannel(5, snd_whisper, 0); }
+            }
+        }
     }
 }
 
@@ -1438,9 +1466,11 @@ static void render_3d(void) {
     glUniform3f_(u_camdir, dxc, dyc, dzc);
     glUniform1f_(u_amb, (float)AMBIENT);
     /* deeper floors press in closer: fog thickens and the moonlight ambient
-     * cools from a faint blue-grey toward a sickly, oppressive dim red.    */
+     * cools from a faint blue-grey toward a sickly, oppressive dim red.
+     * A frayed mind (low sanity) closes your sight in the same way.        */
     double dd = (depth - 1) < 12 ? (depth - 1) : 12;
-    glUniform1f_(u_fogk, (float)(FOG_K * (1.0 + 0.08 * dd)));
+    double dread_fog = 1.0 - sanity;
+    glUniform1f_(u_fogk, (float)(FOG_K * (1.0 + 0.08 * dd) * (1.0 + 0.35 * dread_fog)));
     glUniform1f_(u_flick, (float)flicker);
     glUniform3f_(u_ambtint, (float)(0.075 + 0.010 * dd), (float)(0.08 - 0.005 * dd), (float)(0.10 - 0.008 * dd));
     glUniform2f_(u_scrsize, (float)rndW, (float)rndH);
@@ -1500,6 +1530,9 @@ static void render_3d(void) {
         draw_billboard(monX - sin(yaw) * sway, monY + cos(yaw) * sway,
                        0.66, 0.99 + bob, 0.0, 0, mvp);
     }
+    /* the hallucinated Stalker: flickers in and out where it isn't really */
+    if (phantom_t > 0.0 && ((int)(state_time * 22) % 3) != 0)
+        draw_billboard(phantomX, phantomY, 0.66, 0.99, 0.0, 0, mvp);
     for (int i = 0; i < NUM_KEYS; i++)
         if (keys[i].active) draw_billboard(keys[i].x, keys[i].y, 0.4, 0.4, 0.35, 1, mvp);
     for (int i = 0; i < NUM_NOTES; i++)
@@ -1557,16 +1590,21 @@ static void draw_hidden_overlay(void) {
 static void draw_sanity_fx(void) {
     if (sanity > 0.9) return;
     double dread = 1.0 - sanity;
+    /* the tunnel breathes with your pulse and closes further as dread grows */
     double pulse = 0.6 + 0.4 * sin(state_time * (2.0 + dread * 5.0));
-    double edge = 0.7 * dread * (0.55 + 0.45 * pulse);
-    int redt = (int)(dread * dread * 90);
+    double edge = 0.95 * dread * (0.55 + 0.45 * pulse);
+    double inner = 0.62 - 0.30 * dread;                  /* darkness reaches inward */
+    int redt = (int)(dread * dread * 80);
     for (int y = 0; y < SCREEN_H; y++)
         for (int x = 0; x < SCREEN_W; x++) {
             double dx = (x - SCREEN_W / 2.0) / (SCREEN_W / 2.0);
             double dy = (y - SCREEN_H / 2.0) / (SCREEN_H / 2.0);
             double r = dx * dx + dy * dy; if (r > 1) r = 1;
-            int a = (int)(255 * edge * r * r);
-            if (a > 0) fb[y * SCREEN_W + x] = packa((int)(redt * r), 0, 0, a);
+            double v = (r - inner) / (1.0 - inner);       /* 0 at centre .. 1 at rim */
+            if (v <= 0) continue;
+            int a = (int)(255 * edge * v * v);
+            if (a > 255) a = 255;
+            if (a > 0) fb[y * SCREEN_W + x] = packa((int)(redt * v), 0, 0, a);
         }
 }
 /* the parchment panel shown while reading a lore note */
@@ -1740,6 +1778,7 @@ int main(int argc, char **argv) {
     if (getenv("NIGHTFALL_DEPTH")) depth = atoi(getenv("NIGHTFALL_DEPTH"));
     if (getenv("NIGHTFALL_RCAP")) { render_cap_w = atoi(getenv("NIGHTFALL_RCAP")); if (render_cap_w < 320) render_cap_w = 320; }
     new_game();
+    if (getenv("NIGHTFALL_SANITY")) sanity = atof(getenv("NIGHTFALL_SANITY"));
     if (getenv("NIGHTFALL_DUMPMAP")) {
         const char *tn[] = {"entrance","key","storage","library","hall","exit"};
         fprintf(stderr, "rooms=%d\n", room_count);
@@ -2015,8 +2054,9 @@ int main(int argc, char **argv) {
         present_overlay();
 
         /* dev: capture the composited overlay (note panel / title / HUD) */
-        if (shotpath && (getenv("NIGHTFALL_SHOWNOTE") || getenv("NIGHTFALL_SHOTTITLE")) && ++shot_frame >= 6) {
+        if (shotpath && (getenv("NIGHTFALL_SHOWNOTE") || getenv("NIGHTFALL_SHOTTITLE") || getenv("NIGHTFALL_SHOTHUD")) && ++shot_frame >= 6) {
             if (getenv("NIGHTFALL_SHOWNOTE")) { reading_note = atoi(getenv("NIGHTFALL_SHOWNOTE")); game_state = ST_READING; }
+            if (getenv("NIGHTFALL_SANITY")) sanity = atof(getenv("NIGHTFALL_SANITY"));   /* hold it low */
             if (shot_frame >= 10) { save_ppm(shotpath); running = 0; }
         }
 
