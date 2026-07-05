@@ -694,6 +694,7 @@ static const char *FSRC =
     "uniform sampler2D uTex;\n"
     "uniform vec3 uCamPos; uniform vec3 uCamDir;\n"
     "uniform float uAmbient; uniform float uFogK; uniform float uFlicker;\n"
+    "uniform vec3 uAmbTint; uniform vec2 uScreenSize;\n"
     "uniform int uMode;\n"                 /* 0 world, 1 sprite */
     "#define MAXT 32\n"
     "uniform int uTorchCount;\n"
@@ -725,7 +726,7 @@ static const char *FSRC =
     "  float fog = 1.0 / (1.0 + dist*dist*uFogK);\n"
     /* cool moonlight ambient so geometry is faintly readable in the dark, */
     /* plus warm torch point lights that carry the real illumination.      */
-    "  vec3 lit = vec3(0.075, 0.08, 0.10);\n"
+    "  vec3 lit = uAmbTint;\n"
     "  for(int i=0;i<uTorchCount;i++){\n"
     "    vec3 L = uTorchPos[i] - vW; float td = length(L);\n"
     "    float att = uTorchInt[i] / (1.0 + 0.35*td + 0.55*td*td);\n"
@@ -738,6 +739,10 @@ static const char *FSRC =
     "  }\n"
     "  vec3 col = t.rgb * lit;\n"
     "  col = mix(col, t.rgb * (0.55 + 0.45*fog), emissive);\n"  /* glow ignores lighting */
+    /* soft screen-space vignette: darkens the corners for a claustrophobic frame */
+    "  vec2 vc = (gl_FragCoord.xy / uScreenSize) - 0.5;\n"
+    "  float vig = 1.0 - 0.55 * smoothstep(0.25, 0.75, dot(vc, vc) * 2.0);\n"
+    "  col *= vig;\n"
     "  frag = vec4(col, 1.0);\n"
     "}\n";
 static const char *OVS =
@@ -751,6 +756,7 @@ static const char *OFS =
 
 static GLuint prog3d, progOv;
 static GLint u_mvp, u_campos, u_camdir, u_amb, u_fogk, u_flick, u_mode;
+static GLint u_ambtint, u_scrsize;
 static GLint u_tcount, u_tpos, u_tint, u_tcol, u_tex, u_map, u_mapsize, u_occl;
 static int   occl_on = 1;
 static GLuint worldVAO, worldVBO, sprVAO, sprVBO, ovVAO, ovVBO;
@@ -961,6 +967,8 @@ static void gl_init(void) {
     u_map = glGetUniformLocation_(prog3d, "uMap");
     u_mapsize = glGetUniformLocation_(prog3d, "uMapSize");
     u_occl = glGetUniformLocation_(prog3d, "uOccl");
+    u_ambtint = glGetUniformLocation_(prog3d, "uAmbTint");
+    u_scrsize = glGetUniformLocation_(prog3d, "uScreenSize");
     /* bind samplers: surface texture on unit 0, wall-occlusion map on unit 1 */
     glUseProgram_(prog3d);
     glUniform1i_(u_tex, 0);
@@ -1050,8 +1058,13 @@ static void render_3d(void) {
     glUniform3f_(u_campos, ex, ey, ez);
     glUniform3f_(u_camdir, dxc, dyc, dzc);
     glUniform1f_(u_amb, (float)AMBIENT);
-    glUniform1f_(u_fogk, (float)FOG_K);
+    /* deeper floors press in closer: fog thickens and the moonlight ambient
+     * cools from a faint blue-grey toward a sickly, oppressive dim red.    */
+    double dd = (depth - 1) < 12 ? (depth - 1) : 12;
+    glUniform1f_(u_fogk, (float)(FOG_K * (1.0 + 0.08 * dd)));
     glUniform1f_(u_flick, (float)flicker);
+    glUniform3f_(u_ambtint, (float)(0.075 + 0.010 * dd), (float)(0.08 - 0.005 * dd), (float)(0.10 - 0.008 * dd));
+    glUniform2f_(u_scrsize, (float)SCREEN_W, (float)SCREEN_H);
 
     /* torch point lights: warm, individually flickering */
     static float tp[MAX_TORCHES * 3], ti[MAX_TORCHES];
@@ -1308,6 +1321,7 @@ int main(int argc, char **argv) {
     build_textures();
     build_sprites();
     gl_init();
+    if (getenv("NIGHTFALL_DEPTH")) depth = atoi(getenv("NIGHTFALL_DEPTH"));
     new_game();
 
     SDL_SetRelativeMouseMode(SDL_TRUE);
