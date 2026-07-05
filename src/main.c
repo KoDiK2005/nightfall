@@ -138,6 +138,7 @@ static PFNGLUNIFORMMATRIX4FVPROC        glUniformMatrix4fv_;
 static PFNGLUNIFORM3FPROC               glUniform3f_;
 static PFNGLUNIFORM1FPROC               glUniform1f_;
 static PFNGLUNIFORM1IPROC               glUniform1i_;
+static PFNGLUNIFORM2FPROC               glUniform2f_;
 static PFNGLUNIFORM3FVPROC              glUniform3fv_;
 static PFNGLUNIFORM1FVPROC              glUniform1fv_;
 static PFNGLACTIVETEXTUREPROC           glActiveTexture_;
@@ -167,6 +168,7 @@ static void load_gl(void) {
     glUniform3f_             = (PFNGLUNIFORM3FPROC)               SDL_GL_GetProcAddress("glUniform3f");
     glUniform1f_             = (PFNGLUNIFORM1FPROC)               SDL_GL_GetProcAddress("glUniform1f");
     glUniform1i_             = (PFNGLUNIFORM1IPROC)               SDL_GL_GetProcAddress("glUniform1i");
+    glUniform2f_             = (PFNGLUNIFORM2FPROC)               SDL_GL_GetProcAddress("glUniform2f");
     glUniform3fv_            = (PFNGLUNIFORM3FVPROC)              SDL_GL_GetProcAddress("glUniform3fv");
     glUniform1fv_            = (PFNGLUNIFORM1FVPROC)              SDL_GL_GetProcAddress("glUniform1fv");
     glActiveTexture_          = (PFNGLACTIVETEXTUREPROC)           SDL_GL_GetProcAddress("glActiveTexture");
@@ -614,7 +616,22 @@ static const char *FSRC =
     "uniform vec3 uTorchPos[MAXT];\n"
     "uniform float uTorchInt[MAXT];\n"
     "uniform vec3 uTorchCol;\n"
+    "uniform sampler2D uMap;\n"            /* MWxMH wall grid (r>0.5 = wall) */
+    "uniform vec2 uMapSize;\n"
+    "uniform int uOccl;\n"                 /* 1 = shadow torches behind walls */
     "out vec4 frag;\n"
+    /* march the floor-plane segment from the fragment to a torch; if it
+     * crosses a wall cell the torch is occluded (no light-through-walls). */
+    "bool blocked(vec2 p, vec2 q){\n"
+    "  vec2 d = q - p; float len = length(d);\n"
+    "  int steps = int(len / 0.3) + 1; if(steps > 64) steps = 64;\n"
+    "  for(int s = 1; s < steps; s++){\n"
+    "    vec2 c = p + d * (float(s)/float(steps));\n"
+    "    ivec2 ci = clamp(ivec2(int(c.x), int(c.y)), ivec2(0), ivec2(uMapSize)-1);\n"
+    "    if(texelFetch(uMap, ci, 0).r > 0.5) return true;\n"
+    "  }\n"
+    "  return false;\n"
+    "}\n"
     "void main(){\n"
     "  vec4 t = texture(uTex, vUV);\n"
     "  float emissive = 0.0;\n"
@@ -628,6 +645,10 @@ static const char *FSRC =
     "  for(int i=0;i<uTorchCount;i++){\n"
     "    vec3 L = uTorchPos[i] - vW; float td = length(L);\n"
     "    float att = uTorchInt[i] / (1.0 + 0.35*td + 0.55*td*td);\n"
+    "    if(att < 0.02) continue;\n"                 /* too dim to bother     */
+    "    float lxz = length(L.xz);\n"
+    "    vec2 start = vW.xz + (lxz > 1e-3 ? L.xz/lxz : vec2(0.0)) * 0.06;\n"
+    "    if(uMode==0 && uOccl==1 && blocked(start, uTorchPos[i].xz)) continue;\n"  /* wall between */
     "    float facing = (uMode==0) ? (0.35 + 0.65*max(dot(nrm, L/max(td,1e-3)), 0.0)) : 1.0;\n"
     "    lit += uTorchCol * att * facing;\n"
     "  }\n"
@@ -646,9 +667,10 @@ static const char *OFS =
 
 static GLuint prog3d, progOv;
 static GLint u_mvp, u_campos, u_camdir, u_amb, u_fogk, u_flick, u_mode;
-static GLint u_tcount, u_tpos, u_tint, u_tcol;
+static GLint u_tcount, u_tpos, u_tint, u_tcol, u_tex, u_map, u_mapsize, u_occl;
+static int   occl_on = 1;
 static GLuint worldVAO, worldVBO, sprVAO, sprVBO, ovVAO, ovVBO;
-static GLuint texWall, texFloor, texCeil, texLocker, texBracket, texSpr[5], texOverlay;
+static GLuint texWall, texFloor, texCeil, texLocker, texBracket, texSpr[5], texOverlay, texMap;
 static int   floorStart, floorCount, ceilStart, ceilCount, wallCount;
 static int   lockStart, lockCount, brkStart, brkCount;
 
@@ -810,7 +832,24 @@ static void build_world_mesh(void) {
     glBufferData_(GL_ARRAY_BUFFER, n * 8 * sizeof(float), buf, GL_STATIC_DRAW);
 }
 
-static void new_game(void) { reset_level(); build_world_mesh(); }
+/* upload the current maze walls into the R8 occlusion map texture */
+static void upload_map(void) {
+    static unsigned char bytes[MW * MH];
+    for (int y = 0; y < MH; y++)
+        for (int x = 0; x < MW; x++)
+            bytes[y * MW + x] = is_open(x, y) ? 0 : 255;
+    glActiveTexture_(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, texMap);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);         /* rows aren't 4-byte aligned */
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_R8, MW, MH, 0, GL_RED, GL_UNSIGNED_BYTE, bytes);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glActiveTexture_(GL_TEXTURE0);
+}
+
+static void new_game(void) { reset_level(); build_world_mesh(); upload_map(); }
 
 static void setup_attribs(void) {
     glVertexAttribPointer_(0, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)0);
@@ -834,6 +873,15 @@ static void gl_init(void) {
     u_tpos = glGetUniformLocation_(prog3d, "uTorchPos");
     u_tint = glGetUniformLocation_(prog3d, "uTorchInt");
     u_tcol = glGetUniformLocation_(prog3d, "uTorchCol");
+    u_tex = glGetUniformLocation_(prog3d, "uTex");
+    u_map = glGetUniformLocation_(prog3d, "uMap");
+    u_mapsize = glGetUniformLocation_(prog3d, "uMapSize");
+    u_occl = glGetUniformLocation_(prog3d, "uOccl");
+    /* bind samplers: surface texture on unit 0, wall-occlusion map on unit 1 */
+    glUseProgram_(prog3d);
+    glUniform1i_(u_tex, 0);
+    glUniform1i_(u_map, 1);
+    glUniform2f_(u_mapsize, (float)MW, (float)MH);
 
     glGenVertexArrays_(1, &worldVAO); glGenBuffers_(1, &worldVBO);
     glBindVertexArray_(worldVAO); glBindBuffer_(GL_ARRAY_BUFFER, worldVBO); setup_attribs();
@@ -856,6 +904,10 @@ static void gl_init(void) {
     texLocker = make_texture(lockmetal);
     texBracket = make_texture(brackmetal);
     for (int i = 0; i < 5; i++) texSpr[i] = make_texture(spr_rgba[i]);
+    glGenTextures(1, &texMap);                 /* filled per-maze by upload_map */
+    glActiveTexture_(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, texMap);      /* keep the occlusion map on unit 1 */
+    glActiveTexture_(GL_TEXTURE0);
     glGenTextures(1, &texOverlay);
     glBindTexture(GL_TEXTURE_2D, texOverlay);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, SCREEN_W, SCREEN_H, 0, GL_BGRA, GL_UNSIGNED_BYTE, fb);
@@ -930,6 +982,7 @@ static void render_3d(void) {
         glUniform1fv_(u_tint, torch_count, ti);
     }
     glUniform3f_(u_tcol, 1.0f, 0.52f, 0.18f);
+    glUniform1i_(u_occl, occl_on);
 
     /* world */
     glUniform1i_(u_mode, 0);
@@ -1108,7 +1161,8 @@ static void present_overlay(void) {
 /* -------------------------------------------------------------------- main */
 int main(int argc, char **argv) {
     (void)argc; (void)argv;
-    srand((unsigned)time(NULL));
+    srand(getenv("NIGHTFALL_SEED") ? (unsigned)atoi(getenv("NIGHTFALL_SEED")) : (unsigned)time(NULL));
+    if (getenv("NIGHTFALL_NOOCCL")) occl_on = 0;
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO) != 0) {
         fprintf(stderr, "SDL_Init: %s\n", SDL_GetError()); return 1;
     }
