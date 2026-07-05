@@ -26,6 +26,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <dirent.h>
+#include <zlib.h>
 
 /* ------------------------------------------------------------------ config */
 #define SCREEN_W 1024
@@ -245,6 +247,145 @@ static inline uint32_t packa(int r, int g, int b, int a) {
 }
 static inline uint32_t pack(int r, int g, int b) { return packa(r, g, b, 255); }
 static double frand(void) { return rand() / (double)RAND_MAX; }
+
+/* ----------------------------------------------------- minimal PNG decoder */
+/* Decodes 8-bit non-interlaced PNG (grey/RGB/palette/grey+alpha/RGBA) to RGBA
+ * bytes, using zlib for the DEFLATE stage. Returns malloc'd w*h*4 or NULL.   */
+static unsigned char *load_png(const char *path, int *out_w, int *out_h) {
+    FILE *f = fopen(path, "rb");
+    if (!f) return NULL;
+    fseek(f, 0, SEEK_END); long fsz = ftell(f); fseek(f, 0, SEEK_SET);
+    if (fsz < 8) { fclose(f); return NULL; }
+    unsigned char *buf = malloc(fsz);
+    if (!buf || fread(buf, 1, fsz, f) != (size_t)fsz) { free(buf); fclose(f); return NULL; }
+    fclose(f);
+    if (memcmp(buf, "\x89PNG\r\n\x1a\n", 8) != 0) { free(buf); return NULL; }
+    int w = 0, h = 0, bd = 0, ct = 0, interlace = 0;
+    unsigned char *idat = NULL; size_t idat_len = 0, idat_cap = 0;
+    unsigned char pal[256 * 3]; int pal_n = 0;
+    unsigned char trns[256]; int trns_n = 0; memset(trns, 255, sizeof(trns));
+    size_t p = 8;
+    while (p + 12 <= (size_t)fsz) {
+        unsigned len = (buf[p] << 24) | (buf[p+1] << 16) | (buf[p+2] << 8) | buf[p+3];
+        unsigned char *type = buf + p + 4, *data = buf + p + 8;
+        if (p + 12 + (size_t)len > (size_t)fsz) break;
+        if (!memcmp(type, "IHDR", 4)) {
+            w = (data[0]<<24)|(data[1]<<16)|(data[2]<<8)|data[3];
+            h = (data[4]<<24)|(data[5]<<16)|(data[6]<<8)|data[7];
+            bd = data[8]; ct = data[9]; interlace = data[12];
+        } else if (!memcmp(type, "PLTE", 4)) {
+            pal_n = len / 3; if (pal_n > 256) pal_n = 256; memcpy(pal, data, pal_n * 3);
+        } else if (!memcmp(type, "tRNS", 4)) {
+            if (ct == 3) { trns_n = len > 256 ? 256 : (int)len; memcpy(trns, data, trns_n); }
+        } else if (!memcmp(type, "IDAT", 4)) {
+            if (idat_len + len > idat_cap) { idat_cap = (idat_len + len) * 2 + 4096;
+                unsigned char *nb = realloc(idat, idat_cap); if (!nb) { free(idat); free(buf); return NULL; } idat = nb; }
+            memcpy(idat + idat_len, data, len); idat_len += len;
+        } else if (!memcmp(type, "IEND", 4)) break;
+        p += 12 + len;
+    }
+    int ch = (ct==0)?1:(ct==2)?3:(ct==3)?1:(ct==4)?2:(ct==6)?4:0;
+    if (bd != 8 || interlace != 0 || w <= 0 || h <= 0 || ch == 0 || !idat) {
+        free(buf); free(idat); return NULL;
+    }
+    size_t stride = 1 + (size_t)w * ch, raw_sz = stride * h;
+    unsigned char *raw = malloc(raw_sz);
+    uLongf destlen = raw_sz;
+    if (!raw || uncompress(raw, &destlen, idat, idat_len) != Z_OK || destlen != raw_sz) {
+        free(buf); free(idat); free(raw); return NULL;
+    }
+    free(idat);
+    unsigned char *img = malloc((size_t)w * ch * h); if (!img) { free(buf); free(raw); return NULL; }
+    int bpp = ch;
+    for (int y = 0; y < h; y++) {
+        unsigned char ft = raw[y * stride];
+        unsigned char *row = raw + y * stride + 1;
+        unsigned char *out = img + (size_t)y * w * ch;
+        unsigned char *prev = y > 0 ? img + (size_t)(y - 1) * w * ch : NULL;
+        for (int x = 0; x < w * ch; x++) {
+            int a = x >= bpp ? out[x - bpp] : 0;
+            int b = prev ? prev[x] : 0;
+            int c = (prev && x >= bpp) ? prev[x - bpp] : 0;
+            int v = row[x];
+            switch (ft) {
+                case 1: v += a; break;
+                case 2: v += b; break;
+                case 3: v += (a + b) / 2; break;
+                case 4: { int pp = a + b - c, pa = abs(pp-a), pb = abs(pp-b), pc = abs(pp-c);
+                          v += (pa <= pb && pa <= pc) ? a : (pb <= pc) ? b : c; } break;
+            }
+            out[x] = (unsigned char)v;
+        }
+    }
+    free(raw);
+    unsigned char *rgba = malloc((size_t)w * h * 4); if (!rgba) { free(buf); free(img); return NULL; }
+    for (int i = 0; i < w * h; i++) {
+        unsigned char *s = img + (size_t)i * ch, R, G, B, A = 255;
+        if      (ct == 0) { R = G = B = s[0]; }
+        else if (ct == 2) { R = s[0]; G = s[1]; B = s[2]; }
+        else if (ct == 3) { int ix = s[0]; R = pal[ix*3]; G = pal[ix*3+1]; B = pal[ix*3+2]; A = ix < trns_n ? trns[ix] : 255; }
+        else if (ct == 4) { R = G = B = s[0]; A = s[1]; }
+        else              { R = s[0]; G = s[1]; B = s[2]; A = s[3]; }
+        rgba[i*4] = R; rgba[i*4+1] = G; rgba[i*4+2] = B; rgba[i*4+3] = A;
+    }
+    free(img); free(buf);
+    *out_w = w; *out_h = h;
+    return rgba;
+}
+
+/* Hallucination images the player drops into assets/visions/ — flashed on
+ * screen as sanity collapses. Loaded once, downscaled to fit the overlay.   */
+#define MAX_VISIONS 24
+#define VIS_DUR     0.5
+typedef struct { int w, h; unsigned char *px; } Vision;   /* RGBA bytes */
+static Vision visions[MAX_VISIONS];
+static int    nvisions = 0;
+static double vision_t = 0.0, vision_timer = 12.0;
+static int    vision_idx = 0;
+
+/* nearest-downscale an RGBA image so it fits inside maxw x maxh (no upscale) */
+static unsigned char *fit_rgba(unsigned char *src, int w, int h, int maxw, int maxh, int *ow, int *oh) {
+    if (w <= maxw && h <= maxh) { *ow = w; *oh = h; return src; }
+    double sc = fmin((double)maxw / w, (double)maxh / h);
+    int nw = (int)(w * sc), nh = (int)(h * sc);
+    if (nw < 1) nw = 1;
+    if (nh < 1) nh = 1;
+    unsigned char *dst = malloc((size_t)nw * nh * 4);
+    if (!dst) { *ow = w; *oh = h; return src; }
+    for (int y = 0; y < nh; y++) {
+        int sy = y * h / nh;
+        for (int x = 0; x < nw; x++) {
+            int sx = x * w / nw;
+            memcpy(dst + ((size_t)y * nw + x) * 4, src + ((size_t)sy * w + sx) * 4, 4);
+        }
+    }
+    free(src);
+    *ow = nw; *oh = nh;
+    return dst;
+}
+
+static void load_visions(void) {
+    DIR *d = opendir("assets/visions");
+    if (!d) return;
+    struct dirent *e;
+    while ((e = readdir(d)) && nvisions < MAX_VISIONS) {
+        const char *nm = e->d_name;
+        size_t l = strlen(nm);
+        if (l < 5) continue;
+        const char *ext = nm + l - 4;
+        if (strcasecmp(ext, ".png") != 0) continue;
+        char path[512];
+        snprintf(path, sizeof(path), "assets/visions/%s", nm);
+        int w, h;
+        unsigned char *px = load_png(path, &w, &h);
+        if (!px) { fprintf(stderr, "vision: could not load %s (needs 8-bit PNG)\n", nm); continue; }
+        px = fit_rgba(px, w, h, SCREEN_W, SCREEN_H, &w, &h);
+        visions[nvisions].w = w; visions[nvisions].h = h; visions[nvisions].px = px;
+        nvisions++;
+    }
+    closedir(d);
+    if (nvisions) fprintf(stderr, "loaded %d vision image(s)\n", nvisions);
+}
 
 /* ----------------------------------------------------------- 5x7 pixel font */
 static const unsigned char FONT[][7] = {
@@ -839,6 +980,7 @@ static void reset_level(void) {
     stamina = 1.0; exhausted = 0; hidden = 0; near_locker = -1;
     sanity = 1.0; mon_sees = 0; surge = 0;
     phantom_t = 0.0; phantom_timer = 10.0;
+    vision_t = 0.0; vision_timer = 12.0;
     whisper_timer = 8.0; event_timer = 14.0;
     mon_state = AI_WANDER; lastKnownX = posX; lastKnownY = posY;
     hunt_recalc = search_time = 0;
@@ -973,6 +1115,19 @@ static void update_fear(double dt) {
                 phantom_t = 0.45 + frand() * 0.5;
                 if (snd_whisper) { Mix_VolumeChunk(snd_whisper, 110); Mix_PlayChannel(5, snd_whisper, 0); }
             }
+        }
+    }
+
+    /* dropped-in hallucination images flash over the screen as dread deepens */
+    if (vision_t > 0.0) vision_t -= dt;
+    vision_timer -= dt;
+    if (vision_timer <= 0.0) {
+        vision_timer = 9.0 + frand() * 12.0 - dread * 6.0;
+        if (vision_timer < 4.0) vision_timer = 4.0;
+        if (nvisions > 0 && dread > 0.45 && vision_t <= 0.0) {
+            vision_idx = rand() % nvisions;
+            vision_t = VIS_DUR;
+            if (snd_scare) { Mix_VolumeChunk(snd_scare, 48); Mix_PlayChannel(4, snd_scare, 0); }
         }
     }
 }
@@ -1659,6 +1814,34 @@ static void draw_sanity_fx(void) {
             if (a > 0) fb[y * SCREEN_W + x] = packa((int)(redt * v), 0, 0, a);
         }
 }
+/* flash a hallucination image over the scene as sanity collapses */
+static void draw_vision(void) {
+    if (vision_t <= 0.0 || nvisions == 0) return;
+    Vision *v = &visions[vision_idx];
+    if (!v->px) return;
+    double frac = vision_t / VIS_DUR;                    /* 1 -> 0 over the flash */
+    double env = sin(frac * 3.14159265);                 /* arch: 0 -> 1 -> 0     */
+    double dread = 1.0 - sanity;
+    double gain = env * (0.55 + 0.45 * dread);
+    if (((int)(state_time * 42)) & 1) gain *= 0.6;       /* unstable strobe       */
+    if (gain <= 0.0) return;
+    double sc = fmin((double)SCREEN_W / v->w, (double)SCREEN_H / v->h);
+    int dw = (int)(v->w * sc), dh = (int)(v->h * sc);
+    if (dw < 1 || dh < 1) return;
+    int ox = (SCREEN_W - dw) / 2, oy = (SCREEN_H - dh) / 2;
+    for (int y = 0; y < dh; y++) {
+        int sy = y * v->h / dh, fy = oy + y;
+        if (fy < 0 || fy >= SCREEN_H) continue;
+        for (int x = 0; x < dw; x++) {
+            int sx = x * v->w / dw, fx = ox + x;
+            unsigned char *s = v->px + ((size_t)sy * v->w + sx) * 4;
+            double al = (s[3] / 255.0) * gain;
+            if (al <= 0.0) continue;
+            if (al > 1.0) al = 1.0;
+            fb[fy * SCREEN_W + fx] = packa(s[0], s[1], s[2], (int)(al * 255));
+        }
+    }
+}
 /* the parchment panel shown while reading a lore note */
 static void draw_note(void) {
     for (int i = 0; i < SCREEN_W * SCREEN_H; i++) fb[i] = packa(0, 0, 0, 150);
@@ -1827,6 +2010,7 @@ int main(int argc, char **argv) {
     build_textures();
     build_sprites();
     gl_init();
+    load_visions();
     if (getenv("NIGHTFALL_DEPTH")) depth = atoi(getenv("NIGHTFALL_DEPTH"));
     if (getenv("NIGHTFALL_RCAP")) { render_cap_w = atoi(getenv("NIGHTFALL_RCAP")); if (render_cap_w < 320) render_cap_w = 320; }
     new_game();
@@ -2106,6 +2290,7 @@ int main(int argc, char **argv) {
             draw_sanity_fx();
             if (hidden) draw_hidden_overlay();
             draw_hud();
+            draw_vision();                       /* hallucination flash on top */
         }
         /* descent fade: darkness peaks exactly as the next floor swaps in */
         if (descend_t > 0.0) {
@@ -2121,6 +2306,7 @@ int main(int argc, char **argv) {
         if (shotpath && (getenv("NIGHTFALL_SHOWNOTE") || getenv("NIGHTFALL_SHOTTITLE") || getenv("NIGHTFALL_SHOTHUD")) && ++shot_frame >= 6) {
             if (getenv("NIGHTFALL_SHOWNOTE")) { reading_note = atoi(getenv("NIGHTFALL_SHOWNOTE")); game_state = ST_READING; }
             if (getenv("NIGHTFALL_SANITY")) sanity = atof(getenv("NIGHTFALL_SANITY"));   /* hold it low */
+            if (getenv("NIGHTFALL_SHOWVISION")) { vision_t = VIS_DUR * 0.55; vision_idx = atoi(getenv("NIGHTFALL_SHOWVISION")); }
             if (shot_frame >= 10) { save_ppm(shotpath); running = 0; }
         }
 

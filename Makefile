@@ -11,9 +11,9 @@ CLASSIC := nightfall-classic
 
 all: audio $(BIN)
 
-# real-3D OpenGL build (primary)
+# real-3D OpenGL build (primary); -lz for the PNG "vision" image decoder
 $(BIN): src/main.c
-	$(CC) $(CFLAGS) $(SDL_CF) src/main.c -o $(BIN) $(LDFLAGS) -lGL
+	$(CC) $(CFLAGS) $(SDL_CF) src/main.c -o $(BIN) $(LDFLAGS) -lGL -lz
 
 # original raycasting build (fallback, no GPU needed)
 classic: audio $(CLASSIC)
