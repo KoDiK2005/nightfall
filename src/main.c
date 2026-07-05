@@ -1455,7 +1455,7 @@ int main(int argc, char **argv) {
                 if (ud < 0.4) { depth--; new_game(); state_time = 0; }
             }
             double md = sqrt((posX - monX) * (posX - monX) + (posY - monY) * (posY - monY));
-            int caught = (!hidden && md < CATCH_DIST);
+            int caught = (!hidden && md < CATCH_DIST && !shotpath);
             if (hidden && near_locker >= 0 && (mon_state == AI_HUNT || mon_state == AI_SEARCH)) {
                 double ld = sqrt((monX - lockers[near_locker].x) * (monX - lockers[near_locker].x) +
                                  (monY - lockers[near_locker].y) * (monY - lockers[near_locker].y));
