@@ -722,28 +722,48 @@ static void add_torch_bracket(float *buf, int *n, double tx, double tz, double d
     add_box(buf, n, tx - dix * 0.02, tz - diz * 0.02, dix, diz, 0.055, 0.14, 0.40, 0.58);
 }
 
-/* Scatter flickering wall torches through the maze, well spaced. */
+/* Evenly scatter wall torches (Poisson-disc): shuffle every wall-adjacent
+ * cell, then place a torch only where none is already within TORCH_SPACING.
+ * Trying every candidate guarantees full coverage (no cell is more than
+ * TORCH_SPACING from a torch) while the spacing rule prevents clustering. */
+#define TORCH_SPACING 4.2f
 static void place_torches(void) {
     torch_count = 0;
     int dx[] = {1, -1, 0, 0}, dy[] = {0, 0, 1, -1};
-    for (int y = 1; y < MH - 1 && torch_count < MAX_TORCHES; y++)
-        for (int x = 1; x < MW - 1 && torch_count < MAX_TORCHES; x++) {
-            if (!is_open(x, y) || frand() < 0.35) continue;
-            for (int k = 0; k < 4; k++) {
-                if (is_open(x + dx[k], y + dy[k])) continue;    /* need a wall  */
-                float tx = x + 0.5f + dx[k] * 0.48f, tz = y + 0.5f + dy[k] * 0.48f;
-                int ok = 1;
-                for (int j = 0; j < torch_count; j++) {
-                    float ddx = tx - torchX[j], ddz = tz - torchZ[j];
-                    if (ddx * ddx + ddz * ddz < 3.2f) { ok = 0; break; }
-                }
-                if (!ok) continue;
-                torchX[torch_count] = tx; torchZ[torch_count] = tz;
-                torchNx[torch_count] = -dx[k]; torchNz[torch_count] = -dy[k];
-                torch_count++;
-                break;
-            }
+    /* gather wall-adjacent open cells */
+    int cx[MW * MH], cy[MW * MH], nc = 0;
+    for (int y = 1; y < MH - 1; y++)
+        for (int x = 1; x < MW - 1; x++) {
+            if (!is_open(x, y)) continue;
+            for (int k = 0; k < 4; k++)
+                if (!is_open(x + dx[k], y + dy[k])) { cx[nc] = x; cy[nc] = y; nc++; break; }
         }
+    /* shuffle so placement isn't biased to one corner */
+    for (int i = nc - 1; i > 0; i--) {
+        int j = rand() % (i + 1);
+        int tx = cx[i]; cx[i] = cx[j]; cx[j] = tx;
+        int ty = cy[i]; cy[i] = cy[j]; cy[j] = ty;
+    }
+    float sp2 = TORCH_SPACING * TORCH_SPACING;
+    for (int i = 0; i < nc && torch_count < MAX_TORCHES; i++) {
+        int x = cx[i], y = cy[i];
+        float ccx = x + 0.5f, ccz = y + 0.5f;
+        int ok = 1;
+        for (int j = 0; j < torch_count; j++) {
+            float ddx = ccx - (torchX[j] + torchNx[j] * 0.48f);   /* torch cell centre */
+            float ddz = ccz - (torchZ[j] + torchNz[j] * 0.48f);
+            if (ddx * ddx + ddz * ddz < sp2) { ok = 0; break; }
+        }
+        if (!ok) continue;
+        for (int k = 0; k < 4; k++) {                              /* pick a wall face */
+            if (is_open(x + dx[k], y + dy[k])) continue;
+            torchX[torch_count] = ccx + dx[k] * 0.48f;
+            torchZ[torch_count] = ccz + dy[k] * 0.48f;
+            torchNx[torch_count] = -dx[k]; torchNz[torch_count] = -dy[k];
+            torch_count++;
+            break;
+        }
+    }
 }
 
 /* Rebuild the world mesh for the current maze (walls, floor, ceiling, lockers). */
@@ -1142,6 +1162,7 @@ int main(int argc, char **argv) {
         if (is_open((int)bx, (int)bz)) { posX = bx; posY = bz; }
         yaw = atan2(tz * sgn, tx * sgn);
         pitch = -0.12;
+        fprintf(stderr, "torches=%d\n", torch_count);
     }
     Uint64 prev = SDL_GetPerformanceCounter();
     double freq = (double)SDL_GetPerformanceFrequency();
