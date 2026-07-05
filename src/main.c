@@ -145,7 +145,8 @@ static double lockWX[NUM_LOCKERS], lockWY[NUM_LOCKERS];
 
 /* audio */
 static Mix_Chunk *snd_ambient, *snd_heart, *snd_scare, *snd_pickup, *snd_step, *snd_whisper;
-static double heart_timer = 0.0, step_timer = 0.0;
+static Mix_Chunk *snd_roar, *snd_growl;
+static double heart_timer = 0.0, step_timer = 0.0, growl_timer = 0.0;
 
 /* ------------------------------------------------------------- GL functions */
 /* Loaded via SDL_GL_GetProcAddress so we depend only on libGL + SDL. */
@@ -816,10 +817,25 @@ static void update_ai(double dt, int moving, int sprinting) {
         else if (sprinting && moving && d < HEAR_RUN) sensed = 1;
     }
     if (sensed) {
+        if (mon_state != AI_HUNT) {                       /* just caught your trail */
+            if (snd_roar) {
+                Mix_VolumeChunk(snd_roar, (int)(55 + 73 * (1.0 - fmin(d, 12.0) / 12.0)));
+                Mix_PlayChannel(6, snd_roar, 0);
+            }
+            growl_timer = 2.6 + frand() * 1.6;
+        }
         mon_state = AI_HUNT; lastKnownX = posX; lastKnownY = posY;
         hunt_recalc -= dt;
         if (hunt_recalc <= 0 || tgtX != (int)posX || tgtY != (int)posY) {
             set_target((int)posX, (int)posY); hunt_recalc = 0.2;
+        }
+        growl_timer -= dt;                                /* ragged snarls as it chases */
+        if (growl_timer <= 0) {
+            if (snd_growl) {
+                Mix_VolumeChunk(snd_growl, (int)(40 + 68 * (1.0 - fmin(d, 12.0) / 12.0)));
+                Mix_PlayChannel(6, snd_growl, 0);
+            }
+            growl_timer = 1.8 + frand() * 2.4;
         }
     } else {
         if (mon_state == AI_HUNT) {
@@ -1713,6 +1729,8 @@ int main(int argc, char **argv) {
     snd_pickup  = Mix_LoadWAV("assets/pickup.wav");
     snd_step    = Mix_LoadWAV("assets/step.wav");
     snd_whisper = Mix_LoadWAV("assets/whisper.wav");
+    snd_roar    = Mix_LoadWAV("assets/roar.wav");
+    snd_growl   = Mix_LoadWAV("assets/growl.wav");
     if (!snd_ambient) fprintf(stderr, "warning: assets not found — run 'make audio'\n");
     if (snd_ambient) { Mix_Volume(0, 60); Mix_PlayChannel(0, snd_ambient, -1); }
 
@@ -2011,6 +2029,8 @@ int main(int argc, char **argv) {
     if (snd_pickup)  Mix_FreeChunk(snd_pickup);
     if (snd_step)    Mix_FreeChunk(snd_step);
     if (snd_whisper) Mix_FreeChunk(snd_whisper);
+    if (snd_roar)    Mix_FreeChunk(snd_roar);
+    if (snd_growl)   Mix_FreeChunk(snd_growl);
     Mix_CloseAudio();
     SDL_GL_DeleteContext(ctx);
     SDL_DestroyWindow(win);

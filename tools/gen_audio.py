@@ -214,6 +214,42 @@ def make_whisper(seconds=3.2):
     return out
 
 
+def make_roar(seconds=1.8):
+    """The Stalker's roar as it spots you: a guttural, distorted bellow with
+    a throat-growl tremolo and a rising screech overtone."""
+    n = int(seconds * SR)
+    out = [0.0] * n
+    for i in range(n):
+        t = i / SR
+        vib = 1.0 + 0.05 * math.sin(math.tau * 6.0 * t)      # throat vibrato
+        f0 = (78 + 34 * math.sin(math.tau * 0.5 * t)) * vib   # low fundamental
+        s  = math.sin(math.tau * f0 * t)
+        s += 0.6 * math.sin(math.tau * 2 * f0 * t)
+        s += 0.4 * math.sin(math.tau * 3 * f0 * t)
+        s += 0.3 * math.sin(math.tau * 4.5 * f0 * t)
+        growl = random.uniform(-1, 1) * (0.5 + 0.5 * math.sin(math.tau * 33 * t))
+        s += 0.7 * growl                                      # ragged growl
+        screech = 0.35 * math.exp(-1.8 * t) * math.sin(math.tau * (500 + 700 * t) * t)
+        a = (t / 0.06) if t < 0.06 else math.exp(-1.15 * (t - 0.06))
+        out[i] = math.tanh(a * (s * 0.5 + screech) * 2.3)     # soft-clip -> harsher
+    return out
+
+
+def make_growl(seconds=0.9):
+    """A shorter, lower snarl the Stalker repeats while it hunts."""
+    n = int(seconds * SR)
+    out = [0.0] * n
+    for i in range(n):
+        t = i / SR
+        f0 = 62 + 18 * math.sin(math.tau * 0.8 * t)
+        s  = math.sin(math.tau * f0 * t) + 0.5 * math.sin(math.tau * 2 * f0 * t)
+        growl = random.uniform(-1, 1) * (0.4 + 0.6 * math.sin(math.tau * 26 * t))
+        s += 0.8 * growl
+        a = (t / 0.05) if t < 0.05 else math.exp(-2.6 * (t - 0.05))
+        out[i] = math.tanh(a * s * 1.8)
+    return out
+
+
 def main():
     random.seed(1917)
     os.makedirs(OUT, exist_ok=True)
@@ -224,6 +260,8 @@ def main():
     write_wav("pickup.wav", make_pickup())
     write_wav("step.wav", make_step())
     write_wav("whisper.wav", make_whisper())
+    write_wav("roar.wav", make_roar())
+    write_wav("growl.wav", make_growl())
     print("Done.")
 
 
