@@ -36,6 +36,7 @@
 #define MH 15
 #define NUM_KEYS 3
 #define NUM_LOCKERS 5
+#define NUM_NOTES 2
 
 #define PLAYER_WALK 3.1
 #define PLAYER_RUN  4.7
@@ -57,7 +58,7 @@
 #define MAX_TORCHES 32
 
 /* ------------------------------------------------------------------- state */
-enum { ST_TITLE, ST_PLAY, ST_CAUGHT, ST_WIN };
+enum { ST_TITLE, ST_PLAY, ST_CAUGHT, ST_WIN, ST_READING };
 
 static char   map[MH][MW + 1];
 static double posX, posY;               /* position on the floor plane       */
@@ -86,6 +87,15 @@ typedef struct { double x, y; } Locker;
 static Locker lockers[NUM_LOCKERS];
 static int    near_locker = -1;
 
+typedef struct { double x, y; int active, text; } Note;
+static Note   notes[NUM_NOTES];
+static int    reading_note = 0;         /* which lore note is on screen       */
+
+static int    depth = 1;                /* current floor (1 = topmost)        */
+static double mon_speed = MONSTER_SPD;  /* scales with depth                  */
+static double upX, upY;                 /* stairs back up (only when depth>1) */
+static int    has_up = 0;
+
 static int    game_state = ST_TITLE;
 static double state_time = 0.0;
 static double tension = 0.0, flicker = 1.0;
@@ -97,7 +107,7 @@ static uint32_t fb[SCREEN_W * SCREEN_H];
 static uint32_t tex[3][TEX * TEX];         /* 0 wall, 1 floor, 2 ceiling     */
 static uint32_t lockmetal[TEX * TEX];      /* opaque steel for locker boxes  */
 static uint32_t brackmetal[TEX * TEX];     /* dark iron for torch brackets   */
-static uint32_t spr_rgba[5][TEX * TEX];    /* 0 monster,1 key,2 exit,3 loc,4 flame */
+static uint32_t spr_rgba[7][TEX * TEX];    /* 0 mon,1 key,2 down,3 loc,4 flame,5 note,6 up */
 
 /* torches fixed to walls: warm point lights that flicker */
 static float  torchX[MAX_TORCHES], torchZ[MAX_TORCHES];   /* flame world pos  */
@@ -278,7 +288,7 @@ static void build_textures(void) {
  *   a = 0   transparent (discarded)
  *   a = 128 shaded by the flashlight
  *   a = 255 self-lit glow                                                    */
-static uint8_t spr_flg[5][TEX * TEX];
+static uint8_t spr_flg[7][TEX * TEX];
 static void put_spr(int t, int x, int y, uint32_t col, uint8_t flg) {
     if (x < 0 || x >= TEX || y < 0 || y >= TEX) return;
     spr_flg[t][y * TEX + x] = flg;
@@ -352,8 +362,27 @@ static void build_sprites(void) {
             int B = (int)(255 * body * (0.32 - 0.30 * r)); /* red-ish edges   */
             put_spr(4, x, y, pack(R, G, B), 2);
         }
+    /* 5: NOTE — a pale glowing sheet of paper with faint writing */
+    for (int y = 0; y < TEX; y++)
+        for (int x = 0; x < TEX; x++) {
+            if (x < 20 || x > 44 || y < 12 || y > 54) continue;
+            int edge = (x < 22 || x > 42 || y < 14 || y > 52);
+            int line = (x > 24 && x < 40 && ((y - 18) % 6 < 1) && y < 50);
+            if (edge) put_spr(5, x, y, pack(150, 140, 110), 2);
+            else if (line) put_spr(5, x, y, pack(90, 80, 60), 2);
+            else put_spr(5, x, y, pack(210, 200, 170), 2);
+        }
+    /* 6: STAIRS UP — a cold blue doorway of light (mirror of the exit) */
+    for (int y = 0; y < TEX; y++)
+        for (int x = 0; x < TEX; x++) {
+            int frame = (x >= 16 && x <= 47 && y >= 6 && y <= 60);
+            int edge = frame && (x <= 19 || x >= 44 || y <= 9);
+            int inner = (x >= 22 && x <= 41 && y >= 12 && y <= 60);
+            if (edge) put_spr(6, x, y, pack(90, 170, 255), 2);
+            else if (inner) { int b = 40 + (60 - y) * 2; put_spr(6, x, y, pack(30, 60, b < 0 ? 0 : b), 2); }
+        }
     /* bake the flag into the alpha byte for the shader */
-    for (int t = 0; t < 5; t++)
+    for (int t = 0; t < 7; t++)
         for (int i = 0; i < TEX * TEX; i++) {
             int a = spr_flg[t][i] == 0 ? 0 : (spr_flg[t][i] == 1 ? 128 : 255);
             spr_rgba[t][i] = (spr_rgba[t][i] & 0x00FFFFFF) | ((uint32_t)a << 24);
@@ -419,10 +448,26 @@ static int has_los(double ax, double ay, double bx, double by) {
     return 1;
 }
 
+/* Lore notes, shown when picked up. Each ends with a NULL line. */
+static const char *NOTES[][6] = {
+    {"THE TORCHES GUTTER AND DIE", "ON THEIR OWN NOW.", "I RELIGHT THEM.", "IT KNOWS I AM DOWN HERE.", NULL},
+    {"THE STAIRS ONLY GO DOWN,", "THEY SAID.", "THEY LIED. THERE IS A WAY UP.", "IF YOU LIVE TO FIND IT.", NULL},
+    {"DO NOT RUN.", "IT HEARS EVERYTHING.", "WALK. BREATHE SLOW.", "THE LOCKERS ARE YOUR FRIENDS.", NULL},
+    {"THREE KEYS FOR EACH DOOR DOWN.", "WHY DOWN?", "WHAT IS IT KEEPING", "AT THE BOTTOM?", NULL},
+    {"I COUNTED FOURTEEN FLOORS", "BEFORE MY LAMP FAILED.", "THE WHISPERING", "NEVER STOPPED.", NULL},
+    {"IF YOU READ THIS,", "YOU ARE NOT THE FIRST.", "YOU WILL NOT BE THE LAST.", "IT IS NEVER FULL.", NULL},
+};
+static const int NOTE_POOL = 6;
+
 static void reset_level(void) {
     carve();
     posX = 1.5; posY = 1.5; yaw = 0; pitch = 0;
+    mon_speed = MONSTER_SPD + (depth - 1) * 0.10;
+    if (mon_speed > 3.2) mon_speed = 3.2;
+    /* stairs down at the far corner; stairs up near start on deeper floors */
     exitX = MW - 2 + 0.5; exitY = MH - 2 + 0.5; map[MH - 2][MW - 2] = '.';
+    has_up = (depth > 1);
+    upX = 1 + 0.5; upY = MH - 2 + 0.5; map[MH - 2][1] = '.';
     keys_left = NUM_KEYS;
     for (int i = 0; i < NUM_KEYS; i++) {
         for (;;) {
@@ -457,6 +502,16 @@ static void reset_level(void) {
             break;
         }
     }
+    /* lore notes on open cells away from the start */
+    for (int i = 0; i < NUM_NOTES; i++) {
+        for (;;) {
+            int x = 1 + rand() % (MW - 2), y = 1 + rand() % (MH - 2);
+            if (!is_open(x, y) || abs(x - 1) + abs(y - 1) < 4) continue;
+            notes[i].x = x + 0.5; notes[i].y = y + 0.5; notes[i].active = 1;
+            notes[i].text = rand() % NOTE_POOL;
+            break;
+        }
+    }
     for (;;) {
         int x = 1 + rand() % (MW - 2), y = 1 + rand() % (MH - 2);
         if (is_open(x, y) && abs(x - 1) + abs(y - 1) > MW / 2) { monX = x + 0.5; monY = y + 0.5; break; }
@@ -485,7 +540,7 @@ static void update_monster(double dt) {
     }
     double tx = bx + 0.5, ty = by + 0.5, vx = tx - monX, vy = ty - monY;
     double len = sqrt(vx * vx + vy * vy);
-    if (len > 1e-4) { double step = MONSTER_SPD * dt; if (step > len) step = len;
+    if (len > 1e-4) { double step = mon_speed * dt; if (step > len) step = len;
         monX += vx / len * step; monY += vy / len * step; }
 }
 static void update_ai(double dt, int moving, int sprinting) {
@@ -641,7 +696,7 @@ static const char *FSRC =
     "  float fog = 1.0 / (1.0 + dist*dist*uFogK);\n"
     /* cool moonlight ambient so geometry is faintly readable in the dark, */
     /* plus warm torch point lights that carry the real illumination.      */
-    "  vec3 lit = vec3(0.05, 0.055, 0.075);\n"
+    "  vec3 lit = vec3(0.075, 0.08, 0.10);\n"
     "  for(int i=0;i<uTorchCount;i++){\n"
     "    vec3 L = uTorchPos[i] - vW; float td = length(L);\n"
     "    float att = uTorchInt[i] / (1.0 + 0.35*td + 0.55*td*td);\n"
@@ -670,7 +725,7 @@ static GLint u_mvp, u_campos, u_camdir, u_amb, u_fogk, u_flick, u_mode;
 static GLint u_tcount, u_tpos, u_tint, u_tcol, u_tex, u_map, u_mapsize, u_occl;
 static int   occl_on = 1;
 static GLuint worldVAO, worldVBO, sprVAO, sprVBO, ovVAO, ovVBO;
-static GLuint texWall, texFloor, texCeil, texLocker, texBracket, texSpr[5], texOverlay, texMap;
+static GLuint texWall, texFloor, texCeil, texLocker, texBracket, texSpr[7], texOverlay, texMap;
 static int   floorStart, floorCount, ceilStart, ceilCount, wallCount;
 static int   lockStart, lockCount, brkStart, brkCount;
 
@@ -903,7 +958,7 @@ static void gl_init(void) {
     texWall = make_texture(tex[0]); texFloor = make_texture(tex[1]); texCeil = make_texture(tex[2]);
     texLocker = make_texture(lockmetal);
     texBracket = make_texture(brackmetal);
-    for (int i = 0; i < 5; i++) texSpr[i] = make_texture(spr_rgba[i]);
+    for (int i = 0; i < 7; i++) texSpr[i] = make_texture(spr_rgba[i]);
     glGenTextures(1, &texMap);                 /* filled per-maze by upload_map */
     glActiveTexture_(GL_TEXTURE1);
     glBindTexture(GL_TEXTURE_2D, texMap);      /* keep the occlusion map on unit 1 */
@@ -998,7 +1053,10 @@ static void render_3d(void) {
     if (!hidden) draw_billboard(monX, monY, 1.15, 0.0, 0, mvp);
     for (int i = 0; i < NUM_KEYS; i++)
         if (keys[i].active) draw_billboard(keys[i].x, keys[i].y, 0.4, 0.35, 1, mvp);
-    if (keys_left == 0) draw_billboard(exitX, exitY, 0.95, 0.02, 2, mvp);
+    for (int i = 0; i < NUM_NOTES; i++)
+        if (notes[i].active) draw_billboard(notes[i].x, notes[i].y, 0.32, 0.25, 5, mvp);
+    draw_billboard(exitX, exitY, 0.95, 0.02, 2, mvp);          /* stairs down */
+    if (has_up) draw_billboard(upX, upY, 0.95, 0.02, 6, mvp);  /* stairs up   */
 
     /* torch flames: additive glow so they read as fire, not flat sprites */
     glEnable(GL_BLEND);
@@ -1048,11 +1106,35 @@ static void draw_sanity_fx(void) {
             if (a > 0) fb[y * SCREEN_W + x] = packa((int)(redt * r), 0, 0, a);
         }
 }
+/* the parchment panel shown while reading a lore note */
+static void draw_note(void) {
+    for (int i = 0; i < SCREEN_W * SCREEN_H; i++) fb[i] = packa(0, 0, 0, 150);
+    int pw = 560, ph = 300, px = (SCREEN_W - pw) / 2, py = (SCREEN_H - ph) / 2;
+    fill_rect(px, py, pw, ph, packa(24, 22, 18, 240));
+    fill_rect(px, py, pw, 4, packa(90, 80, 60, 255));
+    fill_rect(px, py + ph - 4, pw, 4, packa(90, 80, 60, 255));
+    draw_text_c(py + 26, 3, "A SCRAP OF PAPER", pack(180, 160, 120));
+    const char **lines = NOTES[reading_note];
+    int ty = py + 90;
+    for (int i = 0; i < 6 && lines[i]; i++) { draw_text_c(ty, 3, lines[i], pack(210, 200, 175)); ty += 34; }
+    draw_text_c(py + ph - 34, 2, "PRESS E TO PUT IT DOWN", pack(130, 120, 100));
+}
+
 static void draw_hud(void) {
     char buf[32];
+    snprintf(buf, sizeof(buf), "FLOOR %d", depth);
+    draw_text(16, 16, 3, buf, pack(150, 170, 220));
     snprintf(buf, sizeof(buf), "KEYS %d/%d", NUM_KEYS - keys_left, NUM_KEYS);
-    draw_text(16, 16, 3, buf, pack(230, 210, 120));
-    if (keys_left == 0) draw_text(16, 48, 3, "THE EXIT IS OPEN. RUN.", pack(90, 255, 150));
+    draw_text(16, 44, 3, buf, pack(230, 210, 120));
+
+    /* contextual stair prompts */
+    double ed = fabs(posX - exitX) + fabs(posY - exitY);
+    if (ed < 1.4) draw_text_c(SCREEN_H - 150, 3,
+        keys_left == 0 ? "STAIRS DOWN - STEP ON TO DESCEND" : "STAIRS DOWN - LOCKED, FIND THE KEYS", pack(90, 255, 150));
+    if (has_up) {
+        double ud = fabs(posX - upX) + fabs(posY - upY);
+        if (ud < 1.4) draw_text_c(SCREEN_H - 150, 3, "STAIRS UP - STEP ON TO CLIMB", pack(120, 190, 255));
+    }
 
     int bw = 220, bh = 16, bx = 16, by = SCREEN_H - 80;
     fill_rect(bx - 2, by - 2, bw + 4, bh + 4, pack(20, 20, 24));
@@ -1097,12 +1179,6 @@ static void draw_title(void) {
     if ((int)(state_time * 2) % 2) draw_text_c(380, 4, "PRESS ENTER", pack(220, 220, 220));
     draw_text_c(SCREEN_H - 84, 2, "CONTROLS USE PHYSICAL KEYS - IF THEY FAIL, SWITCH TO ENGLISH LAYOUT", pack(150, 120, 60));
     draw_text_c(SCREEN_H - 60, 2, "WASD MOVE   MOUSE LOOK   SHIFT RUN   E HIDE   ESC QUIT", pack(90, 90, 100));
-}
-static void draw_win(void) {
-    for (int i = 0; i < SCREEN_W * SCREEN_H; i++) fb[i] = packa(0, 0, 0, 190);
-    draw_text_c(SCREEN_H / 2 - 50, 7, "YOU ESCAPED", pack(80, 255, 140));
-    draw_text_c(SCREEN_H / 2 + 30, 3, "THE NIGHT LETS YOU GO. THIS TIME.", pack(180, 200, 190));
-    draw_text_c(SCREEN_H / 2 + 70, 3, "PRESS R TO GO BACK IN", pack(150, 150, 150));
 }
 static void draw_jumpscare(void) {
     double t = state_time, shake = (t < 1.2) ? 6 * sin(t * 90) : 0;
@@ -1235,10 +1311,15 @@ int main(int argc, char **argv) {
                 if (k == SDL_SCANCODE_ESCAPE) running = 0;
                 if ((k == SDL_SCANCODE_RETURN || k == SDL_SCANCODE_KP_ENTER ||
                      k == SDL_SCANCODE_SPACE) && game_state == ST_TITLE) {
-                    new_game(); game_state = ST_PLAY; state_time = 0;
+                    depth = 1; new_game(); game_state = ST_PLAY; state_time = 0;
                 }
                 if (k == SDL_SCANCODE_R && (game_state == ST_CAUGHT || game_state == ST_WIN)) {
-                    new_game(); game_state = ST_PLAY; state_time = 0;
+                    depth = 1; new_game(); game_state = ST_PLAY; state_time = 0;
+                }
+                /* dismiss a note you're reading */
+                if ((k == SDL_SCANCODE_E || k == SDL_SCANCODE_SPACE ||
+                     k == SDL_SCANCODE_RETURN) && game_state == ST_READING) {
+                    game_state = ST_PLAY;
                 }
                 if (k == SDL_SCANCODE_E && game_state == ST_PLAY) {
                     if (hidden) hidden = 0;
@@ -1296,9 +1377,25 @@ int main(int argc, char **argv) {
                     if (kd < PICKUP_DIST * PICKUP_DIST) { keys[i].active = 0; keys_left--;
                         if (snd_pickup) Mix_PlayChannel(3, snd_pickup, 0); }
                 }
+            /* pick up and read a lore note */
+            for (int i = 0; i < NUM_NOTES; i++)
+                if (notes[i].active) {
+                    double nd = (posX - notes[i].x) * (posX - notes[i].x) + (posY - notes[i].y) * (posY - notes[i].y);
+                    if (nd < PICKUP_DIST * PICKUP_DIST) {
+                        notes[i].active = 0; reading_note = notes[i].text;
+                        game_state = ST_READING;
+                        if (snd_pickup) Mix_PlayChannel(3, snd_pickup, 0);
+                    }
+                }
+            /* descend once the floor's keys are collected */
             if (keys_left == 0) {
                 double ed = (posX - exitX) * (posX - exitX) + (posY - exitY) * (posY - exitY);
-                if (ed < 0.5) { game_state = ST_WIN; state_time = 0; }
+                if (ed < 0.4) { depth++; new_game(); state_time = 0; }
+            }
+            /* climb back up */
+            if (has_up) {
+                double ud = (posX - upX) * (posX - upX) + (posY - upY) * (posY - upY);
+                if (ud < 0.4) { depth--; new_game(); state_time = 0; }
             }
             double md = sqrt((posX - monX) * (posX - monX) + (posY - monY) * (posY - monY));
             int caught = (!hidden && md < CATCH_DIST);
@@ -1331,11 +1428,11 @@ int main(int argc, char **argv) {
         ov_clear();
         if (game_state == ST_TITLE) draw_title();
         else if (game_state == ST_CAUGHT) draw_jumpscare();
+        else if (game_state == ST_READING) { draw_hud(); draw_note(); }
         else {
             draw_sanity_fx();
             if (hidden) draw_hidden_overlay();
-            if (game_state == ST_WIN) draw_win();
-            else draw_hud();
+            draw_hud();
         }
         present_overlay();
 
