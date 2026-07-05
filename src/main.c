@@ -297,22 +297,51 @@ static void put_spr(int t, int x, int y, uint32_t col, uint8_t flg) {
 static void build_sprites(void) {
     memset(spr_flg, 0, sizeof(spr_flg));
     memset(spr_rgba, 0, sizeof(spr_rgba));
-    /* 0: THE STALKER */
+    /* 0: THE STALKER — a tall, gaunt, hunched figure with a pale sunken face,
+     * spindly reaching arms and burning eyes. Drawn on a tall narrow billboard
+     * so it looms in the corridor rather than reading as a post.            */
     for (int y = 0; y < TEX; y++)
         for (int x = 0; x < TEX; x++) {
-            double nx = x - 32.0; int inside = 0;
-            if (y < 24) { double hy = y - 15.0;
-                if (nx * nx / (11 * 11.0) + hy * hy / (13 * 13.0) < 1.0) inside = 1; }
-            double half = 8 + (y - 22) * 0.42;
-            if (y >= 22 && fabs(nx) < half) inside = 1;
-            if (inside) { int v = 8 + (int)(frand() * 8); put_spr(0, x, y, pack(v, v, v + 2), 1); }
+            double nx = x - 32.0;
+            int part = 0;                                  /* 1 = dark flesh, 2 = pale face */
+            /* gaunt head/face */
+            double hy = y - 11.0, he = (nx * nx) / (5.5 * 5.5) + (hy * hy) / (8.0 * 8.0);
+            if (he < 1.0) part = 2;
+            /* thin neck */
+            if (y >= 17 && y <= 20 && fabs(nx) < 2.3) part = part ? part : 1;
+            /* hunched torso, tapering to a narrow waist */
+            if (y >= 19 && y <= 47) {
+                double tt = (y - 19) / 28.0, hw = 9.5 - tt * 6.0;
+                if (fabs(nx) < hw) part = part ? part : 1;
+            }
+            /* long spindly arms angling outward to clawed hands */
+            if (y >= 20 && y <= 55) {
+                double ax = 8.0 + (y - 20) * 0.16;
+                if (fabs(fabs(nx) - ax) < 2.1) part = part ? part : 1;
+                if (y >= 50 && fabs(nx) - ax > -1.5 && fabs(nx) - ax < 4.5 && (x % 2 == 0))
+                    part = part ? part : 1;            /* splayed claw fingers */
+            }
+            /* two thin legs */
+            if (y >= 46 && y <= 63 && fabs(fabs(nx) - 3.5) < 2.0) part = part ? part : 1;
+            if (part == 1) {
+                int v = 6 + (int)(frand() * 7);
+                if (frand() < 0.04) v += 22;               /* sickly pale flecks */
+                put_spr(0, x, y, pack(v, v, v + 2), 1);
+            } else if (part == 2) {
+                double edge = fabs(nx) / 5.5;              /* darker sunken cheeks */
+                int v = (int)(64 - edge * 42) + (int)(frand() * 6);
+                put_spr(0, x, y, pack(v, (int)(v * 0.92), (int)(v * 0.86)), 1);
+            }
         }
-    for (int y = 10; y <= 16; y++)
+    /* dark eye sockets + burning eyes, and a gaping mouth */
+    for (int y = 6; y <= 22; y++)
         for (int x = 0; x < TEX; x++) {
-            double d1 = (x - 25.0) * (x - 25.0) + (y - 13.0) * (y - 13.0);
-            double d2 = (x - 39.0) * (x - 39.0) + (y - 13.0) * (y - 13.0);
-            if (d1 < 5 || d2 < 5) put_spr(0, x, y, pack(255, 40, 30), 2);
-            else if (d1 < 12 || d2 < 12) put_spr(0, x, y, pack(120, 10, 8), 2);
+            double le = (x - 28.0) * (x - 28.0) + (y - 10.0) * (y - 10.0);
+            double re = (x - 36.0) * (x - 36.0) + (y - 10.0) * (y - 10.0);
+            if (le < 4.0 || re < 4.0) put_spr(0, x, y, pack(255, 55, 25), 2);      /* glow */
+            else if (le < 8.0 || re < 8.0) put_spr(0, x, y, pack(90, 8, 6), 1);    /* socket */
+            double m = (x - 32.0) * (x - 32.0) / 9.0 + (y - 17.5) * (y - 17.5) / 3.0;
+            if (m < 1.0) put_spr(0, x, y, pack(6, 4, 5), 1);                       /* mouth */
         }
     /* 1: KEY */
     for (int y = 0; y < TEX; y++)
@@ -803,7 +832,7 @@ static void add_torch_bracket(float *buf, int *n, double tx, double tz, double d
  * cell, then place a torch only where none is already within TORCH_SPACING.
  * Trying every candidate guarantees full coverage (no cell is more than
  * TORCH_SPACING from a torch) while the spacing rule prevents clustering. */
-#define TORCH_SPACING 4.2f
+#define TORCH_SPACING 3.4f
 static void place_torches(void) {
     torch_count = 0;
     int dx[] = {1, -1, 0, 0}, dy[] = {0, 0, 1, -1};
@@ -979,11 +1008,11 @@ static void cam_dir(float *dx, float *dy, float *dz) {
     *dz = (float)(cos(pitch) * sin(yaw));
 }
 
-static void draw_billboard(double wx, double wz, double size, double base, int type, float mvp[16]) {
+static void draw_billboard(double wx, double wz, double w, double h, double base, int type, float mvp[16]) {
     /* camera-facing quad in the floor plane's right/up basis */
     float rx = (float)-sin(yaw), rz = (float)cos(yaw);   /* screen-right on the ground */
-    float hx = rx * (float)(size * 0.5), hz = rz * (float)(size * 0.5);
-    float y0 = (float)base, y1 = (float)(base + size);
+    float hx = rx * (float)(w * 0.5), hz = rz * (float)(w * 0.5);
+    float y0 = (float)base, y1 = (float)(base + h);
     float cx = (float)wx, cz = (float)wz;
     float buf[6 * 8]; int n = 0;
     /* two triangles; normal unused for sprites */
@@ -1050,13 +1079,20 @@ static void render_3d(void) {
     glBindTexture(GL_TEXTURE_2D, texBracket); glDrawArrays(GL_TRIANGLES, brkStart, brkCount);
 
     /* opaque-ish sprites (billboards) — depth tested, alpha discarded */
-    if (!hidden) draw_billboard(monX, monY, 1.15, 0.0, 0, mvp);
+    if (!hidden) {
+        /* The Stalker: tall & narrow, filling the corridor height, with a
+         * slow uneasy sway and bob so it never reads as a static post. */
+        double sway = 0.03 * sin(state_time * 1.7);
+        double bob  = 0.02 * sin(state_time * 2.3);
+        draw_billboard(monX - sin(yaw) * sway, monY + cos(yaw) * sway,
+                       0.66, 0.99 + bob, 0.0, 0, mvp);
+    }
     for (int i = 0; i < NUM_KEYS; i++)
-        if (keys[i].active) draw_billboard(keys[i].x, keys[i].y, 0.4, 0.35, 1, mvp);
+        if (keys[i].active) draw_billboard(keys[i].x, keys[i].y, 0.4, 0.4, 0.35, 1, mvp);
     for (int i = 0; i < NUM_NOTES; i++)
-        if (notes[i].active) draw_billboard(notes[i].x, notes[i].y, 0.32, 0.25, 5, mvp);
-    draw_billboard(exitX, exitY, 0.95, 0.02, 2, mvp);          /* stairs down */
-    if (has_up) draw_billboard(upX, upY, 0.95, 0.02, 6, mvp);  /* stairs up   */
+        if (notes[i].active) draw_billboard(notes[i].x, notes[i].y, 0.32, 0.32, 0.25, 5, mvp);
+    draw_billboard(exitX, exitY, 0.95, 0.95, 0.02, 2, mvp);          /* stairs down */
+    if (has_up) draw_billboard(upX, upY, 0.95, 0.95, 0.02, 6, mvp);  /* stairs up   */
 
     /* torch flames: additive glow so they read as fire, not flat sprites */
     glEnable(GL_BLEND);
@@ -1065,7 +1101,7 @@ static void render_3d(void) {
     for (int i = 0; i < torch_count; i++) {
         double s = 0.46 * (0.9 + 0.16 * sin(state_time * 9.0 + i * 2.1));
         draw_billboard(torchX[i] + torchNx[i] * 0.07, torchZ[i] + torchNz[i] * 0.07,
-                       s, TORCH_Y - 0.04, 4, mvp);
+                       s, s, TORCH_Y - 0.04, 4, mvp);
     }
     glDepthMask(GL_TRUE);
     glDisable(GL_BLEND);
@@ -1292,6 +1328,13 @@ int main(int argc, char **argv) {
         if (is_open((int)bx, (int)bz)) { posX = bx; posY = bz; }
         yaw = atan2(tz * sgn, tx * sgn);
         pitch = -0.12;
+        if (getenv("NIGHTFALL_SHOWMON")) {              /* park the Stalker in view */
+            for (double s = 3.0; s >= 1.5; s -= 0.5) {
+                double mx = posX + cos(yaw) * s, my = posY + sin(yaw) * s;
+                if (is_open((int)mx, (int)my)) { monX = mx; monY = my; break; }
+            }
+            pitch = 0.02;
+        }
         fprintf(stderr, "torches=%d\n", torch_count);
     }
     Uint64 prev = SDL_GetPerformanceCounter();
