@@ -721,7 +721,7 @@ static const char *FSRC =
     "  int steps = int(len / 0.2) + 1; if(steps > 48) steps = 48;\n"
     "  float occ = 0.0;\n"
     "  for(int t = -1; t <= 1; t++){\n"
-    "    vec2 pt = p + perp * (float(t) * 0.09);\n"
+    "    vec2 pt = p + perp * (float(t) * 0.035);\n"
     "    bool hit = false;\n"
     "    for(int s = 1; s < steps; s++){\n"
     "      if(hit_wall(pt + d * (float(s)/float(steps)))) { hit = true; break; }\n"
@@ -1088,7 +1088,13 @@ static void render_3d(void) {
     /* torch point lights: warm, individually flickering */
     static float tp[MAX_TORCHES * 3], ti[MAX_TORCHES];
     for (int i = 0; i < torch_count; i++) {
-        tp[i * 3] = torchX[i]; tp[i * 3 + 1] = TORCH_Y; tp[i * 3 + 2] = torchZ[i];
+        /* pull the light source out into the room, off the wall face --
+         * otherwise it sits almost exactly on the wall plane and the wall
+         * it's mounted on barely lights up (surface normal ~perpendicular
+         * to the light vector, so the diffuse term reads near zero). Keep
+         * it close to the visible flame sprite (+0.07) so the brightest
+         * spot doesn't visibly detach from where the flame is drawn.      */
+        tp[i * 3] = torchX[i] + torchNx[i] * 0.16f; tp[i * 3 + 1] = TORCH_Y; tp[i * 3 + 2] = torchZ[i] + torchNz[i] * 0.16f;
         double f = 1.15 + 0.22 * sin(state_time * 7.0 + i * 1.7) + (frand() - 0.5) * 0.12;
         ti[i] = (float)(f * 1.5 * flicker);       /* global flicker/surge affects torches now */
     }
