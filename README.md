@@ -1,6 +1,6 @@
 # 🕯️ NIGHTFALL
 
-A first-person **horror game for Linux**, written in C on a hand-rolled
+A first-person **horror game for Linux and Windows**, written in C on a hand-rolled
 engine (SDL2 + OpenGL 3.3 + SDL2_mixer). No game engine, no external art —
 the walls, the monster and the sound are all generated in code.
 
@@ -59,20 +59,32 @@ when it does, it fills the screen. It gets faster the deeper you go.
 
 ## Build & run
 
-Install the dependencies (Debian / Ubuntu):
+### Linux (Debian / Ubuntu)
 
 ```bash
 sudo apt install -y libsdl2-dev libsdl2-mixer-dev libgl1-mesa-dev build-essential python3
-```
-
-Then:
-
-```bash
 make            # generates audio + compiles the 3D build
 ./nightfall     # or: make run
 
 make run-classic  # GPU-free software raycaster fallback
 ```
+
+### Windows (MSYS2 / MinGW)
+
+Install [MSYS2](https://www.msys2.org/), then from a **MSYS2 UCRT64** shell:
+
+```bash
+pacman -S --needed mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-make \
+  mingw-w64-ucrt-x86_64-pkgconf mingw-w64-ucrt-x86_64-SDL2 \
+  mingw-w64-ucrt-x86_64-SDL2_mixer python
+mingw32-make      # generates audio + compiles the 3D build
+./nightfall.exe   # or: mingw32-make run
+
+mingw32-make run-classic  # GPU-free software raycaster fallback
+```
+
+Make sure `C:\msys64\ucrt64\bin` is on your `PATH` (or run from the "MSYS2 UCRT64"
+shell shortcut) so the built `.exe` can find `SDL2.dll` and friends.
 
 ## Controls
 

@@ -7,18 +7,27 @@ LDFLAGS := $(SDL_LD) -lm
 BIN     := nightfall
 CLASSIC := nightfall-classic
 
+# Windows (MSYS2/MinGW): .exe suffix, and OpenGL comes from opengl32 not GL
+ifeq ($(OS),Windows_NT)
+	EXE     := .exe
+	GL_LIBS := -lopengl32
+else
+	EXE     :=
+	GL_LIBS := -lGL
+endif
+
 .PHONY: all audio run run-classic classic clean
 
-all: audio $(BIN)
+all: audio $(BIN)$(EXE)
 
 # real-3D OpenGL build (primary); -lz for the PNG "vision" image decoder
-$(BIN): src/main.c
-	$(CC) $(CFLAGS) $(SDL_CF) src/main.c -o $(BIN) $(LDFLAGS) -lGL -lz
+$(BIN)$(EXE): src/main.c
+	$(CC) $(CFLAGS) $(SDL_CF) src/main.c -o $(BIN)$(EXE) $(LDFLAGS) $(GL_LIBS) -lz
 
 # original raycasting build (fallback, no GPU needed)
-classic: audio $(CLASSIC)
-$(CLASSIC): src/raycast.c
-	$(CC) $(CFLAGS) $(SDL_CF) src/raycast.c -o $(CLASSIC) $(LDFLAGS)
+classic: audio $(CLASSIC)$(EXE)
+$(CLASSIC)$(EXE): src/raycast.c
+	$(CC) $(CFLAGS) $(SDL_CF) src/raycast.c -o $(CLASSIC)$(EXE) $(LDFLAGS)
 
 # regenerate the procedural sound assets
 audio: assets/ambient.wav
@@ -26,10 +35,10 @@ assets/ambient.wav: tools/gen_audio.py
 	python3 tools/gen_audio.py
 
 run: all
-	./$(BIN)
+	./$(BIN)$(EXE)
 
 run-classic: classic
-	./$(CLASSIC)
+	./$(CLASSIC)$(EXE)
 
 clean:
-	rm -f $(BIN) $(CLASSIC)
+	rm -f $(BIN) $(BIN).exe $(CLASSIC) $(CLASSIC).exe
