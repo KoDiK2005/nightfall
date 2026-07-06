@@ -48,6 +48,11 @@ when it does, it fills the screen. It gets faster the deeper you go.
   `python tools/photos2visions.py`, and they get graded into blood-red
   screamers that flash across the screen as your sanity collapses. Bring your
   own nightmares. (See [photos/README.md](photos/README.md).)
+- **Chests & screamers** — the three keys are locked in iron-bound chests
+  you crack open with `E`. Every chest you open slams one of your photos
+  edge-to-edge across the screen — a guaranteed jump-scare. A golden
+  *key-sense* compass at the top of the HUD points you toward the nearest
+  chest, brighter the closer you get and dimmer as your mind frays.
 - **Torchlight, no flashlight** — you carry no light of your own. The halls
   are near-black; the only illumination comes from flickering **wall torches**
   (warm per-fragment point lights), so you move between islands of firelight
@@ -97,7 +102,7 @@ shell shortcut) so the built `.exe` can find `SDL2.dll` and friends.
 | `W` `A` `S` `D`| Move          |
 | Mouse          | Look (free, up/down too) |
 | `Shift`        | Run (uses stamina) |
-| `E`            | Hide in / leave a locker · close a note |
+| `E`            | Open a chest · hide in / leave a locker · close a note |
 | `Enter`        | Start         |
 | `R`            | Retry / replay|
 | `Esc`          | Quit          |
