@@ -104,6 +104,7 @@ typedef struct { double x, y; int active, text; } Note;
 static Note   notes[NUM_NOTES];
 static double noteWX[NUM_NOTES], noteWY[NUM_NOTES];   /* dir from cell to backing wall */
 static int    reading_note = 0;         /* which lore note is on screen       */
+static int    near_note = -1;           /* index of a readable note within reach */
 
 static int    depth = 1;                /* current floor (1 = topmost)        */
 static double mon_speed = MONSTER_SPD;  /* scales with depth                  */
@@ -1018,7 +1019,7 @@ static void reset_level(void) {
     sanity = 1.0; mon_sees = 0; surge = 0;
     phantom_t = 0.0; phantom_timer = 10.0;
     vision_t = 0.0; vision_timer = 12.0;
-    screamer_t = 0.0; near_chest = -1;
+    screamer_t = 0.0; near_chest = -1; near_note = -1;
     whisper_timer = 8.0; event_timer = 14.0;
     mon_state = AI_WANDER; lastKnownX = posX; lastKnownY = posY;
     hunt_recalc = search_time = 0;
@@ -1979,6 +1980,8 @@ static void draw_hud(void) {
 
     if (near_chest >= 0 && !hidden)
         draw_text_c(SCREEN_H - 110, 3, "E - ОТКРЫТЬ СУНДУК", pack(230, 200, 90));
+    else if (near_note >= 0 && !hidden)
+        draw_text_c(SCREEN_H - 110, 3, "E - ПРОЧИТАТЬ ЗАПИСКУ", pack(200, 190, 160));
     else if (near_locker >= 0 && !hidden)
         draw_text_c(SCREEN_H - 110, 3, "E - СПРЯТАТЬСЯ", pack(200, 200, 160));
 
@@ -2274,6 +2277,11 @@ int main(int argc, char **argv) {
                 if (k == SDL_SCANCODE_E && game_state == ST_PLAY) {
                     if (hidden) hidden = 0;
                     else if (near_chest >= 0) open_chest(near_chest);
+                    else if (near_note >= 0) {                 /* stop and read the scrap */
+                        reading_note = notes[near_note].text;
+                        game_state = ST_READING;
+                        if (snd_pickup) Mix_PlayChannel(3, snd_pickup, 0);
+                    }
                     else if (near_locker >= 0) { hidden = 1; posX = lockers[near_locker].x; posY = lockers[near_locker].y; }
                 }
             }
@@ -2353,16 +2361,12 @@ int main(int argc, char **argv) {
                         if (shotpath) open_chest(i);   /* headless screenshots don't press keys */
                     }
                 }
-            /* pick up and read a lore note (never during a dev screenshot) */
-            if (!shotpath)
+            /* find the nearest lore note you could stop to read (E reads it) */
+            near_note = -1;
             for (int i = 0; i < NUM_NOTES; i++)
                 if (notes[i].active) {
                     double nd = (posX - notes[i].x) * (posX - notes[i].x) + (posY - notes[i].y) * (posY - notes[i].y);
-                    if (nd < PICKUP_DIST * PICKUP_DIST) {
-                        notes[i].active = 0; reading_note = notes[i].text;
-                        game_state = ST_READING;
-                        if (snd_pickup) Mix_PlayChannel(3, snd_pickup, 0);
-                    }
+                    if (nd < PICKUP_DIST * PICKUP_DIST) near_note = i;
                 }
             /* step through the open door -> a fade-to-black descent transition */
             if (descend_t > 0.0) {
