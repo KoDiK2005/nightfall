@@ -1215,12 +1215,13 @@ static const char *VSRC =
     "layout(location=0) in vec3 aPos;\n"
     "layout(location=1) in vec2 aUV;\n"
     "layout(location=2) in vec3 aN;\n"
+    "layout(location=3) in vec3 aTint;\n"
     "uniform mat4 uMVP;\n"
-    "out vec3 vW; out vec2 vUV; out vec3 vN;\n"
-    "void main(){ vW=aPos; vUV=aUV; vN=aN; gl_Position=uMVP*vec4(aPos,1.0); }\n";
+    "out vec3 vW; out vec2 vUV; out vec3 vN; out vec3 vTint;\n"
+    "void main(){ vW=aPos; vUV=aUV; vN=aN; vTint=aTint; gl_Position=uMVP*vec4(aPos,1.0); }\n";
 static const char *FSRC =
     "#version 330 core\n"
-    "in vec3 vW; in vec2 vUV; in vec3 vN;\n"
+    "in vec3 vW; in vec2 vUV; in vec3 vN; in vec3 vTint;\n"
     "uniform sampler2D uTex;\n"
     "uniform vec3 uCamPos; uniform vec3 uCamDir;\n"
     "uniform float uAmbient; uniform float uFogK; uniform float uFlicker;\n"
@@ -1258,6 +1259,7 @@ static const char *FSRC =
     "  vec4 t = texture(uTex, vUV);\n"
     "  float emissive = 0.0;\n"
     "  if(uMode==1){ if(t.a < 0.25) discard; emissive = step(0.75, t.a); }\n"
+    "  vec3 albedo = (uMode==0) ? t.rgb * vTint : t.rgb;\n"  /* per-room colour zones */
     "  vec3 nrm = normalize(vN);\n"
     "  float dist = length(vW - uCamPos);\n"
     "  float fog = 1.0 / (1.0 + dist*dist*uFogK);\n"
@@ -1280,7 +1282,7 @@ static const char *FSRC =
     "    float facing = (uMode==0) ? (0.35 + 0.65*max(dot(nrm, L/max(td,1e-3)), 0.0)) : 1.0;\n"
     "    lit += uTorchCol * att * facing * vis;\n"
     "  }\n"
-    "  vec3 col = t.rgb * lit;\n"
+    "  vec3 col = albedo * lit;\n"
     "  col = mix(col, t.rgb * (0.55 + 0.45*fog), emissive);\n"  /* glow ignores lighting */
     /* soft screen-space vignette: darkens the corners for a claustrophobic frame */
     "  vec2 vc = (gl_FragCoord.xy / uScreenSize) - 0.5;\n"
@@ -1345,11 +1347,15 @@ static GLuint make_texture(const uint32_t *pixels) {
     return id;
 }
 
-/* one vertex = pos(3) uv(2) normal(3) */
+/* the surface tint written into every vertex push_v emits, so per-room colour
+ * zones can be baked into the world mesh (sprites just leave it white).      */
+static float cur_tint[3] = {1.0f, 1.0f, 1.0f};
+/* one vertex = pos(3) uv(2) normal(3) tint(3) */
 static void push_v(float *buf, int *n, float x, float y, float z,
                    float u, float v, float nx, float ny, float nz) {
-    float *p = buf + (*n) * 8;
+    float *p = buf + (*n) * 11;
     p[0] = x; p[1] = y; p[2] = z; p[3] = u; p[4] = v; p[5] = nx; p[6] = ny; p[7] = nz;
+    p[8] = cur_tint[0]; p[9] = cur_tint[1]; p[10] = cur_tint[2];
     (*n)++;
 }
 static void push_quad(float *buf, int *n, float a[3], float b[3], float c[3], float d[3],
@@ -1499,35 +1505,62 @@ static void place_torches(void) {
     }
 }
 
+/* which room (theme) a cell falls in, or -1 for the connecting corridors */
+static int theme_at(int x, int y) {
+    for (int i = 0; i < room_count; i++) {
+        Room *r = &rooms[i];
+        if (x >= r->x && x < r->x + r->w && y >= r->y && y < r->y + r->h) return r->theme;
+    }
+    return -1;
+}
+/* set the surface tint for a room theme so each zone reads as its own colour:
+ * shrines glow gold, the library runs cold blue, storage is rusty, the exit
+ * sickly green, corridors a neutral cool grey. Multiplies the base texture. */
+static void tint_for(int theme) {
+    float c[3];
+    switch (theme) {
+        case RM_KEY:      c[0]=1.25f; c[1]=0.92f; c[2]=0.48f; break;  /* gold shrine   */
+        case RM_LIBRARY:  c[0]=0.64f; c[1]=0.80f; c[2]=1.12f; break;  /* cold blue     */
+        case RM_STORAGE:  c[0]=1.10f; c[1]=0.78f; c[2]=0.55f; break;  /* rust/amber    */
+        case RM_EXIT:     c[0]=0.58f; c[1]=1.18f; c[2]=0.72f; break;  /* sickly green  */
+        case RM_ENTRANCE: c[0]=1.00f; c[1]=0.90f; c[2]=0.74f; break;  /* warm hearth   */
+        default:          c[0]=0.82f; c[1]=0.84f; c[2]=0.94f; break;  /* corridor grey */
+    }
+    cur_tint[0]=c[0]; cur_tint[1]=c[1]; cur_tint[2]=c[2];
+}
+
 /* Rebuild the world mesh for the current maze (walls, floor, ceiling, lockers). */
 static void build_world_mesh(void) {
-    static float buf[(MW * MH * 36 + NUM_LOCKERS * 24 + NUM_KEYS * 32 + MAX_TORCHES * 72 + MAX_PROPS * 32 + 256) * 8];
+    static float buf[(MW * MH * 36 + NUM_LOCKERS * 24 + NUM_KEYS * 32 + MAX_TORCHES * 72 + MAX_PROPS * 32 + 256) * 11];
     int n = 0;
     place_torches();
     /* walls: a face for every wall cell that borders an open cell */
     for (int y = 0; y < MH; y++)
         for (int x = 0; x < MW; x++) {
             if (is_open(x, y)) continue;
-            /* +x neighbour open -> face on x+1 side facing -x, etc. World: (x, y_up, z=map y) */
-            if (is_open(x + 1, y)) { float a[3]={x+1,0,y}, b[3]={x+1,0,y+1}, c[3]={x+1,1,y+1}, d[3]={x+1,1,y}; push_quad(buf,&n,a,b,c,d,-1,0,0,1); }
-            if (is_open(x - 1, y)) { float a[3]={x,0,y+1}, b[3]={x,0,y}, c[3]={x,1,y}, d[3]={x,1,y+1}; push_quad(buf,&n,a,b,c,d, 1,0,0,1); }
-            if (is_open(x, y + 1)) { float a[3]={x+1,0,y+1}, b[3]={x,0,y+1}, c[3]={x,1,y+1}, d[3]={x+1,1,y+1}; push_quad(buf,&n,a,b,c,d,0,0,-1,1); }
-            if (is_open(x, y - 1)) { float a[3]={x,0,y}, b[3]={x+1,0,y}, c[3]={x+1,1,y}, d[3]={x,1,y}; push_quad(buf,&n,a,b,c,d,0,0,1,1); }
+            /* +x neighbour open -> face on x+1 side facing -x, etc. World: (x, y_up, z=map y).
+             * Tint each wall face by the room it faces into, so a room's walls
+             * carry its colour. */
+            if (is_open(x + 1, y)) { tint_for(theme_at(x+1,y)); float a[3]={x+1,0,y}, b[3]={x+1,0,y+1}, c[3]={x+1,1,y+1}, d[3]={x+1,1,y}; push_quad(buf,&n,a,b,c,d,-1,0,0,1); }
+            if (is_open(x - 1, y)) { tint_for(theme_at(x-1,y)); float a[3]={x,0,y+1}, b[3]={x,0,y}, c[3]={x,1,y}, d[3]={x,1,y+1}; push_quad(buf,&n,a,b,c,d, 1,0,0,1); }
+            if (is_open(x, y + 1)) { tint_for(theme_at(x,y+1)); float a[3]={x+1,0,y+1}, b[3]={x,0,y+1}, c[3]={x,1,y+1}, d[3]={x+1,1,y+1}; push_quad(buf,&n,a,b,c,d,0,0,-1,1); }
+            if (is_open(x, y - 1)) { tint_for(theme_at(x,y-1)); float a[3]={x,0,y}, b[3]={x+1,0,y}, c[3]={x+1,1,y}, d[3]={x,1,y}; push_quad(buf,&n,a,b,c,d,0,0,1,1); }
         }
     wallCount = n;
-    /* floor */
+    /* floor — tinted by the room the cell sits in */
     floorStart = n;
     for (int y = 0; y < MH; y++)
         for (int x = 0; x < MW; x++)
-            if (is_open(x, y)) { float a[3]={x,0,y}, b[3]={x+1,0,y}, c[3]={x+1,0,y+1}, d[3]={x,0,y+1}; push_quad(buf,&n,a,b,c,d,0,1,0,1); }
+            if (is_open(x, y)) { tint_for(theme_at(x,y)); float a[3]={x,0,y}, b[3]={x+1,0,y}, c[3]={x+1,0,y+1}, d[3]={x,0,y+1}; push_quad(buf,&n,a,b,c,d,0,1,0,1); }
     floorCount = n - floorStart;
-    /* ceiling */
+    /* ceiling — same zone colour */
     ceilStart = n;
     for (int y = 0; y < MH; y++)
         for (int x = 0; x < MW; x++)
-            if (is_open(x, y)) { float a[3]={x,1,y+1}, b[3]={x+1,1,y+1}, c[3]={x+1,1,y}, d[3]={x,1,y}; push_quad(buf,&n,a,b,c,d,0,-1,0,1); }
+            if (is_open(x, y)) { tint_for(theme_at(x,y)); float a[3]={x,1,y+1}, b[3]={x+1,1,y+1}, c[3]={x+1,1,y}, d[3]={x,1,y}; push_quad(buf,&n,a,b,c,d,0,-1,0,1); }
     ceilCount = n - ceilStart;
-    /* locker cabinets + altar pedestals + the descent door (all iron/steel) */
+    /* locker cabinets + altar pedestals + the descent door (all iron/steel, untinted) */
+    cur_tint[0] = cur_tint[1] = cur_tint[2] = 1.0f;
     lockStart = n;
     for (int i = 0; i < NUM_LOCKERS; i++)
         add_locker_box(buf, &n, lockers[i].x, lockers[i].y, lockWX[i], lockWY[i]);
@@ -1545,7 +1578,7 @@ static void build_world_mesh(void) {
 
     glBindVertexArray_(worldVAO);
     glBindBuffer_(GL_ARRAY_BUFFER, worldVBO);
-    glBufferData_(GL_ARRAY_BUFFER, n * 8 * sizeof(float), buf, GL_STATIC_DRAW);
+    glBufferData_(GL_ARRAY_BUFFER, n * 11 * sizeof(float), buf, GL_STATIC_DRAW);
 }
 
 /* upload the current maze walls into the R8 occlusion map texture */
@@ -1584,12 +1617,14 @@ static void open_chest(int i) {
 }
 
 static void setup_attribs(void) {
-    glVertexAttribPointer_(0, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)0);
+    glVertexAttribPointer_(0, 3, GL_FLOAT, GL_FALSE, 11 * sizeof(float), (void*)0);
     glEnableVertexAttribArray_(0);
-    glVertexAttribPointer_(1, 2, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(3 * sizeof(float)));
+    glVertexAttribPointer_(1, 2, GL_FLOAT, GL_FALSE, 11 * sizeof(float), (void*)(3 * sizeof(float)));
     glEnableVertexAttribArray_(1);
-    glVertexAttribPointer_(2, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(5 * sizeof(float)));
+    glVertexAttribPointer_(2, 3, GL_FLOAT, GL_FALSE, 11 * sizeof(float), (void*)(5 * sizeof(float)));
     glEnableVertexAttribArray_(2);
+    glVertexAttribPointer_(3, 3, GL_FLOAT, GL_FALSE, 11 * sizeof(float), (void*)(8 * sizeof(float)));
+    glEnableVertexAttribArray_(3);
 }
 static void gl_init(void) {
     prog3d = link_prog(VSRC, FSRC);
@@ -1665,7 +1700,8 @@ static void draw_sprite_dir(double wx, double wz, double rx, double rz,
     float hx = (float)(rx * w * 0.5), hz = (float)(rz * w * 0.5);
     float y0 = (float)base, y1 = (float)(base + h);
     float cx = (float)wx, cz = (float)wz;
-    float buf[6 * 8]; int n = 0;
+    cur_tint[0] = cur_tint[1] = cur_tint[2] = 1.0f;   /* sprites are never tinted */
+    float buf[6 * 11]; int n = 0;
     push_v(buf, &n, cx - hx, y0, cz - hz, 0, 1, 0, 0, 0);
     push_v(buf, &n, cx + hx, y0, cz + hz, 1, 1, 0, 0, 0);
     push_v(buf, &n, cx + hx, y1, cz + hz, 1, 0, 0, 0, 0);
@@ -1674,7 +1710,7 @@ static void draw_sprite_dir(double wx, double wz, double rx, double rz,
     push_v(buf, &n, cx - hx, y1, cz - hz, 0, 0, 0, 0, 0);
     glBindVertexArray_(sprVAO);
     glBindBuffer_(GL_ARRAY_BUFFER, sprVBO);
-    glBufferData_(GL_ARRAY_BUFFER, n * 8 * sizeof(float), buf, GL_DYNAMIC_DRAW);
+    glBufferData_(GL_ARRAY_BUFFER, n * 11 * sizeof(float), buf, GL_DYNAMIC_DRAW);
     glUniformMatrix4fv_(u_mvp, 1, GL_FALSE, mvp);
     glUniform1i_(u_mode, 1);
     glActiveTexture_(GL_TEXTURE0);
