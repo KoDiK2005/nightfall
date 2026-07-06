@@ -87,9 +87,10 @@ static int    tgtX, tgtY;
 static double lastKnownX, lastKnownY;
 static double hunt_recalc = 0.0, search_time = 0.0;
 
-typedef struct { double x, y; int active; } Key;
+typedef struct { double x, y; int active; } Key;   /* active = chest still locked */
 static Key    keys[NUM_KEYS];
 static int    keys_left;
+static int    near_chest = -1;          /* index of an openable chest within reach */
 static double exitX, exitY;
 static double doorNx = 1, doorNz = 0;   /* the exit door's facing (axis-snapped) */
 static double descend_t = 0.0;          /* >0 while the descent transition plays  */
@@ -137,7 +138,7 @@ static uint32_t fb[SCREEN_W * SCREEN_H];
 static uint32_t tex[3][TEX * TEX];         /* 0 wall, 1 floor, 2 ceiling     */
 static uint32_t lockmetal[TEX * TEX];      /* opaque steel for locker boxes  */
 static uint32_t brackmetal[TEX * TEX];     /* dark iron for torch brackets   */
-static uint32_t spr_rgba[7][TEX * TEX];    /* 0 mon,1 key,2 down,3 loc,4 flame,5 note,6 up */
+static uint32_t spr_rgba[8][TEX * TEX];    /* 0 mon,1 key,2 down,3 loc,4 flame,5 note,6 up,7 chest */
 
 /* torches fixed to walls: warm point lights that flicker */
 static float  torchX[MAX_TORCHES], torchZ[MAX_TORCHES];   /* flame world pos  */
@@ -342,6 +343,10 @@ static Vision visions[MAX_VISIONS];
 static int    nvisions = 0;
 static double vision_t = 0.0, vision_timer = 12.0;
 static int    vision_idx = 0;
+/* the guaranteed jump-scare: a photo slammed full-screen when a chest opens */
+#define SCREAMER_DUR 0.85
+static double screamer_t = 0.0;
+static int    screamer_idx = 0;
 
 /* nearest-downscale an RGBA image so it fits inside maxw x maxh (no upscale) */
 static unsigned char *fit_rgba(unsigned char *src, int w, int h, int maxw, int maxh, int *ow, int *oh) {
@@ -531,7 +536,7 @@ static void build_textures(void) {
  *   a = 0   transparent (discarded)
  *   a = 128 shaded by the flashlight
  *   a = 255 self-lit glow                                                    */
-static uint8_t spr_flg[7][TEX * TEX];
+static uint8_t spr_flg[8][TEX * TEX];
 static void put_spr(int t, int x, int y, uint32_t col, uint8_t flg) {
     if (x < 0 || x >= TEX || y < 0 || y >= TEX) return;
     spr_flg[t][y * TEX + x] = flg;
@@ -576,15 +581,24 @@ static void build_sprites(void) {
                 put_spr(0, x, y, pack(v, (int)(v * 0.92), (int)(v * 0.86)), 1);
             }
         }
-    /* dark eye sockets + burning eyes, and a gaping mouth */
-    for (int y = 6; y <= 22; y++)
+    /* deep black sockets, big burning eyes, and a gaping fanged maw */
+    for (int y = 4; y <= 26; y++)
         for (int x = 0; x < TEX; x++) {
-            double le = (x - 28.0) * (x - 28.0) + (y - 10.0) * (y - 10.0);
-            double re = (x - 36.0) * (x - 36.0) + (y - 10.0) * (y - 10.0);
-            if (le < 4.0 || re < 4.0) put_spr(0, x, y, pack(255, 55, 25), 2);      /* glow */
-            else if (le < 8.0 || re < 8.0) put_spr(0, x, y, pack(90, 8, 6), 1);    /* socket */
-            double m = (x - 32.0) * (x - 32.0) / 9.0 + (y - 17.5) * (y - 17.5) / 3.0;
-            if (m < 1.0) put_spr(0, x, y, pack(6, 4, 5), 1);                       /* mouth */
+            double le = (x - 27.5) * (x - 27.5) + (y - 10.0) * (y - 10.0);
+            double re = (x - 36.5) * (x - 36.5) + (y - 10.0) * (y - 10.0);
+            if (le < 10.0 || re < 10.0) {                                          /* hot core */
+                double q = (le < re ? le : re) / 10.0;
+                put_spr(0, x, y, pack(255, (int)(90 - q * 60), (int)(30 - q * 22)), 2);
+            } else if (le < 22.0 || re < 22.0) put_spr(0, x, y, pack(120, 12, 8), 2); /* ember rim */
+            else if (le < 40.0 || re < 40.0) put_spr(0, x, y, pack(4, 2, 2), 1);      /* black socket */
+            /* thin blood tracks weeping down from each eye */
+            if ((x == 27 || x == 37) && y > 12 && y < 24 && ((y + x) % 3)) put_spr(0, x, y, pack(70, 6, 6), 1);
+            /* gaping maw with a jagged row of pale fangs */
+            double m = (x - 32.0) * (x - 32.0) / 12.0 + (y - 19.0) * (y - 19.0) / 6.0;
+            if (m < 1.0) {
+                int fang = (y < 19) ? (((x * 7) % 5) < 2 && y > 16) : (((x * 7 + 3) % 5) < 2 && y < 21);
+                put_spr(0, x, y, fang ? pack(205, 195, 175) : pack(5, 2, 3), fang ? 2 : 1);
+            }
         }
     /* 1: KEY */
     for (int y = 0; y < TEX; y++)
@@ -660,8 +674,31 @@ static void build_sprites(void) {
             if (edge) put_spr(6, x, y, pack(90, 170, 255), 2);
             else if (inner) { int b = 40 + (60 - y) * 2; put_spr(6, x, y, pack(30, 60, b < 0 ? 0 : b), 2); }
         }
+    /* 7: CHEST — a hunched iron-bound coffer, domed lid, heavy padlock. The
+     * key you need is locked inside; opening it is the fright. */
+    for (int y = 0; y < TEX; y++)
+        for (int x = 0; x < TEX; x++) {
+            if (x < 16 || x > 48 || y < 22 || y > 56) continue;
+            double lidy = 34.0;                                   /* lid/body split */
+            int band  = (x == 16 || x == 48 || y == 56 || abs(x - 32) < 2); /* iron straps */
+            int plank = ((x + (y > lidy ? 0 : 1)) % 6 < 1);       /* wood grain seams  */
+            int lid   = (y < lidy);
+            if (lid) {                                            /* domed arched lid  */
+                double a = (x - 32.0) / 16.0;
+                if (y < lidy - 10.0 + a * a * 10.0) continue;     /* carve the arch    */
+            }
+            int wood = lid ? 74 : 58;                             /* lid catches light */
+            int v = wood + (int)(frand() * 8) - (plank ? 22 : 0) - (band ? 40 : 0);
+            if (v < 6) v = 6;
+            uint32_t col = band ? pack(v + 6, v + 4, v + 6)       /* cold iron   */
+                                : pack(v + 30, (int)(v * 0.8) + 8, (int)(v * 0.4)); /* warm wood */
+            put_spr(7, x, y, col, 1);
+            /* brass padlock hanging at the front seam */
+            if (abs(x - 32) < 4 && y > lidy - 2 && y < lidy + 6) put_spr(7, x, y, pack(190, 150, 40), 1);
+            if (abs(x - 32) < 3 && y > lidy - 6 && y < lidy - 1) put_spr(7, x, y, pack(150, 120, 30), 1); /* shackle */
+        }
     /* bake the flag into the alpha byte for the shader */
-    for (int t = 0; t < 7; t++)
+    for (int t = 0; t < 8; t++)
         for (int i = 0; i < TEX * TEX; i++) {
             int a = spr_flg[t][i] == 0 ? 0 : (spr_flg[t][i] == 1 ? 128 : 255);
             spr_rgba[t][i] = (spr_rgba[t][i] & 0x00FFFFFF) | ((uint32_t)a << 24);
@@ -981,6 +1018,7 @@ static void reset_level(void) {
     sanity = 1.0; mon_sees = 0; surge = 0;
     phantom_t = 0.0; phantom_timer = 10.0;
     vision_t = 0.0; vision_timer = 12.0;
+    screamer_t = 0.0; near_chest = -1;
     whisper_timer = 8.0; event_timer = 14.0;
     mon_state = AI_WANDER; lastKnownX = posX; lastKnownY = posY;
     hunt_recalc = search_time = 0;
@@ -1001,7 +1039,13 @@ static void update_monster(double dt) {
     }
     double tx = bx + 0.5, ty = by + 0.5, vx = tx - monX, vy = ty - monY;
     double len = sqrt(vx * vx + vy * vy);
-    if (len > 1e-4) { double step = mon_speed * dt; if (step > len) step = len;
+    /* it surges when hunting you at close range — a terrifying final lunge */
+    double spd = mon_speed;
+    if (mon_state == AI_HUNT) {
+        double pd = sqrt((posX - monX) * (posX - monX) + (posY - monY) * (posY - monY));
+        if (pd < 3.0) spd *= 1.0 + (3.0 - pd) / 3.0 * 0.55;
+    }
+    if (len > 1e-4) { double step = spd * dt; if (step > len) step = len;
         monX += vx / len * step; monY += vy / len * step; }
 }
 static void update_ai(double dt, int moving, int sprinting) {
@@ -1118,6 +1162,7 @@ static void update_fear(double dt) {
         }
     }
 
+    if (screamer_t > 0.0) screamer_t -= dt;      /* the chest jump-scare decays */
     /* dropped-in hallucination images flash over the screen as dread deepens */
     if (vision_t > 0.0) vision_t -= dt;
     vision_timer -= dt;
@@ -1266,7 +1311,7 @@ static GLuint sceneFBO = 0, sceneTex = 0, sceneDepth = 0;
 static int   fboW = 0, fboH = 0;                 /* current FBO allocation      */
 static int   rndW = SCREEN_W, rndH = SCREEN_H;   /* internal 3D render size     */
 static GLuint worldVAO, worldVBO, sprVAO, sprVBO, ovVAO, ovVBO;
-static GLuint texWall, texFloor, texCeil, texLocker, texBracket, texSpr[7], texOverlay, texMap;
+static GLuint texWall, texFloor, texCeil, texLocker, texBracket, texSpr[8], texOverlay, texMap;
 static int   floorStart, floorCount, ceilStart, ceilCount, wallCount;
 static int   lockStart, lockCount, brkStart, brkCount;
 
@@ -1524,6 +1569,19 @@ static void upload_map(void) {
 
 static void new_game(void) { reset_level(); build_world_mesh(); upload_map(); }
 
+/* crack open a chest: claim its key, and slam a photo full-screen as a scare */
+static void open_chest(int i) {
+    if (i < 0 || i >= NUM_KEYS || !keys[i].active) return;
+    keys[i].active = 0; keys_left--;
+    if (snd_pickup) Mix_PlayChannel(3, snd_pickup, 0);
+    if (nvisions > 0) {                          /* the screamer needs a photo */
+        screamer_idx = rand() % nvisions;
+        screamer_t = SCREAMER_DUR;
+        if (snd_scare) { Mix_VolumeChunk(snd_scare, 120); Mix_PlayChannel(4, snd_scare, 0); }
+    }
+    if (keys_left == 0) build_world_mesh();      /* the exit door's slab drops */
+}
+
 static void setup_attribs(void) {
     glVertexAttribPointer_(0, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)0);
     glEnableVertexAttribArray_(0);
@@ -1578,7 +1636,7 @@ static void gl_init(void) {
     texWall = make_texture(tex[0]); texFloor = make_texture(tex[1]); texCeil = make_texture(tex[2]);
     texLocker = make_texture(lockmetal);
     texBracket = make_texture(brackmetal);
-    for (int i = 0; i < 7; i++) texSpr[i] = make_texture(spr_rgba[i]);
+    for (int i = 0; i < 8; i++) texSpr[i] = make_texture(spr_rgba[i]);
     glGenTextures(1, &texMap);                 /* filled per-maze by upload_map */
     glActiveTexture_(GL_TEXTURE1);
     glBindTexture(GL_TEXTURE_2D, texMap);      /* keep the occlusion map on unit 1 */
@@ -1730,18 +1788,24 @@ static void render_3d(void) {
 
     /* opaque-ish sprites (billboards) — depth tested, alpha discarded */
     if (!hidden) {
-        /* The Stalker: tall & narrow, filling the corridor height, with a
-         * slow uneasy sway and bob so it never reads as a static post. */
+        /* The Stalker: tall & gaunt, filling the corridor height, with a slow
+         * uneasy sway and bob so it never reads as a static post. When it has
+         * your scent and closes in it rears up — looming bigger as it lunges. */
         double sway = 0.03 * sin(state_time * 1.7);
         double bob  = 0.02 * sin(state_time * 2.3);
+        double pd   = sqrt((posX - monX) * (posX - monX) + (posY - monY) * (posY - monY));
+        double loom = 1.0;
+        if (mon_state == AI_HUNT && pd < 5.0) loom = 1.0 + (5.0 - pd) / 5.0 * 0.35;
+        if (mon_state == AI_HUNT) { bob *= 2.2; sway *= 1.6; }   /* twitchier when hunting */
         draw_billboard(monX - sin(yaw) * sway, monY + cos(yaw) * sway,
-                       0.66, 0.99 + bob, 0.0, 0, mvp);
+                       0.72 * loom, (1.06 + bob) * loom, 0.0, 0, mvp);
     }
     /* the hallucinated Stalker: flickers in and out where it isn't really */
     if (phantom_t > 0.0 && ((int)(state_time * 22) % 3) != 0)
         draw_billboard(phantomX, phantomY, 0.66, 0.99, 0.0, 0, mvp);
+    /* each key is locked inside a chest squatting on the floor */
     for (int i = 0; i < NUM_KEYS; i++)
-        if (keys[i].active) draw_billboard(keys[i].x, keys[i].y, 0.4, 0.4, 0.35, 1, mvp);
+        if (keys[i].active) draw_billboard(keys[i].x, keys[i].y, 0.44, 0.42, 0.0, 7, mvp);
     for (int i = 0; i < NUM_NOTES; i++)
         if (notes[i].active) {
             /* pinned flat to the wall: sit on the wall face, tangent along it */
@@ -1842,6 +1906,34 @@ static void draw_vision(void) {
         }
     }
 }
+/* the chest jump-scare: a photo slammed edge-to-edge, jittering, then gone */
+static void draw_screamer(void) {
+    if (screamer_t <= 0.0 || nvisions == 0) return;
+    Vision *v = &visions[screamer_idx];
+    if (!v->px) return;
+    double frac = screamer_t / SCREAMER_DUR;             /* 1 -> 0 over the scare */
+    double hold = frac > 0.7 ? 1.0 : frac / 0.7;         /* full-on, then fade    */
+    /* violent frame-shake, hardest at the hit and easing off */
+    int shx = (int)(((rand() % 21) - 10) * frac * 1.4);
+    int shy = (int)(((rand() % 21) - 10) * frac * 1.4);
+    /* fill the whole screen (crop, don't letterbox) for maximum dread */
+    double sc = fmax((double)SCREEN_W / v->w, (double)SCREEN_H / v->h);
+    int dw = (int)(v->w * sc), dh = (int)(v->h * sc);
+    int ox = (SCREEN_W - dw) / 2 + shx, oy = (SCREEN_H - dh) / 2 + shy;
+    int flash = (((int)(state_time * 50)) & 1);          /* red strobe over it    */
+    for (int y = 0; y < SCREEN_H; y++)
+        for (int x = 0; x < SCREEN_W; x++) {
+            int sx = (x - ox) * v->w / dw, sy = (y - oy) * v->h / dh;
+            int R, G, B;
+            if (sx >= 0 && sx < v->w && sy >= 0 && sy < v->h) {
+                unsigned char *s = v->px + ((size_t)sy * v->w + sx) * 4;
+                R = s[0]; G = s[1]; B = s[2];
+            } else { R = G = B = 0; }
+            if (flash) { R = R + (255 - R) / 3; }         /* pulse toward blood    */
+            int a = (int)(255 * hold);
+            fb[y * SCREEN_W + x] = packa(R, G, B, a > 255 ? 255 : a);
+        }
+}
 /* the parchment panel shown while reading a lore note */
 static void draw_note(void) {
     for (int i = 0; i < SCREEN_W * SCREEN_H; i++) fb[i] = packa(0, 0, 0, 150);
@@ -1885,7 +1977,48 @@ static void draw_hud(void) {
               pack(120 + (int)(120 * (1 - sanity)), 60 + (int)(40 * sanity), 130 * sanity + 40));
     draw_text(bx, my + bh + 4, 2, "РАССУДОК", pack(110, 100, 130));
 
-    if (near_locker >= 0 && !hidden) draw_text_c(SCREEN_H - 110, 3, "E - СПРЯТАТЬСЯ", pack(200, 200, 160));
+    if (near_chest >= 0 && !hidden)
+        draw_text_c(SCREEN_H - 110, 3, "E - ОТКРЫТЬ СУНДУК", pack(230, 200, 90));
+    else if (near_locker >= 0 && !hidden)
+        draw_text_c(SCREEN_H - 110, 3, "E - СПРЯТАТЬСЯ", pack(200, 200, 160));
+
+    /* key-sense compass: a golden tick slides along a top strip to point the
+     * way to the nearest un-opened chest — brighter the closer you are. Fades
+     * out as panic takes hold, so it guides without gutting the dread. */
+    if (keys_left > 0 && !hidden) {
+        int kb = -1; double kbd = 1e18;
+        for (int i = 0; i < NUM_KEYS; i++)
+            if (keys[i].active) {
+                double d2 = (posX - keys[i].x) * (posX - keys[i].x) + (posY - keys[i].y) * (posY - keys[i].y);
+                if (d2 < kbd) { kbd = d2; kb = i; }
+            }
+        if (kb >= 0) {
+            double kx = keys[kb].x - posX, ky = keys[kb].y - posY;
+            double fwd = kx * cos(yaw) + ky * sin(yaw);
+            double rgt = -kx * sin(yaw) + ky * cos(yaw);
+            double bearing = atan2(rgt, fwd);            /* 0 = dead ahead, +right */
+            double n = bearing / (3.14159265 / 2.0);     /* map ±90° across strip  */
+            if (n < -1) n = -1;
+            if (n >  1) n =  1;
+            double dist = sqrt(kbd);
+            double clarity = 0.35 + 0.65 * sanity;        /* mind fogs under dread   */
+            int sw = 260, sx = (SCREEN_W - sw) / 2, sy = 30;
+            for (int x = 0; x < sw; x++)                  /* faint baseline */
+                fb[sy * SCREEN_W + sx + x] = packa(120, 105, 60, (int)(70 * clarity));
+            int tx = sx + (int)((0.5 + n * 0.5) * sw);
+            int close_by = dist < 4.5;
+            uint32_t tc = close_by ? pack(255, 225, 110) : pack(210, 180, 90);
+            int ta = (int)((close_by ? 255 : 150) * clarity);
+            for (int dyv = -5; dyv <= 5; dyv++)           /* the tick */
+                for (int dxv = -2; dxv <= 2; dxv++) {
+                    int px = tx + dxv, py = sy + dyv;
+                    if (px >= 0 && px < SCREEN_W && py >= 0 && py < SCREEN_H)
+                        fb[py * SCREEN_W + px] = packa((tc >> 16) & 255, (tc >> 8) & 255, tc & 255, ta);
+                }
+            if (close_by) draw_text_c(sy + 14, 2,
+                dist < 1.8 ? "СУНДУК ЗДЕСЬ" : "СУНДУК БЛИЗКО", tc);
+        }
+    }
 
     if (tension > 0.4) {                                  /* red edge bleed */
         int a = (int)((tension - 0.4) * 150);
@@ -2140,6 +2273,7 @@ int main(int argc, char **argv) {
                 }
                 if (k == SDL_SCANCODE_E && game_state == ST_PLAY) {
                     if (hidden) hidden = 0;
+                    else if (near_chest >= 0) open_chest(near_chest);
                     else if (near_locker >= 0) { hidden = 1; posX = lockers[near_locker].x; posY = lockers[near_locker].y; }
                 }
             }
@@ -2209,12 +2343,14 @@ int main(int argc, char **argv) {
                 flicker = 1.0 - (frand() < chance ? frand() * depth : 0);
             }
 
+            /* keys are locked in chests now: find the nearest one you could open
+             * (E opens it -> the screamer). Auto-open during a dev screenshot. */
+            near_chest = -1;
             for (int i = 0; i < NUM_KEYS; i++)
                 if (keys[i].active) {
                     double kd = (posX - keys[i].x) * (posX - keys[i].x) + (posY - keys[i].y) * (posY - keys[i].y);
-                    if (kd < PICKUP_DIST * PICKUP_DIST) { keys[i].active = 0; keys_left--;
-                        if (snd_pickup) Mix_PlayChannel(3, snd_pickup, 0);
-                        if (keys_left == 0) build_world_mesh();   /* the door's slab drops */
+                    if (kd < PICKUP_DIST * PICKUP_DIST) { near_chest = i;
+                        if (shotpath) open_chest(i);   /* headless screenshots don't press keys */
                     }
                 }
             /* pick up and read a lore note (never during a dev screenshot) */
@@ -2291,6 +2427,7 @@ int main(int argc, char **argv) {
             if (hidden) draw_hidden_overlay();
             draw_hud();
             draw_vision();                       /* hallucination flash on top */
+            draw_screamer();                     /* chest jump-scare over all   */
         }
         /* descent fade: darkness peaks exactly as the next floor swaps in */
         if (descend_t > 0.0) {
@@ -2303,10 +2440,11 @@ int main(int argc, char **argv) {
         present_overlay();
 
         /* dev: capture the composited overlay (note panel / title / HUD) */
-        if (shotpath && (getenv("NIGHTFALL_SHOWNOTE") || getenv("NIGHTFALL_SHOTTITLE") || getenv("NIGHTFALL_SHOTHUD")) && ++shot_frame >= 6) {
+        if (shotpath && (getenv("NIGHTFALL_SHOWNOTE") || getenv("NIGHTFALL_SHOTTITLE") || getenv("NIGHTFALL_SHOTHUD") || getenv("NIGHTFALL_SHOWSCREAM")) && ++shot_frame >= 6) {
             if (getenv("NIGHTFALL_SHOWNOTE")) { reading_note = atoi(getenv("NIGHTFALL_SHOWNOTE")); game_state = ST_READING; }
             if (getenv("NIGHTFALL_SANITY")) sanity = atof(getenv("NIGHTFALL_SANITY"));   /* hold it low */
             if (getenv("NIGHTFALL_SHOWVISION")) { vision_t = VIS_DUR * 0.55; vision_idx = atoi(getenv("NIGHTFALL_SHOWVISION")); }
+            if (getenv("NIGHTFALL_SHOWSCREAM")) { screamer_t = SCREAMER_DUR * 0.8; screamer_idx = atoi(getenv("NIGHTFALL_SHOWSCREAM")); }
             if (shot_frame >= 10) { save_ppm(shotpath); running = 0; }
         }
 
