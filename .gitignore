@@ -6,6 +6,10 @@
 # object files
 *.o
 
+# raw source photos stay local (the processed screamers in assets/visions get committed)
+/photos/*
+!/photos/README.md
+
 # editor / OS cruft
 *.swp
 .vscode/

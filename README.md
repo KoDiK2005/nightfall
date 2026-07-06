@@ -44,6 +44,10 @@ when it does, it fills the screen. It gets faster the deeper you go.
   the world answers: a breathing vignette closes in, the shadows bleed red,
   whispers crowd together, the torches fail more often, and the whole frame
   begins to tremble. Steal a quiet moment and it slowly recovers.
+- **Your own hallucinations** — drop photos into `photos/`, run
+  `python tools/photos2visions.py`, and they get graded into blood-red
+  screamers that flash across the screen as your sanity collapses. Bring your
+  own nightmares. (See [photos/README.md](photos/README.md).)
 - **Torchlight, no flashlight** — you carry no light of your own. The halls
   are near-black; the only illumination comes from flickering **wall torches**
   (warm per-fragment point lights), so you move between islands of firelight
@@ -105,7 +109,9 @@ shell shortcut) so the built `.exe` can find `SDL2.dll` and friends.
 | `src/main.c`        | 3D build: OpenGL renderer + game (AI, stealth, sanity, audio)|
 | `src/raycast.c`     | Classic software-raycaster build (`nightfall-classic`)      |
 | `tools/gen_audio.py`| Synthesises every `.wav` from scratch                        |
+| `tools/photos2visions.py`| Grades photos in `photos/` into sanity-loss screamers  |
 | `assets/`           | Generated sounds (committed so the repo runs out of the box)|
+| `assets/visions/`   | Your PNG hallucinations, flashed when sanity is low         |
 | `Makefile`          | `make` builds 3D, `make classic` the fallback, `make audio` |
 
 ## License
