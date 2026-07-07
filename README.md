@@ -112,10 +112,10 @@ shell shortcut) so the built `.exe` can find `SDL2.dll` and friends.
 | `W` `A` `S` `D`| Move          |
 | Mouse          | Look (free, up/down too) |
 | `Shift`        | Run (uses stamina) |
-| `E`            | Open a chest · hide in / leave a locker · close a note |
+| `E`            | Open a chest · hide in / leave a locker · read / close a note |
 | `Enter`        | Start         |
 | `R`            | Retry / replay|
-| `Esc`          | Quit          |
+| `Esc`          | Pause / resume (in the pause menu: `W`/`S` pick, `A`/`D` adjust, `Q` to title) |
 
 ## How it works
 
