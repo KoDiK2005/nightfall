@@ -953,9 +953,32 @@ static void generate_props(void) {
                     props[prop_count++] = (Prop){cx, cz, 0.17, 0.17, 0.0, 0.12 + frand() * 0.08, 0.82f, 0.80f, 0.70f};
                     if (prop_count < MAX_PROPS && frand() < 0.6)
                         props[prop_count++] = (Prop){cx + 0.10, cz - 0.08, 0.09, 0.09, 0.0, 0.17, 0.88f, 0.86f, 0.78f};
-                } else {                                            /* low grey rubble pile */
-                    props[prop_count++] = (Prop){cx, cz, 0.22 + frand() * 0.1, 0.22 + frand() * 0.1,
-                                                 0.0, 0.10 + frand() * 0.10, 0.42f, 0.41f, 0.39f};
+                } else {                                            /* biome-flavoured floor decor */
+                    double j = frand() * 0.1;
+                    switch (biome % NBIOMES) {
+                        case 1:  /* FLOODED — mossy mounds, sometimes a tall reed */
+                            props[prop_count++] = (Prop){cx, cz, 0.24 + j, 0.24 + j, 0.0, 0.10 + frand() * 0.08, 0.28f, 0.55f, 0.40f};
+                            if (prop_count < MAX_PROPS && frand() < 0.4)
+                                props[prop_count++] = (Prop){cx + 0.1, cz - 0.08, 0.05, 0.05, 0.0, 0.45 + frand() * 0.3, 0.24f, 0.50f, 0.34f};
+                            break;
+                        case 2:  /* FURNACE — heaps of dark warm coals */
+                            props[prop_count++] = (Prop){cx, cz, 0.22 + j, 0.22 + j, 0.0, 0.09 + frand() * 0.07, 0.55f, 0.22f, 0.12f};
+                            if (prop_count < MAX_PROPS && frand() < 0.5)
+                                props[prop_count++] = (Prop){cx - 0.08, cz + 0.06, 0.12, 0.12, 0.0, 0.10, 0.70f, 0.30f, 0.14f};
+                            break;
+                        case 3:  /* BONE CRYPT — scattered pale bones */
+                            props[prop_count++] = (Prop){cx, cz, 0.20 + j, 0.20 + j, 0.0, 0.09 + frand() * 0.06, 0.80f, 0.78f, 0.66f};
+                            break;
+                        case 4:  /* FROST — jagged pale-blue ice shards */
+                            props[prop_count++] = (Prop){cx, cz, 0.09 + frand() * 0.05, 0.09 + frand() * 0.05, 0.0, 0.35 + frand() * 0.35, 0.72f, 0.86f, 1.08f};
+                            break;
+                        case 5:  /* ABYSS — thin dark growths */
+                            props[prop_count++] = (Prop){cx, cz, 0.07 + frand() * 0.05, 0.07 + frand() * 0.05, 0.0, 0.40 + frand() * 0.4, 0.46f, 0.34f, 0.62f};
+                            break;
+                        default: /* CATACOMBS — low grey rubble */
+                            props[prop_count++] = (Prop){cx, cz, 0.22 + j, 0.22 + j, 0.0, 0.10 + frand() * 0.10, 0.42f, 0.41f, 0.39f};
+                            break;
+                    }
                 }
                 placed++;
             }
