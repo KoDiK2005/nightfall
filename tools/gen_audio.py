@@ -235,6 +235,66 @@ def make_roar(seconds=1.8):
     return out
 
 
+def make_creak(seconds=0.8):
+    """A wooden chest lid dragged open: stick-slip friction groan (a resonant
+    body pulsed by a rising-then-falling grain rate) that slides down in pitch,
+    finished by a dull settling clunk."""
+    n = int(seconds * SR)
+    out = [0.0] * n
+    base = random.uniform(190.0, 250.0)
+    lp = 0.0
+    for i in range(n):
+        t = i / SR
+        f = base * (1.0 - 0.28 * (t / seconds))          # pitch sags as it swings
+        grate = 20.0 + 20.0 * math.sin(math.tau * 0.7 * t)   # stick-slip grain rate
+        grain = 0.45 + 0.55 * abs(math.sin(math.tau * grate * t))
+        body = (math.sin(math.tau * f * t)
+                + 0.5 * math.sin(math.tau * 2.02 * f * t)
+                + 0.3 * math.sin(math.tau * 3.1 * f * t))
+        white = random.uniform(-1, 1)
+        lp = lp * 0.85 + white * 0.15                    # dry-wood filtered noise
+        env = min(1.0, t / 0.02) * math.exp(-1.7 * t)
+        out[i] = env * (0.7 * body * grain + 0.35 * lp * grain)
+    clunk = int(0.13 * SR)                               # it thuds shut/settles
+    for k in range(clunk):
+        idx = n - clunk + k
+        if 0 <= idx < n:
+            tt = k / SR
+            out[idx] += 0.55 * math.exp(-22 * tt) * math.sin(math.tau * 68 * tt)
+    return out
+
+
+def make_shrine(seconds=8.0):
+    """A soft, sacred-but-wrong choral hum for the key shrines: a sustained
+    open chord with a minor tinge, slow choral vibrato, and an airy breath
+    layer. Loopable (the seam is cross-faded)."""
+    n = int(seconds * SR)
+    out = [0.0] * n
+    voices = [130.81, 155.56, 196.00, 261.63]            # C3, Eb3, G3, C4 — minor tint
+    for f in voices:
+        detune = f * (1.0 + random.uniform(-0.003, 0.003))
+        vph = random.uniform(0, math.tau)
+        vlfo = random.uniform(0.10, 0.22)
+        vrate = random.uniform(4.5, 5.5)                 # choral vibrato
+        amp = random.uniform(0.08, 0.12)
+        for i in range(n):
+            t = i / SR
+            vib = 1.0 + 0.004 * math.sin(math.tau * vrate * t + vph)
+            trem = 0.80 + 0.20 * math.sin(vlfo * math.tau * t + vph)
+            out[i] += amp * trem * math.sin(math.tau * detune * vib * t + vph)
+    prev = 0.0                                           # airy breath undercurrent
+    for i in range(n):
+        white = random.uniform(-1, 1)
+        prev = prev * 0.99 + white * 0.01
+        out[i] += prev * 1.2 * 0.14
+    fade = int(0.5 * SR)                                 # seamless loop seam
+    for k in range(fade):
+        g = k / fade
+        out[k] *= g
+        out[n - 1 - k] *= g
+    return out
+
+
 def make_growl(seconds=0.9):
     """A shorter, lower snarl the Stalker repeats while it hunts."""
     n = int(seconds * SR)
@@ -264,6 +324,10 @@ def main():
     # procedural -- do NOT regenerate it here or it would clobber that asset.
     # (make_roar() is kept above as a fallback if you want to restore it.)
     write_wav("growl.wav", make_growl())
+    # new assets appended last so they don't perturb the RNG stream (and thus
+    # the bytes) of the sounds generated above.
+    write_wav("creak.wav", make_creak())
+    write_wav("shrine.wav", make_shrine())
     print("Done.")
 
 

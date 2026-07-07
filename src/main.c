@@ -161,7 +161,9 @@ static double lockWX[NUM_LOCKERS], lockWY[NUM_LOCKERS];
 
 /* audio */
 static Mix_Chunk *snd_ambient, *snd_heart, *snd_scare, *snd_pickup, *snd_step, *snd_whisper;
-static Mix_Chunk *snd_roar, *snd_growl;
+static Mix_Chunk *snd_roar, *snd_growl, *snd_creak, *snd_shrine;
+#define CH_CREAK  8              /* chest-lid creak on open   */
+#define CH_SHRINE 9              /* looping shrine hum, volume by proximity */
 static double heart_timer = 0.0, step_timer = 0.0, growl_timer = 0.0;
 
 /* ------------------------------------------------------------- GL functions */
@@ -1163,6 +1165,19 @@ static void update_audio(double dt, int moving) {
         step_timer -= dt;
         if (step_timer <= 0) { Mix_VolumeChunk(snd_step, 60); Mix_PlayChannel(2, snd_step, 0); step_timer = 0.42; }
     }
+    /* shrine hum: a soft choral drone that swells as you near an unopened chest */
+    if (snd_shrine) {
+        double nd = 1e9;
+        if (game_state == ST_PLAY)
+            for (int i = 0; i < num_keys; i++)
+                if (keys[i].active) {
+                    double dx = posX - keys[i].x, dy = posY - keys[i].y, dk = sqrt(dx * dx + dy * dy);
+                    if (dk < nd) nd = dk;
+                }
+        int vol = (nd < 6.5) ? (int)(58 * (1.0 - nd / 6.5)) : 0;
+        if (vol > 0 && !Mix_Playing(CH_SHRINE)) Mix_PlayChannel(CH_SHRINE, snd_shrine, -1);
+        Mix_Volume(CH_SHRINE, vol);
+    }
 }
 static void update_fear(double dt) {
     double dd = (depth - 1) < 12 ? (depth - 1) : 12;         /* deeper = mind frays faster */
@@ -1658,6 +1673,7 @@ static void new_game(void) { reset_level(); build_world_mesh(); upload_map(); }
 static void open_chest(int i) {
     if (i < 0 || i >= num_keys || !keys[i].active) return;
     keys[i].active = 0; keys_left--;
+    if (snd_creak) { Mix_VolumeChunk(snd_creak, 110); Mix_PlayChannel(CH_CREAK, snd_creak, 0); }
     if (snd_pickup) Mix_PlayChannel(3, snd_pickup, 0);
     if (nvisions > 0) {                          /* the screamer needs a photo */
         screamer_idx = rand() % nvisions;
@@ -2278,7 +2294,7 @@ int main(int argc, char **argv) {
 
     if (Mix_OpenAudio(44100, MIX_DEFAULT_FORMAT, 2, 1024) < 0)
         fprintf(stderr, "audio disabled: %s\n", Mix_GetError());
-    Mix_AllocateChannels(8);
+    Mix_AllocateChannels(10);                     /* 0-7 in use; 8 creak, 9 shrine hum */
     snd_ambient = Mix_LoadWAV("assets/ambient.wav");
     snd_heart   = Mix_LoadWAV("assets/heartbeat.wav");
     snd_scare   = Mix_LoadWAV("assets/scare.wav");
@@ -2287,6 +2303,8 @@ int main(int argc, char **argv) {
     snd_whisper = Mix_LoadWAV("assets/whisper.wav");
     snd_roar    = Mix_LoadWAV("assets/roar.wav");
     snd_growl   = Mix_LoadWAV("assets/growl.wav");
+    snd_creak   = Mix_LoadWAV("assets/creak.wav");
+    snd_shrine  = Mix_LoadWAV("assets/shrine.wav");
     if (!snd_ambient) fprintf(stderr, "warning: assets not found — run 'make audio'\n");
     if (snd_ambient) { Mix_Volume(0, 60); Mix_PlayChannel(0, snd_ambient, -1); }
 
@@ -2613,6 +2631,8 @@ int main(int argc, char **argv) {
     if (snd_whisper) Mix_FreeChunk(snd_whisper);
     if (snd_roar)    Mix_FreeChunk(snd_roar);
     if (snd_growl)   Mix_FreeChunk(snd_growl);
+    if (snd_creak)   Mix_FreeChunk(snd_creak);
+    if (snd_shrine)  Mix_FreeChunk(snd_shrine);
     Mix_CloseAudio();
     SDL_GL_DeleteContext(ctx);
     SDL_DestroyWindow(win);
