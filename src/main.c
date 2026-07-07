@@ -86,6 +86,13 @@ static int    mon_state = AI_WANDER;
 static int    tgtX, tgtY;
 static double lastKnownX, lastKnownY;
 static double hunt_recalc = 0.0, search_time = 0.0;
+/* the floor's horror. Each plays differently:
+ *   STALKER  — hunts by sight and sound, lunges up close (floors 1-3)
+ *   LISTENER — blind; homes on any footstep, so freeze when it's near (4+)
+ *   WATCHER  — only moves while unwatched, then rushes; silent (7+)          */
+enum { MON_STALKER, MON_LISTENER, MON_WATCHER };
+static int    mon_type = MON_STALKER;
+static double reveal_t = 0.0;           /* floor-entry warning countdown */
 
 typedef struct { double x, y; int active; } Key;   /* active = chest still locked */
 static Key    keys[MAX_KEYS];
@@ -1066,6 +1073,13 @@ static void reset_level(void) {
     whisper_timer = 8.0; event_timer = 14.0;
     mon_state = AI_WANDER; lastKnownX = posX; lastKnownY = posY;
     hunt_recalc = search_time = growl_timer = 0;
+    /* which horror stalks this floor — new kinds unlock with depth, with the
+     * first sighting of each guaranteed on floors 4 and 7 to teach it. */
+    if      (depth < 4)   mon_type = MON_STALKER;
+    else if (depth == 4)  mon_type = MON_LISTENER;
+    else if (depth == 7)  mon_type = MON_WATCHER;
+    else                  mon_type = rand() % (depth >= 7 ? 3 : 2);
+    reveal_t = (mon_type == MON_STALKER) ? 0.0 : 6.0;   /* warn about the odd ones */
     pick_wander();
 }
 
@@ -1073,6 +1087,15 @@ static void reset_level(void) {
 static void try_move(double nx, double ny, double r) {
     if (is_open((int)(nx + (nx > posX ? r : -r)), (int)posY)) posX = nx;
     if (is_open((int)posX, (int)(ny + (ny > posY ? r : -r)))) posY = ny;
+}
+/* is the monster inside the player's view cone with a clear line of sight?
+ * (used by the Watcher, which freezes the instant you look its way).        */
+static int player_sees_monster(void) {
+    double dx = monX - posX, dy = monY - posY, d = sqrt(dx * dx + dy * dy);
+    if (d < 0.7) return 1;                             /* point blank — you feel it */
+    double fx = cos(yaw), fy = sin(yaw);
+    if ((dx * fx + dy * fy) / d < 0.42) return 0;      /* outside ~65 deg of centre */
+    return has_los(posX, posY, monX, monY);
 }
 static void update_monster(double dt) {
     int cx = (int)monX, cy = (int)monY, best = gdist[cy][cx], bx = cx, by = cy;
@@ -1083,9 +1106,12 @@ static void update_monster(double dt) {
     }
     double tx = bx + 0.5, ty = by + 0.5, vx = tx - monX, vy = ty - monY;
     double len = sqrt(vx * vx + vy * vy);
-    /* it surges when hunting you at close range — a terrifying final lunge */
     double spd = mon_speed;
-    if (mon_state == AI_HUNT) {
+    if (mon_type == MON_WATCHER) {
+        if (player_sees_monster()) return;             /* frozen while watched */
+        spd = mon_speed * 2.3;                         /* but rushes the moment you look away */
+    } else if (mon_state == AI_HUNT) {
+        /* it surges when hunting you at close range — a terrifying final lunge */
         double pd = sqrt((posX - monX) * (posX - monX) + (posY - monY) * (posY - monY));
         if (pd < 3.0) spd *= 1.0 + (3.0 - pd) / 3.0 * 0.55;
     }
@@ -1102,12 +1128,21 @@ static void update_ai(double dt, int moving, int sprinting) {
     double hear_run  = HEAR_RUN  * (1.0 + dread * 0.4 + dd * 0.02);
     double see_range = SEE_RANGE * (1.0 + dd * 0.02);
     if (!hidden) {
-        if (d < see_range && has_los(monX, monY, posX, posY)) { sensed = 1; mon_sees = 1; }
-        else if (moving && d < hear_walk) sensed = 1;
-        else if (sprinting && moving && d < hear_run) sensed = 1;
+        if (mon_type == MON_WATCHER) {
+            sensed = 1;                                   /* it always knows — it just can't move while watched */
+        } else if (mon_type == MON_LISTENER) {            /* blind: sound only, but sharp ears */
+            double hw = HEAR_WALK * 2.4 * (1.0 + dread * 0.5) * (1.0 + dd * 0.03);
+            double hr = HEAR_RUN  * 1.9 * (1.0 + dread * 0.3);
+            if (moving && d < hw) sensed = 1;
+            else if (sprinting && moving && d < hr) sensed = 1;
+        } else {                                          /* STALKER: sight + sound */
+            if (d < see_range && has_los(monX, monY, posX, posY)) { sensed = 1; mon_sees = 1; }
+            else if (moving && d < hear_walk) sensed = 1;
+            else if (sprinting && moving && d < hear_run) sensed = 1;
+        }
     }
     if (sensed) {
-        if (mon_state != AI_HUNT) {                       /* just caught your trail */
+        if (mon_state != AI_HUNT && mon_type != MON_WATCHER) {  /* just caught your trail */
             if (snd_roar) {
                 Mix_VolumeChunk(snd_roar, (int)(55 + 73 * (1.0 - fmin(d, 12.0) / 12.0)));
                 Mix_PlayChannel(6, snd_roar, 0);
@@ -1119,9 +1154,9 @@ static void update_ai(double dt, int moving, int sprinting) {
         if (hunt_recalc <= 0 || tgtX != (int)posX || tgtY != (int)posY) {
             set_target((int)posX, (int)posY); hunt_recalc = 0.2;
         }
-        growl_timer -= dt;                                /* ragged snarls as it chases */
+        growl_timer -= dt;                                /* ragged snarls as it chases (the Watcher is silent) */
         if (growl_timer <= 0) {
-            if (snd_growl) {
+            if (snd_growl && mon_type != MON_WATCHER) {
                 Mix_VolumeChunk(snd_growl, (int)(40 + 68 * (1.0 - fmin(d, 12.0) / 12.0)));
                 Mix_PlayChannel(7, snd_growl, 0);         /* own channel, won't cut the roar */
             }
@@ -1180,6 +1215,7 @@ static void update_audio(double dt, int moving) {
     }
 }
 static void update_fear(double dt) {
+    if (reveal_t > 0.0) reveal_t -= dt;                      /* floor-entry warning fades */
     double dd = (depth - 1) < 12 ? (depth - 1) : 12;         /* deeper = mind frays faster */
     double drain = 0.004 + dd * 0.0025 + tension * 0.05 + (mon_state == AI_HUNT ? 0.03 : 0.0) + (mon_sees ? 0.10 : 0.0);
     if (tension < 0.12 && mon_state != AI_HUNT) sanity += dt * 0.02;
@@ -1286,6 +1322,7 @@ static const char *FSRC =
     "uniform float uAmbient; uniform float uFogK; uniform float uFlicker;\n"
     "uniform vec3 uAmbTint; uniform vec2 uScreenSize;\n"
     "uniform int uMode;\n"                 /* 0 world, 1 sprite */
+    "uniform vec3 uSprTint;\n"             /* per-sprite colour (monsters) */
     "#define MAXT 48\n"
     "uniform int uTorchCount;\n"
     "uniform vec3 uTorchPos[MAXT];\n"
@@ -1318,7 +1355,7 @@ static const char *FSRC =
     "  vec4 t = texture(uTex, vUV);\n"
     "  float emissive = 0.0;\n"
     "  if(uMode==1){ if(t.a < 0.25) discard; emissive = step(0.75, t.a); }\n"
-    "  vec3 albedo = (uMode==0) ? t.rgb * vTint : t.rgb;\n"  /* per-room colour zones */
+    "  vec3 albedo = (uMode==0) ? t.rgb * vTint : t.rgb * uSprTint;\n"  /* room zones / sprite tint */
     "  vec3 nrm = normalize(vN);\n"
     "  float dist = length(vW - uCamPos);\n"
     "  float fog = 1.0 / (1.0 + dist*dist*uFogK);\n"
@@ -1360,7 +1397,8 @@ static const char *OFS =
 
 static GLuint prog3d, progOv;
 static GLint u_mvp, u_campos, u_camdir, u_amb, u_fogk, u_flick, u_mode;
-static GLint u_ambtint, u_scrsize;
+static GLint u_ambtint, u_scrsize, u_sprtint;
+static float spr_tint[3] = {1.0f, 1.0f, 1.0f};   /* colour multiply for the next sprite */
 static GLint u_tcount, u_tpos, u_tint, u_tcol, u_tex, u_map, u_mapsize, u_occl;
 static int   occl_on = 1;
 static int   winW = SCREEN_W, winH = SCREEN_H;   /* actual drawable size (resize/fullscreen) */
@@ -1713,6 +1751,7 @@ static void gl_init(void) {
     u_occl = glGetUniformLocation_(prog3d, "uOccl");
     u_ambtint = glGetUniformLocation_(prog3d, "uAmbTint");
     u_scrsize = glGetUniformLocation_(prog3d, "uScreenSize");
+    u_sprtint = glGetUniformLocation_(prog3d, "uSprTint");
     /* bind samplers: surface texture on unit 0, wall-occlusion map on unit 1 */
     glUseProgram_(prog3d);
     glUniform1i_(u_tex, 0);
@@ -1780,6 +1819,7 @@ static void draw_sprite_dir(double wx, double wz, double rx, double rz,
     glBufferData_(GL_ARRAY_BUFFER, n * 11 * sizeof(float), buf, GL_DYNAMIC_DRAW);
     glUniformMatrix4fv_(u_mvp, 1, GL_FALSE, mvp);
     glUniform1i_(u_mode, 1);
+    glUniform3f_(u_sprtint, spr_tint[0], spr_tint[1], spr_tint[2]);
     glActiveTexture_(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, texSpr[type]);
     glDrawArrays(GL_TRIANGLES, 0, 6);
@@ -1812,6 +1852,7 @@ static void flush_flames(float mvp[16]) {
     glBufferData_(GL_ARRAY_BUFFER, flamen * 11 * sizeof(float), flamebuf, GL_DYNAMIC_DRAW);
     glUniformMatrix4fv_(u_mvp, 1, GL_FALSE, mvp);
     glUniform1i_(u_mode, 1);
+    glUniform3f_(u_sprtint, 1.0f, 1.0f, 1.0f);            /* flames are never tinted */
     glActiveTexture_(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, texSpr[4]);
     glDrawArrays(GL_TRIANGLES, 0, flamen);
@@ -1944,9 +1985,15 @@ static void render_3d(void) {
         double pd   = sqrt((posX - monX) * (posX - monX) + (posY - monY) * (posY - monY));
         double loom = 1.0;
         if (mon_state == AI_HUNT && pd < 5.0) loom = 1.0 + (5.0 - pd) / 5.0 * 0.35;
-        if (mon_state == AI_HUNT) { bob *= 2.2; sway *= 1.6; }   /* twitchier when hunting */
+        if (mon_state == AI_HUNT && mon_type != MON_WATCHER) { bob *= 2.2; sway *= 1.6; } /* twitchier when hunting */
+        if (mon_type == MON_WATCHER) { sway = 0; bob = 0; }     /* it stands unnervingly still */
+        /* each horror wears its own pallor */
+        if      (mon_type == MON_LISTENER) { spr_tint[0]=0.82f; spr_tint[1]=0.88f; spr_tint[2]=0.98f; } /* ashen grey */
+        else if (mon_type == MON_WATCHER)  { spr_tint[0]=0.55f; spr_tint[1]=0.85f; spr_tint[2]=1.35f; } /* cold corpse-blue */
+        double mh = (mon_type == MON_WATCHER) ? 1.12 : 1.06;    /* the Watcher looms taller */
         draw_billboard(monX - sin(yaw) * sway, monY + cos(yaw) * sway,
-                       0.72 * loom, (1.06 + bob) * loom, 0.0, 0, mvp);
+                       0.72 * loom, (mh + bob) * loom, 0.0, 0, mvp);
+        spr_tint[0] = spr_tint[1] = spr_tint[2] = 1.0f;         /* reset for other sprites */
     }
     /* the hallucinated Stalker: flickers in and out where it isn't really */
     if (phantom_t > 0.0 && ((int)(state_time * 22) % 3) != 0)
@@ -2136,6 +2183,20 @@ static void draw_hud(void) {
               pack(120 + (int)(120 * (1 - sanity)), 60 + (int)(40 * sanity), 130 * sanity + 40));
     draw_text(bx, my + bh + 4, 2, "РАССУДОК", pack(110, 100, 130));
 
+    /* on entering a floor stalked by an unusual horror, warn how it hunts */
+    if (reveal_t > 0.0 && !hidden) {
+        int a = (int)(255 * (reveal_t > 5.0 ? (6.0 - reveal_t) : (reveal_t < 1.0 ? reveal_t : 1.0)));
+        if (a > 255) a = 255;
+        if (a < 0) a = 0;
+        uint32_t warn = packa(230, 60, 50, a);
+        if (mon_type == MON_LISTENER) {
+            draw_text_c(120, 3, "ОНО СЛЕПОЕ. НО СЛЫШИТ КАЖДЫЙ ШАГ.", warn);
+            draw_text_c(152, 2, "ЗАМРИ, КОГДА ОНО БЛИЗКО", packa(200, 180, 170, a));
+        } else if (mon_type == MON_WATCHER) {
+            draw_text_c(120, 3, "НЕ ОТВОДИ ОТ НЕГО ВЗГЛЯД.", warn);
+            draw_text_c(152, 2, "ОНО ДВИЖЕТСЯ, ПОКА ТЫ НЕ СМОТРИШЬ", packa(200, 180, 170, a));
+        }
+    }
     if (near_chest >= 0 && !hidden)
         draw_text_c(SCREEN_H - 110, 3, "E - ОТКРЫТЬ СУНДУК", pack(230, 200, 90));
     else if (near_note >= 0 && !hidden)
