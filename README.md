@@ -73,6 +73,10 @@ and your mind frays quicker. How deep can you get?
   sharpen, torches are placed more sparsely so the dark closes in, sanity
   drains faster, and more keys (up to six) lock the way down. Your deepest
   floor is tracked and shown on the death screen — chase the record.
+- **Biomes** — each floor belongs to one of six biomes (Catacombs, Flooded
+  Tier, Furnace, Bone Crypt, Frosthold, Abyss), cycled by depth. Each recolours
+  the stone and resets the ambient light and torch tint, so the descent moves
+  through visibly distinct places; the biome name shows on the HUD.
 - **Lore notes** — scraps of paper scattered through the dark; press `E` to
   read what the last visitor scrawled before the whispering took them.
 
