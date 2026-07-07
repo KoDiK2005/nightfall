@@ -61,7 +61,10 @@
 #define MAX_TORCHES 48
 
 /* ------------------------------------------------------------------- state */
-enum { ST_TITLE, ST_PLAY, ST_CAUGHT, ST_WIN, ST_READING };
+enum { ST_TITLE, ST_PLAY, ST_CAUGHT, ST_WIN, ST_READING, ST_PAUSED };
+static double sens_mult = 1.0;          /* mouse-look sensitivity multiplier   */
+static int    master_vol = 100;         /* master audio volume 0..128          */
+static int    pause_sel = 0;            /* highlighted row in the pause menu    */
 
 static char   map[MH][MW + 1];
 static double posX, posY;               /* position on the floor plane       */
@@ -1183,6 +1186,13 @@ static void update_ai(double dt, int moving, int sprinting) {
 }
 
 /* ------------------------------------------------------------------- audio */
+/* Master volume: available since SDL_mixer 2.6. On older libs (some distros)
+ * we simply skip it so the build stays portable — the slider then no-ops. */
+static void apply_master_volume(void) {
+#if (SDL_MIXER_MAJOR_VERSION > 2) || (SDL_MIXER_MAJOR_VERSION == 2 && SDL_MIXER_MINOR_VERSION >= 6)
+    Mix_MasterVolume(master_vol);
+#endif
+}
 static void update_audio(double dt, int moving) {
     double d = sqrt((posX - monX) * (posX - monX) + (posY - monY) * (posY - monY));
     double target = d < 9 ? (1.0 - d / 9.0) : 0.0;
@@ -2154,6 +2164,35 @@ static void draw_note(void) {
     draw_text_c(py + ph - 34, 2, "E - ПОЛОЖИТЬ ОБРАТНО", pack(130, 120, 100));
 }
 
+/* the pause menu: dim the frozen scene and offer sensitivity + volume sliders */
+static void draw_pause(void) {
+    for (int i = 0; i < SCREEN_W * SCREEN_H; i++) fb[i] = packa(0, 0, 0, 170);
+    int pw = 540, ph = 300, px = (SCREEN_W - pw) / 2, py = (SCREEN_H - ph) / 2;
+    fill_rect(px, py, pw, ph, packa(20, 20, 26, 235));
+    fill_rect(px, py, pw, 4, packa(120, 110, 130, 255));
+    fill_rect(px, py + ph - 4, pw, 4, packa(120, 110, 130, 255));
+    draw_text_c(py + 28, 5, "ПАУЗА", pack(210, 200, 220));
+
+    const char *labels[2] = {"ЧУВСТВИТЕЛЬНОСТЬ", "ГРОМКОСТЬ"};
+    double frac[2] = {(sens_mult - 0.3) / (2.5 - 0.3), master_vol / 128.0};
+    int bw = 300, bx = px + (pw - bw) / 2;
+    for (int r = 0; r < 2; r++) {
+        int ry = py + 110 + r * 74;
+        int sel = (r == pause_sel);
+        uint32_t lc = sel ? pack(255, 235, 150) : pack(150, 150, 165);
+        draw_text_c(ry, 3, labels[r], lc);
+        int by = ry + 30;
+        fill_rect(bx - 2, by - 2, bw + 4, 18 + 4, pack(12, 12, 16));
+        fill_rect(bx, by, (int)(bw * frac[r]), 18, sel ? pack(200, 180, 90) : pack(120, 110, 70));
+        if (sel) {                                    /* a bright frame marks the active slider */
+            fill_rect(bx - 4, by - 4, bw + 8, 2, pack(255, 235, 150));
+            fill_rect(bx - 4, by + 20, bw + 8, 2, pack(255, 235, 150));
+        }
+    }
+    draw_text_c(py + ph - 40, 2, "W/S - ВЫБОР   A/D - ИЗМЕНИТЬ", pack(140, 140, 150));
+    draw_text_c(py + ph - 20, 2, "ESC - ПРОДОЛЖИТЬ   Q - В МЕНЮ", pack(140, 140, 150));
+}
+
 static void draw_hud(void) {
     char buf[32];
     snprintf(buf, sizeof(buf), "ЭТАЖ %d", depth);
@@ -2368,6 +2407,7 @@ int main(int argc, char **argv) {
     snd_shrine  = Mix_LoadWAV("assets/shrine.wav");
     if (!snd_ambient) fprintf(stderr, "warning: assets not found — run 'make audio'\n");
     if (snd_ambient) { Mix_Volume(0, 60); Mix_PlayChannel(0, snd_ambient, -1); }
+    apply_master_volume();
 
     build_textures();
     build_sprites();
@@ -2482,7 +2522,31 @@ int main(int argc, char **argv) {
             }
             if (e.type == SDL_KEYDOWN) {
                 SDL_Scancode k = e.key.keysym.scancode;
-                if (k == SDL_SCANCODE_ESCAPE) running = 0;
+                if (k == SDL_SCANCODE_ESCAPE) {
+                    if (game_state == ST_PLAY)   { game_state = ST_PAUSED; pause_sel = 0; SDL_SetRelativeMouseMode(SDL_FALSE); }
+                    else if (game_state == ST_PAUSED) { game_state = ST_PLAY; SDL_SetRelativeMouseMode(SDL_TRUE); }
+                    else running = 0;
+                }
+                /* pause-menu controls */
+                if (game_state == ST_PAUSED) {
+                    if (k == SDL_SCANCODE_W || k == SDL_SCANCODE_UP)   pause_sel = (pause_sel + 1) % 2;
+                    if (k == SDL_SCANCODE_S || k == SDL_SCANCODE_DOWN) pause_sel = (pause_sel + 1) % 2;
+                    int dir = (k == SDL_SCANCODE_D || k == SDL_SCANCODE_RIGHT) ? 1
+                            : (k == SDL_SCANCODE_A || k == SDL_SCANCODE_LEFT)  ? -1 : 0;
+                    if (dir) {
+                        if (pause_sel == 0) {
+                            sens_mult += dir * 0.1;
+                            if (sens_mult < 0.3) sens_mult = 0.3;
+                            if (sens_mult > 2.5) sens_mult = 2.5;
+                        } else {
+                            master_vol += dir * 8;
+                            if (master_vol < 0)   master_vol = 0;
+                            if (master_vol > 128) master_vol = 128;
+                            apply_master_volume();
+                        }
+                    }
+                    if (k == SDL_SCANCODE_Q) { game_state = ST_TITLE; SDL_SetRelativeMouseMode(SDL_TRUE); }
+                }
                 if (k == SDL_SCANCODE_F11) {
                     fullscreen = !fullscreen;
                     SDL_SetWindowFullscreen(win, fullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0);
@@ -2495,12 +2559,13 @@ int main(int argc, char **argv) {
                 if (k == SDL_SCANCODE_R && (game_state == ST_CAUGHT || game_state == ST_WIN)) {
                     depth = 1; new_game(); game_state = ST_PLAY; state_time = 0;
                 }
-                /* dismiss a note you're reading */
+                /* dismiss a note you're reading -- else-if so the same E press
+                 * doesn't fall through and immediately re-open it. */
                 if ((k == SDL_SCANCODE_E || k == SDL_SCANCODE_SPACE ||
                      k == SDL_SCANCODE_RETURN) && game_state == ST_READING) {
                     game_state = ST_PLAY;
                 }
-                if (k == SDL_SCANCODE_E && game_state == ST_PLAY) {
+                else if (k == SDL_SCANCODE_E && game_state == ST_PLAY) {
                     if (hidden) hidden = 0;
                     else if (near_chest >= 0) open_chest(near_chest);
                     else if (near_note >= 0) {                 /* stop and read the scrap */
@@ -2512,8 +2577,8 @@ int main(int argc, char **argv) {
                 }
             }
             if (e.type == SDL_MOUSEMOTION && game_state == ST_PLAY && !hidden) {
-                yaw   += e.motion.xrel * MOUSE_SENS;
-                pitch -= e.motion.yrel * MOUSE_SENS;
+                yaw   += e.motion.xrel * MOUSE_SENS * sens_mult;
+                pitch -= e.motion.yrel * MOUSE_SENS * sens_mult;
                 if (pitch >  1.45) pitch =  1.45;
                 if (pitch < -1.45) pitch = -1.45;
             }
@@ -2654,6 +2719,7 @@ int main(int argc, char **argv) {
         if (game_state == ST_TITLE) draw_title();
         else if (game_state == ST_CAUGHT) draw_jumpscare();
         else if (game_state == ST_READING) { draw_hud(); draw_note(); }
+        else if (game_state == ST_PAUSED)  draw_pause();
         else {
             draw_sanity_fx();
             if (hidden) draw_hidden_overlay();
@@ -2672,7 +2738,8 @@ int main(int argc, char **argv) {
         present_overlay();
 
         /* dev: capture the composited overlay (note panel / title / HUD) */
-        if (shotpath && (getenv("NIGHTFALL_SHOWNOTE") || getenv("NIGHTFALL_SHOTTITLE") || getenv("NIGHTFALL_SHOTHUD") || getenv("NIGHTFALL_SHOWSCREAM") || getenv("NIGHTFALL_SHOTDEATH")) && ++shot_frame >= 6) {
+        if (shotpath && (getenv("NIGHTFALL_SHOWNOTE") || getenv("NIGHTFALL_SHOTTITLE") || getenv("NIGHTFALL_SHOTHUD") || getenv("NIGHTFALL_SHOWSCREAM") || getenv("NIGHTFALL_SHOTDEATH") || getenv("NIGHTFALL_SHOTPAUSE")) && ++shot_frame >= 6) {
+            if (getenv("NIGHTFALL_SHOTPAUSE")) { game_state = ST_PAUSED; pause_sel = atoi(getenv("NIGHTFALL_SHOTPAUSE")) ? 1 : 0; }
             if (getenv("NIGHTFALL_SHOWNOTE")) { reading_note = atoi(getenv("NIGHTFALL_SHOWNOTE")); game_state = ST_READING; }
             if (getenv("NIGHTFALL_SANITY")) sanity = atof(getenv("NIGHTFALL_SANITY"));   /* hold it low */
             if (getenv("NIGHTFALL_SHOWVISION")) { vision_t = VIS_DUR * 0.55; vision_idx = atoi(getenv("NIGHTFALL_SHOWVISION")); }
