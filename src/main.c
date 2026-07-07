@@ -124,9 +124,11 @@ static int    startX, startY;           /* player spawn cell (entrance room)  */
 static int    pcellX[MAX_PILLARS], pcellY[MAX_PILLARS];   /* pillar candidates  */
 static int    pillar_count = 0;
 static double pedX[MAX_KEYS], pedZ[MAX_KEYS];             /* altar pedestals    */
-/* clutter that gives each room type its own character: crates, shelves, debris */
-typedef struct { double x, z, hwx, hwz, y0, y1; } Prop;
-#define MAX_PROPS 90
+/* clutter that gives each room type its own character: crates, barrels,
+ * book spines, bones, rubble. tr/tg/tb tints the box so a prop reads as its
+ * material (via the world mesh's per-vertex tint). */
+typedef struct { double x, z, hwx, hwz, y0, y1; float tr, tg, tb; } Prop;
+#define MAX_PROPS 150
 static Prop   props[MAX_PROPS];
 static int    prop_count = 0;
 
@@ -889,17 +891,34 @@ static void generate_props(void) {
                 for (int k = 0; k < 4; k++)
                     if (!is_open(xx + wdx[k], yy + wdy[k])) { wx = wdx[k]; wy = wdy[k]; wall = 1; break; }
                 double cx = xx + 0.5, cz = yy + 0.5;
-                if (r->theme == RM_STORAGE && wall) {               /* stacked crates */
+                if (r->theme == RM_STORAGE && wall) {               /* crates + barrels */
                     double px = cx + wx * 0.18, pz = cz + wy * 0.18, top = 0.28 + frand() * 0.12;
-                    props[prop_count++] = (Prop){px, pz, 0.26, 0.26, 0.0, top};
-                    if (prop_count < MAX_PROPS && frand() < 0.45)
-                        props[prop_count++] = (Prop){px + 0.06, pz - 0.05, 0.17, 0.17, top, top + 0.24};
-                } else if (r->theme == RM_LIBRARY && wall) {        /* bookshelf */
-                    double px = cx + wx * 0.34, pz = cz + wy * 0.34;
-                    double hwx = (wx != 0) ? 0.11 : 0.38, hwz = (wx != 0) ? 0.38 : 0.11;
-                    props[prop_count++] = (Prop){px, pz, hwx, hwz, 0.0, 0.86 + frand() * 0.08};
-                } else {                                            /* low debris pile */
-                    props[prop_count++] = (Prop){cx, cz, 0.22 + frand() * 0.1, 0.22 + frand() * 0.1, 0.0, 0.10 + frand() * 0.10};
+                    props[prop_count++] = (Prop){px, pz, 0.26, 0.26, 0.0, top, 0.60f, 0.42f, 0.22f};
+                    if (prop_count < MAX_PROPS && frand() < 0.45)   /* a smaller crate on top */
+                        props[prop_count++] = (Prop){px + 0.06, pz - 0.05, 0.17, 0.17, top, top + 0.24, 0.58f, 0.40f, 0.21f};
+                    else if (prop_count < MAX_PROPS && frand() < 0.5) /* an iron-dark barrel */
+                        props[prop_count++] = (Prop){px, pz, 0.19, 0.19, 0.0, 0.44, 0.34f, 0.27f, 0.22f};
+                } else if (r->theme == RM_LIBRARY && wall) {        /* a shelf of books */
+                    double px = cx + wx * 0.36, pz = cz + wy * 0.36;
+                    double hwx = (wx != 0) ? 0.10 : 0.36, hwz = (wx != 0) ? 0.36 : 0.10;
+                    props[prop_count++] = (Prop){px, pz, hwx, hwz, 0.0, 0.90, 0.30f, 0.19f, 0.10f}; /* dark plank */
+                    double tanx = (wx != 0) ? 0.0 : 1.0, tanz = (wx != 0) ? 1.0 : 0.0;
+                    static const float spine[6][3] = {{0.70f,0.16f,0.13f},{0.16f,0.34f,0.55f},{0.22f,0.50f,0.26f},
+                                                      {0.62f,0.52f,0.16f},{0.46f,0.20f,0.52f},{0.55f,0.30f,0.14f}};
+                    for (int bk = -2; bk <= 2 && prop_count < MAX_PROPS; bk++) {   /* coloured spines */
+                        double off = bk * 0.13, bh = 0.50 + frand() * 0.30;
+                        double bx = px + tanx * off, bz = pz + tanz * off;
+                        const float *sp = spine[rand() % 6];
+                        props[prop_count++] = (Prop){bx, bz, (wx != 0) ? 0.055 : 0.05, (wx != 0) ? 0.05 : 0.055,
+                                                     0.30, 0.30 + bh, sp[0], sp[1], sp[2]};
+                    }
+                } else if (r->theme == RM_KEY) {                    /* shrine relics: pale bones */
+                    props[prop_count++] = (Prop){cx, cz, 0.17, 0.17, 0.0, 0.12 + frand() * 0.08, 0.82f, 0.80f, 0.70f};
+                    if (prop_count < MAX_PROPS && frand() < 0.6)
+                        props[prop_count++] = (Prop){cx + 0.10, cz - 0.08, 0.09, 0.09, 0.0, 0.17, 0.88f, 0.86f, 0.78f};
+                } else {                                            /* low grey rubble pile */
+                    props[prop_count++] = (Prop){cx, cz, 0.22 + frand() * 0.1, 0.22 + frand() * 0.1,
+                                                 0.0, 0.10 + frand() * 0.10, 0.42f, 0.41f, 0.39f};
                 }
                 placed++;
             }
@@ -1601,8 +1620,11 @@ static void build_world_mesh(void) {
     brkStart = n;
     for (int i = 0; i < torch_count; i++)
         add_torch(buf, &n, torchX[i], torchZ[i], torchNx[i], torchNz[i]);
-    for (int i = 0; i < prop_count; i++)
+    for (int i = 0; i < prop_count; i++) {
+        cur_tint[0] = props[i].tr; cur_tint[1] = props[i].tg; cur_tint[2] = props[i].tb;
         add_box2(buf, &n, props[i].x, props[i].z, props[i].hwx, props[i].hwz, props[i].y0, props[i].y1);
+    }
+    cur_tint[0] = cur_tint[1] = cur_tint[2] = 1.0f;
     brkCount = n - brkStart;
 
     glBindVertexArray_(worldVAO);
