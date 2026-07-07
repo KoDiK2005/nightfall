@@ -807,8 +807,19 @@ static void flood_from_cell(int sx, int sy) {
     }
 }
 static void set_target(int cx, int cy) { tgtX = cx; tgtY = cy; flood_from_cell(cx, cy); }
+/* Where the Stalker drifts when it has lost you. Rather than pure noise it
+ * often patrols toward the things you must reach — an unopened chest or the
+ * exit door — so it haunts your objectives and the halls feel stalked. */
 static void pick_wander(void) {
-    for (int i = 0; i < 64; i++) {
+    double r = frand();
+    if (r < 0.45 && keys_left > 0) {                 /* prowl a still-locked shrine */
+        int idx[MAX_KEYS], nn = 0;
+        for (int i = 0; i < num_keys; i++) if (keys[i].active) idx[nn++] = i;
+        if (nn) { int k = idx[rand() % nn]; set_target((int)keys[k].x, (int)keys[k].y); return; }
+    } else if (r < 0.65) {                            /* linger by the way down     */
+        set_target((int)exitX, (int)exitY); return;
+    }
+    for (int i = 0; i < 64; i++) {                    /* otherwise, just roam        */
         int x = 1 + rand() % (MW - 2), y = 1 + rand() % (MH - 2);
         if (is_open(x, y)) { set_target(x, y); return; }
     }
@@ -835,8 +846,12 @@ static const char *NOTES[][6] = {
     {"ДВЕРЬ ВНИЗ - НЕ СПАСЕНИЕ.", "ЭТО ПРИГЛАШЕНИЕ.", "МЫ ВСЕ СПУСКАЕМСЯ.", "КАЖДЫЙ В СВОЙ ЧЕРЕД.", NULL},
     {"СТЕНЫ ДЫШАТ КОГДА ТЕМНО.", "НЕ СМОТРИ ДОЛГО.", "ОНИ СМОТРЯТ В ОТВЕТ.", NULL},
     {"МОЙ ФОНАРЬ УМЕР НА", "ЧЕТЫРНАДЦАТОМ ЭТАЖЕ.", "ДАЛЬШЕ ТОЛЬКО", "ГОЛОДНАЯ ТЬМА.", NULL},
+    {"ЧЕМ ГЛУБЖЕ - ТЕМ БОЛЬШЕ", "СУНДУКОВ С КЛЮЧАМИ.", "ОНО СТЕРЕЖЁТ КАЖДЫЙ.", NULL},
+    {"СВЕЧИ У СУНДУКА", "ГОРЯТ НЕ ДЛЯ ТЕБЯ.", "ОНИ ЗОВУТ ЕГО.", NULL},
+    {"НЕ ОТКРЫВАЙ КРЫШКУ", "ЕСЛИ СЛЫШИШЬ ДЫХАНИЕ", "ЗА СПИНОЙ.", "УЖЕ ПОЗДНО.", NULL},
+    {"КАЖДЫЙ ЭТАЖ ТЕМНЕЕ.", "ФАКЕЛОВ ВСЁ МЕНЬШЕ.", "СКОРО ОСТАНЕТСЯ", "ТОЛЬКО ТЬМА.", NULL},
 };
-static const int NOTE_POOL = 10;
+static const int NOTE_POOL = 14;
 
 /* flood from the entrance; true only if the exit and every key are reachable.
  * Used to reject any decorative pillar that would sever the floor.          */
@@ -2138,7 +2153,7 @@ static void draw_title(void) {
     uint32_t red = pack(190 + (int)(40 * sin(state_time * 3)), 20, 16);
     draw_text_c(150, 9, "NIGHTFALL", red);
     draw_text_c(270, 3, "ЧТО-ТО В ТЕМНОТЕ ПРОСНУЛОСЬ.", pack(150, 150, 160));
-    draw_text_c(305, 3, "НАЙДИ ТРИ КЛЮЧА. НАЙДИ ДВЕРЬ.", pack(120, 120, 130));
+    draw_text_c(305, 3, "СОБЕРИ КЛЮЧИ. НАЙДИ ДВЕРЬ.", pack(120, 120, 130));
     if ((int)(state_time * 2) % 2) draw_text_c(380, 4, "НАЖМИ ENTER", pack(220, 220, 220));
     draw_text_c(SCREEN_H - 84, 2, "КЛАВИШИ ПО РАСКЛАДКЕ - ЕСЛИ НЕ РАБОТАЮТ, ВКЛЮЧИ ENG", pack(150, 120, 60));
     draw_text_c(SCREEN_H - 60, 2, "WASD - ХОДИТЬ   МЫШЬ - ОБЗОР   SHIFT - БЕГ   E - ПРЯТАТЬСЯ   ESC - ВЫХОД", pack(90, 90, 100));
