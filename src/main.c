@@ -1856,13 +1856,27 @@ static void render_3d(void) {
     for (int a = 0; a < nc && a < MAX_ACTIVE_TORCHES; a++)
         for (int b = a + 1; b < nc; b++)
             if (cd[b] < cd[a]) { float td = cd[a]; cd[a] = cd[b]; cd[b] = td; int ti2 = ci[a]; ci[a] = ci[b]; ci[b] = ti2; }
-    int active = nc < MAX_ACTIVE_TORCHES ? nc : MAX_ACTIVE_TORCHES;
-    for (int k = 0; k < active; k++) {
+    int active = 0;
+    /* shrine candles are real lights too, and they take priority — so a key
+     * room glows warm the moment it's on screen (not just colour-tinted). */
+    for (int i = 0; i < num_keys && active < MAX_ACTIVE_TORCHES; i++) {
+        if (!keys[i].active) continue;
+        float lx = (float)keys[i].x, lz = (float)keys[i].y;
+        float d2 = (lx - ex) * (lx - ex) + (lz - ez) * (lz - ez);
+        if (d2 > TORCH_CULL_R * TORCH_CULL_R) continue;
+        tp[active * 3] = lx; tp[active * 3 + 1] = 0.55f; tp[active * 3 + 2] = lz;
+        double f = 0.85 + 0.10 * sin(state_time * 5.0 + i * 2.0);
+        ti[active] = (float)(f * 1.05 * flicker);            /* softer than a torch */
+        active++;
+    }
+    /* then the nearest wall torches fill whatever slots remain */
+    for (int k = 0; k < nc && active < MAX_ACTIVE_TORCHES; k++) {
         int i = ci[k];
         /* the light lives at the flame -- the handle tip, out in the room. */
-        tp[k * 3] = torchX[i] + torchNx[i] * TORCH_REACH; tp[k * 3 + 1] = TORCH_Y; tp[k * 3 + 2] = torchZ[i] + torchNz[i] * TORCH_REACH;
+        tp[active * 3] = torchX[i] + torchNx[i] * TORCH_REACH; tp[active * 3 + 1] = TORCH_Y; tp[active * 3 + 2] = torchZ[i] + torchNz[i] * TORCH_REACH;
         double f = 1.15 + 0.22 * sin(state_time * 7.0 + i * 1.7) + (frand() - 0.5) * 0.12;
-        ti[k] = (float)(f * 1.5 * flicker);
+        ti[active] = (float)(f * 1.5 * flicker);
+        active++;
     }
     glUniform1i_(u_tcount, active);
     if (active > 0) {
