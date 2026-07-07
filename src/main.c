@@ -107,6 +107,7 @@ static int    reading_note = 0;         /* which lore note is on screen       */
 static int    near_note = -1;           /* index of a readable note within reach */
 
 static int    depth = 1;                /* current floor (1 = topmost)        */
+static int    best_depth = 1;           /* deepest floor reached this session */
 static double mon_speed = MONSTER_SPD;  /* scales with depth                  */
 static double upX, upY;                 /* stairs back up (only when depth>1) */
 static int    has_up = 0;
@@ -1022,7 +1023,7 @@ static void reset_level(void) {
     screamer_t = 0.0; near_chest = -1; near_note = -1;
     whisper_timer = 8.0; event_timer = 14.0;
     mon_state = AI_WANDER; lastKnownX = posX; lastKnownY = posY;
-    hunt_recalc = search_time = 0;
+    hunt_recalc = search_time = growl_timer = 0;
     pick_wander();
 }
 
@@ -1054,10 +1055,12 @@ static void update_ai(double dt, int moving, int sprinting) {
     int sensed = 0; mon_sees = 0;
     /* low sanity = ragged panic breathing: the Stalker hears you from farther */
     double dread = 1.0 - sanity;
-    double hear_walk = HEAR_WALK * (1.0 + dread * 0.6);
-    double hear_run  = HEAR_RUN  * (1.0 + dread * 0.4);
+    double dd = (depth - 1) < 12 ? (depth - 1) : 12;         /* it grows keener with depth */
+    double hear_walk = HEAR_WALK * (1.0 + dread * 0.6 + dd * 0.03);
+    double hear_run  = HEAR_RUN  * (1.0 + dread * 0.4 + dd * 0.02);
+    double see_range = SEE_RANGE * (1.0 + dd * 0.02);
     if (!hidden) {
-        if (d < SEE_RANGE && has_los(monX, monY, posX, posY)) { sensed = 1; mon_sees = 1; }
+        if (d < see_range && has_los(monX, monY, posX, posY)) { sensed = 1; mon_sees = 1; }
         else if (moving && d < hear_walk) sensed = 1;
         else if (sprinting && moving && d < hear_run) sensed = 1;
     }
@@ -1122,7 +1125,8 @@ static void update_audio(double dt, int moving) {
     }
 }
 static void update_fear(double dt) {
-    double drain = 0.004 + tension * 0.05 + (mon_state == AI_HUNT ? 0.03 : 0.0) + (mon_sees ? 0.10 : 0.0);
+    double dd = (depth - 1) < 12 ? (depth - 1) : 12;         /* deeper = mind frays faster */
+    double drain = 0.004 + dd * 0.0025 + tension * 0.05 + (mon_state == AI_HUNT ? 0.03 : 0.0) + (mon_sees ? 0.10 : 0.0);
     if (tension < 0.12 && mon_state != AI_HUNT) sanity += dt * 0.02;
     sanity -= dt * drain;
     if (sanity < 0) sanity = 0;
@@ -1483,7 +1487,11 @@ static void place_torches(void) {
         int tx = cx[i]; cx[i] = cx[j]; cx[j] = tx;
         int ty = cy[i]; cy[i] = cy[j]; cy[j] = ty;
     }
-    float sp2 = TORCH_SPACING * TORCH_SPACING;
+    /* deeper floors are lit more sparsely — the dark closes in as you descend */
+    float dd = (depth - 1) < 12 ? (float)(depth - 1) : 12.0f;
+    float spacing = TORCH_SPACING + dd * 0.11f;
+    if (spacing > 3.9f) spacing = 3.9f;
+    float sp2 = spacing * spacing;
     for (int i = 0; i < nc && torch_count < MAX_TORCHES; i++) {
         int x = cx[i], y = cy[i];
         float ccx = x + 0.5f, ccz = y + 0.5f;
@@ -1861,6 +1869,16 @@ static void render_3d(void) {
         if (descend_t > 0) pulse = 1.1;                 /* flares as you step through */
         draw_billboard(exitX, exitY, 0.34 * pulse, 0.62 * pulse, 0.06, 2, mvp);
     }
+    /* altar candles flank each still-locked chest — a warm pair of flames that
+     * marks a shrine (and its key) from down the corridor. */
+    for (int i = 0; i < NUM_KEYS; i++) {
+        if (!keys[i].active) continue;
+        double fl = 0.85 + 0.15 * sin(state_time * 6.0 + i * 4.0) + (frand() - 0.5) * 0.06;
+        for (int s = -1; s <= 1; s += 2) {
+            double cxp = keys[i].x + s * 0.36, czp = keys[i].y + 0.30;
+            draw_billboard(cxp, czp, 0.085 * fl, 0.16 * fl, 0.30, 4, mvp);
+        }
+    }
     for (int i = 0; i < torch_count; i++) {
         double fl = 0.88 + 0.16 * sin(state_time * 9.0 + i * 2.1)
                          + 0.05 * sin(state_time * 23.0 + i);        /* fast jitter */
@@ -2109,8 +2127,13 @@ static void draw_jumpscare(void) {
             fb[y * SCREEN_W + x] = c;                     /* opaque: hides 3D */
         }
     if (t > 1.4) {
-        draw_text_c(SCREEN_H / 2 - 40, 6, "ОНО НАШЛО ТЕБЯ", pack(255, 30, 20));
-        draw_text_c(SCREEN_H / 2 + 40, 3, "R - ВЕРНУТЬСЯ", pack(180, 180, 180));
+        char b[48];
+        draw_text_c(SCREEN_H / 2 - 52, 6, "ОНО НАШЛО ТЕБЯ", pack(255, 30, 20));
+        snprintf(b, sizeof(b), "ТЫ ДОШЁЛ ДО ЭТАЖА %d", depth);
+        draw_text_c(SCREEN_H / 2 + 132, 3, b, pack(210, 195, 175));
+        snprintf(b, sizeof(b), "РЕКОРД - ЭТАЖ %d", best_depth);
+        draw_text_c(SCREEN_H / 2 + 168, 2, b, pack(150, 140, 130));
+        draw_text_c(SCREEN_H / 2 + 210, 3, "R - ВЕРНУТЬСЯ", pack(180, 180, 180));
     }
 }
 
@@ -2409,7 +2432,8 @@ int main(int argc, char **argv) {
                 descend_t -= dt;
                 if (descend_t <= 0.8 && !descend_done) {    /* swap the floor while black */
                     double save = descend_t;                /* new_game() resets it; keep the fade */
-                    depth++; new_game();
+                    depth++; if (depth > best_depth) best_depth = depth;
+                    new_game();
                     descend_t = save; descend_done = 1;
                 }
                 if (descend_t <= 0.0) { descend_t = 0.0; descend_done = 0; state_time = 0; }
@@ -2433,6 +2457,7 @@ int main(int argc, char **argv) {
                 if (ld < CHECK_DIST) { caught = 1; hidden = 0; }
             }
             if (caught) { game_state = ST_CAUGHT; state_time = 0;
+                if (depth > best_depth) best_depth = depth;
                 if (snd_scare) { Mix_VolumeChunk(snd_scare, 128); Mix_PlayChannel(4, snd_scare, 0); } }
             update_audio(dt, moving);
         } else {
@@ -2480,11 +2505,12 @@ int main(int argc, char **argv) {
         present_overlay();
 
         /* dev: capture the composited overlay (note panel / title / HUD) */
-        if (shotpath && (getenv("NIGHTFALL_SHOWNOTE") || getenv("NIGHTFALL_SHOTTITLE") || getenv("NIGHTFALL_SHOTHUD") || getenv("NIGHTFALL_SHOWSCREAM")) && ++shot_frame >= 6) {
+        if (shotpath && (getenv("NIGHTFALL_SHOWNOTE") || getenv("NIGHTFALL_SHOTTITLE") || getenv("NIGHTFALL_SHOTHUD") || getenv("NIGHTFALL_SHOWSCREAM") || getenv("NIGHTFALL_SHOTDEATH")) && ++shot_frame >= 6) {
             if (getenv("NIGHTFALL_SHOWNOTE")) { reading_note = atoi(getenv("NIGHTFALL_SHOWNOTE")); game_state = ST_READING; }
             if (getenv("NIGHTFALL_SANITY")) sanity = atof(getenv("NIGHTFALL_SANITY"));   /* hold it low */
             if (getenv("NIGHTFALL_SHOWVISION")) { vision_t = VIS_DUR * 0.55; vision_idx = atoi(getenv("NIGHTFALL_SHOWVISION")); }
             if (getenv("NIGHTFALL_SHOWSCREAM")) { screamer_t = SCREAMER_DUR * 0.8; screamer_idx = atoi(getenv("NIGHTFALL_SHOWSCREAM")); }
+            if (getenv("NIGHTFALL_SHOTDEATH")) { game_state = ST_CAUGHT; state_time = 2.0; best_depth = depth + 3; }
             if (shot_frame >= 10) { save_ppm(shotpath); running = 0; }
         }
 
