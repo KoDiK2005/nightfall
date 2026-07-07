@@ -1735,6 +1735,36 @@ static void draw_billboard(double wx, double wz, double w, double h, double base
     draw_sprite_dir(wx, wz, -sin(yaw), cos(yaw), w, h, base, type, mvp);   /* face the camera */
 }
 
+/* All the flame billboards (torches + altar candles) share one texture and
+ * additive blend, and their draw order doesn't matter — so batch every quad
+ * into a single buffer and issue ONE draw call instead of ~50+ per frame. */
+static float flamebuf[(MAX_TORCHES * 2 + MAX_KEYS * 2) * 6 * 11];
+static int   flamen = 0;
+static void flame_quad(double wx, double wz, double w, double h, double base) {
+    double rx = -sin(yaw), rz = cos(yaw);
+    float hx = (float)(rx * w * 0.5), hz = (float)(rz * w * 0.5);
+    float y0 = (float)base, y1 = (float)(base + h), cx = (float)wx, cz = (float)wz;
+    cur_tint[0] = cur_tint[1] = cur_tint[2] = 1.0f;
+    push_v(flamebuf, &flamen, cx - hx, y0, cz - hz, 0, 1, 0, 0, 0);
+    push_v(flamebuf, &flamen, cx + hx, y0, cz + hz, 1, 1, 0, 0, 0);
+    push_v(flamebuf, &flamen, cx + hx, y1, cz + hz, 1, 0, 0, 0, 0);
+    push_v(flamebuf, &flamen, cx - hx, y0, cz - hz, 0, 1, 0, 0, 0);
+    push_v(flamebuf, &flamen, cx + hx, y1, cz + hz, 1, 0, 0, 0, 0);
+    push_v(flamebuf, &flamen, cx - hx, y1, cz - hz, 0, 0, 0, 0, 0);
+}
+static void flush_flames(float mvp[16]) {
+    if (flamen == 0) return;
+    glBindVertexArray_(sprVAO);
+    glBindBuffer_(GL_ARRAY_BUFFER, sprVBO);
+    glBufferData_(GL_ARRAY_BUFFER, flamen * 11 * sizeof(float), flamebuf, GL_DYNAMIC_DRAW);
+    glUniformMatrix4fv_(u_mvp, 1, GL_FALSE, mvp);
+    glUniform1i_(u_mode, 1);
+    glActiveTexture_(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, texSpr[4]);
+    glDrawArrays(GL_TRIANGLES, 0, flamen);
+    flamen = 0;
+}
+
 /* (re)allocate the offscreen scene buffer when the target size changes */
 static void ensure_fbo(int w, int h) {
     if (w == fboW && h == fboH && sceneFBO) return;
@@ -1882,7 +1912,7 @@ static void render_3d(void) {
         double fl = 0.85 + 0.15 * sin(state_time * 6.0 + i * 4.0) + (frand() - 0.5) * 0.06;
         for (int s = -1; s <= 1; s += 2) {
             double cxp = keys[i].x + s * 0.36, czp = keys[i].y + 0.30;
-            draw_billboard(cxp, czp, 0.085 * fl, 0.16 * fl, 0.30, 4, mvp);
+            flame_quad(cxp, czp, 0.085 * fl, 0.16 * fl, 0.30);
         }
     }
     for (int i = 0; i < torch_count; i++) {
@@ -1892,9 +1922,10 @@ static void render_3d(void) {
         double fx = torchX[i] + torchNx[i] * TORCH_REACH;
         double fz = torchZ[i] + torchNz[i] * TORCH_REACH;
         double base = TORCH_TIP_Y - 0.02;
-        draw_billboard(fx, fz, s * 1.15, s * 1.7,  base,        4, mvp);   /* tongue */
-        draw_billboard(fx, fz, s * 0.62, s * 1.05, base + 0.04, 4, mvp);   /* core   */
+        flame_quad(fx, fz, s * 1.15, s * 1.7,  base);         /* tongue */
+        flame_quad(fx, fz, s * 0.62, s * 1.05, base + 0.04);  /* core   */
     }
+    flush_flames(mvp);                                        /* one draw for every flame */
     glDepthMask(GL_TRUE);
     glDisable(GL_BLEND);
 }
