@@ -38,6 +38,12 @@ and your mind frays quicker. How deep can you get?
   then **wanders** the halls until it catches your trail again. Navigation is
   a breadth-first flood-field toward its current focus. It is slower than you.
   It never truly stops.
+- **Three horrors, each a different game** — deeper floors unlock new
+  predators (first met on floors 4 and 7): the **Listener** is blind but homes
+  on any footstep, so you freeze when it's near and move only when it's far;
+  the **Watcher** only moves while you're *not* looking at it, then rushes in
+  silence — stare to freeze it, look away to advance. A fading warning on entry
+  teaches each one's rule, and every kind wears its own pallor.
 - **Stamina & stealth** — sprinting is fast but burns a stamina bar; run dry
   and you're stuck at a walk while it recovers. Walk to stay quiet, or dive
   into a **locker** (press `E`) to break line of sight and let it lose you.
