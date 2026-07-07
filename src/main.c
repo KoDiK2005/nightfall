@@ -36,7 +36,7 @@
 
 #define MW 29
 #define MH 21
-#define NUM_KEYS 3
+#define MAX_KEYS 6           /* array capacity; the live count scales with depth */
 #define NUM_LOCKERS 5
 #define NUM_NOTES 2
 #define MAX_ROOMS 14
@@ -88,7 +88,8 @@ static double lastKnownX, lastKnownY;
 static double hunt_recalc = 0.0, search_time = 0.0;
 
 typedef struct { double x, y; int active; } Key;   /* active = chest still locked */
-static Key    keys[NUM_KEYS];
+static Key    keys[MAX_KEYS];
+static int    num_keys = 3;             /* keys required on this floor (grows w/ depth) */
 static int    keys_left;
 static int    near_chest = -1;          /* index of an openable chest within reach */
 static double exitX, exitY;
@@ -122,7 +123,7 @@ static int    startX, startY;           /* player spawn cell (entrance room)  */
 #define MAX_PILLARS 24
 static int    pcellX[MAX_PILLARS], pcellY[MAX_PILLARS];   /* pillar candidates  */
 static int    pillar_count = 0;
-static double pedX[NUM_KEYS], pedZ[NUM_KEYS];             /* altar pedestals    */
+static double pedX[MAX_KEYS], pedZ[MAX_KEYS];             /* altar pedestals    */
 /* clutter that gives each room type its own character: crates, shelves, debris */
 typedef struct { double x, z, hwx, hwz, y0, y1; } Prop;
 #define MAX_PROPS 90
@@ -731,7 +732,8 @@ static void carve_v(int y0, int y1, int x) {
 static void generate_rooms(void) {
     for (int y = 0; y < MH; y++) { for (int x = 0; x < MW; x++) map[y][x] = '#'; map[y][MW] = 0; }
     room_count = 0;
-    int target = 7 + rand() % 4;                         /* 7..10 rooms         */
+    int target = 7 + rand() % 4 + num_keys - 3;          /* more rooms as keys grow */
+    if (target > MAX_ROOMS) target = MAX_ROOMS;          /* 7..10, up to 13 deep    */
     for (int att = 0; att < 300 && room_count < target; att++) {
         int w = 4 + rand() % 5, h = 3 + rand() % 4;       /* 4..8 x 3..6        */
         int x = 1 + rand() % (MW - w - 1), y = 1 + rand() % (MH - h - 1);
@@ -771,7 +773,7 @@ static void generate_rooms(void) {
     int keyrooms = 0;
     for (int i = 1; i < room_count; i++) {
         if (rooms[i].theme != RM_HALL) continue;
-        if (keyrooms < NUM_KEYS) { rooms[i].theme = RM_KEY; keyrooms++; }
+        if (keyrooms < num_keys) { rooms[i].theme = RM_KEY; keyrooms++; }
         else rooms[i].theme = (i & 1) ? RM_STORAGE : RM_LIBRARY;
     }
     /* -------- pillar candidates in the larger halls (columns for cover) ----- */
@@ -841,7 +843,7 @@ static const int NOTE_POOL = 10;
 static int reach_ok(void) {
     flood_from_cell(startX, startY);
     if (gdist[(int)exitY][(int)exitX] >= (1 << 20)) return 0;
-    for (int i = 0; i < NUM_KEYS; i++)
+    for (int i = 0; i < num_keys; i++)
         if (gdist[(int)keys[i].y][(int)keys[i].x] >= (1 << 20)) return 0;
     return 1;
 }
@@ -863,7 +865,7 @@ static void generate_props(void) {
                 if (abs(xx - startX) + abs(yy - startY) < 3) continue;
                 if (abs(xx - (int)exitX) + abs(yy - (int)exitY) < 2) continue;
                 int busy = 0;
-                for (int j = 0; j < NUM_KEYS; j++)   if ((int)keys[j].x == xx && (int)keys[j].y == yy) busy = 1;
+                for (int j = 0; j < num_keys; j++)   if ((int)keys[j].x == xx && (int)keys[j].y == yy) busy = 1;
                 for (int j = 0; j < NUM_LOCKERS; j++) if ((int)lockers[j].x == xx && (int)lockers[j].y == yy) busy = 1;
                 for (int j = 0; j < NUM_NOTES; j++)  if ((int)notes[j].x == xx && (int)notes[j].y == yy) busy = 1;
                 if (busy) continue;
@@ -890,6 +892,10 @@ static void generate_props(void) {
 }
 
 static void reset_level(void) {
+    /* deeper floors demand more keys (more chests to crack, more ground to
+     * cover): 3 up top, one more every three floors, capped at MAX_KEYS. */
+    num_keys = 3 + (depth - 1) / 3;
+    if (num_keys > MAX_KEYS) num_keys = MAX_KEYS;
     generate_rooms();
     posX = startX + 0.5; posY = startY + 0.5; yaw = 0; pitch = 0;
     mon_speed = MONSTER_SPD + (depth - 1) * 0.10;
@@ -909,15 +915,15 @@ static void reset_level(void) {
     upX = ux + 0.5; upY = uy + 0.5;
 
     /* keys sit on pedestals at the heart of the shrine (RM_KEY) rooms */
-    keys_left = NUM_KEYS;
+    keys_left = num_keys;
     int ki = 0;
-    for (int i = 0; i < room_count && ki < NUM_KEYS; i++) {
+    for (int i = 0; i < room_count && ki < num_keys; i++) {
         if (rooms[i].theme != RM_KEY) continue;
         int cx, cy; room_center(&rooms[i], &cx, &cy);
         keys[ki].x = cx + 0.5; keys[ki].y = cy + 0.5; keys[ki].active = 1;
         pedX[ki] = cx + 0.5; pedZ[ki] = cy + 0.5; ki++;
     }
-    while (ki < NUM_KEYS) {                                /* fallback scatter    */
+    while (ki < num_keys) {                                /* fallback scatter    */
         int x = 1 + rand() % (MW - 2), y = 1 + rand() % (MH - 2);
         if (!is_open(x, y) || (abs(x - startX) + abs(y - startY)) < 4) continue;
         keys[ki].x = x + 0.5; keys[ki].y = y + 0.5; keys[ki].active = 1;
@@ -931,7 +937,7 @@ static void reset_level(void) {
         if (!is_open(px, py) || (px == startX && py == startY)) continue;
         if ((int)exitX == px && (int)exitY == py) continue;
         int skip = 0;
-        for (int i = 0; i < NUM_KEYS; i++) if ((int)keys[i].x == px && (int)keys[i].y == py) skip = 1;
+        for (int i = 0; i < num_keys; i++) if ((int)keys[i].x == px && (int)keys[i].y == py) skip = 1;
         if (skip) continue;
         map[py][px] = '#';
         if (!reach_ok()) map[py][px] = '.';               /* undo: it disconnects */
@@ -956,7 +962,7 @@ static void reset_level(void) {
                     int ok = 1;
                     for (int j = 0; j < li; j++)
                         if (fabs(lockers[j].x - (xx + 0.5)) + fabs(lockers[j].y - (yy + 0.5)) < 2) ok = 0;
-                    for (int j = 0; j < NUM_KEYS; j++)
+                    for (int j = 0; j < num_keys; j++)
                         if (fabs(keys[j].x - (xx + 0.5)) + fabs(keys[j].y - (yy + 0.5)) < 1.5) ok = 0;
                     if (!ok) continue;
                     lockers[li].x = xx + 0.5; lockers[li].y = yy + 0.5;
@@ -1539,7 +1545,7 @@ static void tint_for(int theme) {
 
 /* Rebuild the world mesh for the current maze (walls, floor, ceiling, lockers). */
 static void build_world_mesh(void) {
-    static float buf[(MW * MH * 36 + NUM_LOCKERS * 24 + NUM_KEYS * 32 + MAX_TORCHES * 72 + MAX_PROPS * 32 + 256) * 11];
+    static float buf[(MW * MH * 36 + NUM_LOCKERS * 24 + MAX_KEYS * 32 + MAX_TORCHES * 72 + MAX_PROPS * 32 + 256) * 11];
     int n = 0;
     place_torches();
     /* walls: a face for every wall cell that borders an open cell */
@@ -1572,7 +1578,7 @@ static void build_world_mesh(void) {
     lockStart = n;
     for (int i = 0; i < NUM_LOCKERS; i++)
         add_locker_box(buf, &n, lockers[i].x, lockers[i].y, lockWX[i], lockWY[i]);
-    for (int i = 0; i < NUM_KEYS; i++)
+    for (int i = 0; i < num_keys; i++)
         add_box2(buf, &n, pedX[i], pedZ[i], 0.17, 0.17, 0.0, 0.30);   /* shrine plinth */
     add_door(buf, &n, exitX, exitY, doorNx, keys_left > 0);
     lockCount = n - lockStart;
@@ -1613,7 +1619,7 @@ static void new_game(void) { reset_level(); build_world_mesh(); upload_map(); }
 
 /* crack open a chest: claim its key, and slam a photo full-screen as a scare */
 static void open_chest(int i) {
-    if (i < 0 || i >= NUM_KEYS || !keys[i].active) return;
+    if (i < 0 || i >= num_keys || !keys[i].active) return;
     keys[i].active = 0; keys_left--;
     if (snd_pickup) Mix_PlayChannel(3, snd_pickup, 0);
     if (nvisions > 0) {                          /* the screamer needs a photo */
@@ -1849,7 +1855,7 @@ static void render_3d(void) {
     if (phantom_t > 0.0 && ((int)(state_time * 22) % 3) != 0)
         draw_billboard(phantomX, phantomY, 0.66, 0.99, 0.0, 0, mvp);
     /* each key is locked inside a chest squatting on the floor */
-    for (int i = 0; i < NUM_KEYS; i++)
+    for (int i = 0; i < num_keys; i++)
         if (keys[i].active) draw_billboard(keys[i].x, keys[i].y, 0.44, 0.42, 0.0, 7, mvp);
     for (int i = 0; i < NUM_NOTES; i++)
         if (notes[i].active) {
@@ -1871,7 +1877,7 @@ static void render_3d(void) {
     }
     /* altar candles flank each still-locked chest — a warm pair of flames that
      * marks a shrine (and its key) from down the corridor. */
-    for (int i = 0; i < NUM_KEYS; i++) {
+    for (int i = 0; i < num_keys; i++) {
         if (!keys[i].active) continue;
         double fl = 0.85 + 0.15 * sin(state_time * 6.0 + i * 4.0) + (frand() - 0.5) * 0.06;
         for (int s = -1; s <= 1; s += 2) {
@@ -2007,7 +2013,7 @@ static void draw_hud(void) {
     char buf[32];
     snprintf(buf, sizeof(buf), "ЭТАЖ %d", depth);
     draw_text(16, 16, 3, buf, pack(150, 170, 220));
-    snprintf(buf, sizeof(buf), "КЛЮЧИ %d/%d", NUM_KEYS - keys_left, NUM_KEYS);
+    snprintf(buf, sizeof(buf), "КЛЮЧИ %d/%d", num_keys - keys_left, num_keys);
     draw_text(16, 44, 3, buf, pack(230, 210, 120));
 
     /* contextual stair prompts */
@@ -2044,7 +2050,7 @@ static void draw_hud(void) {
      * out as panic takes hold, so it guides without gutting the dread. */
     if (keys_left > 0 && !hidden) {
         int kb = -1; double kbd = 1e18;
-        for (int i = 0; i < NUM_KEYS; i++)
+        for (int i = 0; i < num_keys; i++)
             if (keys[i].active) {
                 double d2 = (posX - keys[i].x) * (posX - keys[i].x) + (posY - keys[i].y) * (posY - keys[i].y);
                 if (d2 < kbd) { kbd = d2; kb = i; }
@@ -2222,7 +2228,7 @@ int main(int argc, char **argv) {
                 char c = is_open(x, y) ? '.' : '#';
                 if (x == startX && y == startY) c = '@';
                 else if ((int)exitX == x && (int)exitY == y) c = 'X';
-                else for (int k = 0; k < NUM_KEYS; k++) if ((int)keys[k].x == x && (int)keys[k].y == y) c = 'K';
+                else for (int k = 0; k < num_keys; k++) if ((int)keys[k].x == x && (int)keys[k].y == y) c = 'K';
                 line[x] = c;
             }
             line[MW] = 0;
@@ -2413,7 +2419,7 @@ int main(int argc, char **argv) {
             /* keys are locked in chests now: find the nearest one you could open
              * (E opens it -> the screamer). Auto-open during a dev screenshot. */
             near_chest = -1;
-            for (int i = 0; i < NUM_KEYS; i++)
+            for (int i = 0; i < num_keys; i++)
                 if (keys[i].active) {
                     double kd = (posX - keys[i].x) * (posX - keys[i].x) + (posY - keys[i].y) * (posY - keys[i].y);
                     if (kd < PICKUP_DIST * PICKUP_DIST) { near_chest = i;
