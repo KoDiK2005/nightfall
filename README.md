@@ -47,6 +47,11 @@ and your mind frays quicker. How deep can you get?
 - **Stamina & stealth** — sprinting is fast but burns a stamina bar; run dry
   and you're stuck at a walk while it recovers. Walk to stay quiet, or dive
   into a **locker** (press `E`) to break line of sight and let it lose you.
+- **It hunts by sound** — noise leaves a trail the Stalker investigates even
+  when it never saw you: pounding feet as you run, a chest cracking open, a
+  match hissing alight. It heads for the sound and searches there, so a careless
+  noise pulls it in — but a well-placed one can lure it away. Its ears sharpen
+  the deeper you go, until a sound carries the whole width of the floor.
 - **Sanity** — your composure erodes in the dark, faster when the Stalker
   hunts you and worst of all when it has you in *sight*. As your mind frays
   the world answers: a breathing vignette closes in, the shadows bleed red,

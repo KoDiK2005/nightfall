@@ -89,6 +89,13 @@ static int    mon_state = AI_WANDER;
 static int    tgtX, tgtY;
 static double lastKnownX, lastKnownY;
 static double hunt_recalc = 0.0, search_time = 0.0;
+/* a lingering sound the monster can be lured toward: running feet, a cracked
+ * chest, a struck match. It investigates the loudest recent one even when it
+ * never saw or directly heard you -- so noise draws it, and you can bait it. */
+static double noiseX, noiseY, noise_t = 0.0;
+static void make_noise(double x, double y, double ttl) {
+    if (ttl >= noise_t) { noiseX = x; noiseY = y; noise_t = ttl; }
+}
 /* the floor's horror. Each plays differently:
  *   STALKER  — hunts by sight and sound, lunges up close (floors 1-3)
  *   LISTENER — blind; homes on any footstep, so freeze when it's near (4+)
@@ -1207,6 +1214,7 @@ static void reset_level(void) {
     whisper_timer = 8.0; event_timer = 14.0;
     mon_state = AI_WANDER; lastKnownX = posX; lastKnownY = posY;
     hunt_recalc = search_time = growl_timer = 0;
+    noise_t = 0.0;
     /* which horror stalks this floor — new kinds unlock with depth, with the
      * first sighting of each guaranteed on floors 4 and 7 to teach it. */
     if      (depth < 4)   mon_type = MON_STALKER;
@@ -1255,6 +1263,10 @@ static void update_monster(double dt) {
 static void update_ai(double dt, int moving, int sprinting) {
     double d = sqrt((posX - monX) * (posX - monX) + (posY - monY) * (posY - monY));
     int sensed = 0; mon_sees = 0;
+    if (noise_t > 0.0) noise_t -= dt;
+    /* running is loud: it keeps refreshing a trail at your feet that the
+     * monster will chase to, even from across the floor. Walking is silent. */
+    if (sprinting && moving && !hidden) make_noise(posX, posY, 1.3);
     /* low sanity = ragged panic breathing: the Stalker hears you from farther */
     double dread = 1.0 - sanity;
     double dd = (depth - 1) < 12 ? (depth - 1) : 12;         /* it grows keener with depth */
@@ -1306,6 +1318,21 @@ static void update_ai(double dt, int moving, int sprinting) {
                 if (ld < bestd) { bestd = ld; tx = (int)lockers[i].x; ty = (int)lockers[i].y; }
             }
             set_target(tx, ty);
+        }
+        /* investigate a fresh noise (running feet, a cracked chest, a match)
+         * within earshot — head to it and search there, even if it never sensed
+         * you directly. Its ears grow keener the deeper you go, so on lower
+         * floors a careless sound carries the width of the whole level.        */
+        double notice = 11.0 + dd * 0.9;
+        if (noise_t > 0.0 && mon_type != MON_WATCHER &&
+            fabs(noiseX - monX) + fabs(noiseY - monY) < notice) {
+            int nx = (int)noiseX, ny = (int)noiseY;
+            if (nx != (int)monX || ny != (int)monY) {
+                if (mon_state != AI_SEARCH || tgtX != nx || tgtY != ny) {
+                    mon_state = AI_SEARCH; set_target(nx, ny);
+                }
+                if (search_time < 3.0) search_time = 3.0;
+            }
         }
         if (mon_state == AI_SEARCH) {
             search_time -= dt;
@@ -1897,6 +1924,7 @@ static void new_game(void) {
 static void open_chest(int i) {
     if (i < 0 || i >= num_keys || !keys[i].active) return;
     keys[i].active = 0; keys_left--;
+    make_noise(keys[i].x, keys[i].y, 6.0);       /* the lid's crack carries far */
     if (snd_creak) { Mix_VolumeChunk(snd_creak, 110); Mix_PlayChannel(CH_CREAK, snd_creak, 0); }
     if (snd_pickup) Mix_PlayChannel(3, snd_pickup, 0);
     if (nvisions > 0) {                          /* the screamer needs a photo */
@@ -2861,6 +2889,7 @@ int main(int argc, char **argv) {
                 else if (k == SDL_SCANCODE_F && game_state == ST_PLAY && !hidden &&
                          match_count > 0 && match_burn <= 0.0) {
                     match_count--; match_burn = MATCH_DUR;
+                    make_noise(posX, posY, 2.0);           /* the strike hisses */
                     if (snd_step) { Mix_VolumeChunk(snd_step, 90); Mix_PlayChannel(2, snd_step, 0); }
                 }
             }
