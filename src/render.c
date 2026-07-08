@@ -11,6 +11,10 @@
 
 /* CPU-side procedural pixels, later uploaded as GL textures */
 uint32_t tex[3][TEX * TEX];         /* 0 wall, 1 floor, 2 ceiling     */
+/* высота стен/потолка в мировых юнитах -- 1.0 для обычного этажа
+ * подземелья; сюжетный режим поднимает её под двухэтажный дом (story.c),
+ * сбрасывается обратно на 1.0 при старте обычного бесконечного спуска. */
+float wall_h = 1.0f;
 uint32_t lockmetal[TEX * TEX];      /* opaque steel for locker boxes  */
 uint32_t brackmetal[TEX * TEX];     /* dark iron for torch brackets   */
 uint32_t spr_rgba[11][TEX * TEX];   /* 0 mon,1 key,2 down,3 loc,4 flame,5 note,6 up,7 chest,8 dust,9 match,10 rock */
@@ -799,10 +803,10 @@ void build_world_mesh(void) {
             /* +x neighbour open -> face on x+1 side facing -x, etc. World: (x, y_up, z=map y).
              * Tint each wall face by the room it faces into, so a room's walls
              * carry its colour. */
-            if (is_open(x + 1, y)) { tint_for(theme_at(x+1,y)); float a[3]={x+1,0,y}, b[3]={x+1,0,y+1}, c[3]={x+1,1,y+1}, d[3]={x+1,1,y}; push_quad(buf,&n,a,b,c,d,-1,0,0,1); }
-            if (is_open(x - 1, y)) { tint_for(theme_at(x-1,y)); float a[3]={x,0,y+1}, b[3]={x,0,y}, c[3]={x,1,y}, d[3]={x,1,y+1}; push_quad(buf,&n,a,b,c,d, 1,0,0,1); }
-            if (is_open(x, y + 1)) { tint_for(theme_at(x,y+1)); float a[3]={x+1,0,y+1}, b[3]={x,0,y+1}, c[3]={x,1,y+1}, d[3]={x+1,1,y+1}; push_quad(buf,&n,a,b,c,d,0,0,-1,1); }
-            if (is_open(x, y - 1)) { tint_for(theme_at(x,y-1)); float a[3]={x,0,y}, b[3]={x+1,0,y}, c[3]={x+1,1,y}, d[3]={x,1,y}; push_quad(buf,&n,a,b,c,d,0,0,1,1); }
+            if (is_open(x + 1, y)) { tint_for(theme_at(x+1,y)); float a[3]={x+1,0,y}, b[3]={x+1,0,y+1}, c[3]={x+1,wall_h,y+1}, d[3]={x+1,wall_h,y}; push_quad(buf,&n,a,b,c,d,-1,0,0,1); }
+            if (is_open(x - 1, y)) { tint_for(theme_at(x-1,y)); float a[3]={x,0,y+1}, b[3]={x,0,y}, c[3]={x,wall_h,y}, d[3]={x,wall_h,y+1}; push_quad(buf,&n,a,b,c,d, 1,0,0,1); }
+            if (is_open(x, y + 1)) { tint_for(theme_at(x,y+1)); float a[3]={x+1,0,y+1}, b[3]={x,0,y+1}, c[3]={x,wall_h,y+1}, d[3]={x+1,wall_h,y+1}; push_quad(buf,&n,a,b,c,d,0,0,-1,1); }
+            if (is_open(x, y - 1)) { tint_for(theme_at(x,y-1)); float a[3]={x,0,y}, b[3]={x+1,0,y}, c[3]={x+1,wall_h,y}, d[3]={x,wall_h,y}; push_quad(buf,&n,a,b,c,d,0,0,1,1); }
         }
     wallCount = n;
     /* floor — tinted by the room the cell sits in */
@@ -818,7 +822,7 @@ void build_world_mesh(void) {
         for (int x = 0; x < MW; x++) {
             int th = theme_at(x, y);
             if (th == RM_LAWN || th == RM_ROAD) continue;
-            if (is_open(x, y)) { tint_for(th); float a[3]={x,1,y+1}, b[3]={x+1,1,y+1}, c[3]={x+1,1,y}, d[3]={x,1,y}; push_quad(buf,&n,a,b,c,d,0,-1,0,1); }
+            if (is_open(x, y)) { tint_for(th); float a[3]={x,wall_h,y+1}, b[3]={x+1,wall_h,y+1}, c[3]={x+1,wall_h,y}, d[3]={x,wall_h,y}; push_quad(buf,&n,a,b,c,d,0,-1,0,1); }
         }
     ceilCount = n - ceilStart;
     /* locker cabinets + altar pedestals + the descent door (all iron/steel, untinted) */

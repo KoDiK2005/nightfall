@@ -149,7 +149,7 @@ int main(int argc, char **argv) {
     snd_shrine  = Mix_LoadWAV("assets/shrine.wav");
     snd_thud    = Mix_LoadWAV("assets/thud.wav");
     snd_door    = Mix_LoadWAV("assets/damn-why-did-i-come-here.wav");
-    snd_story_l1_denial = Mix_LoadWAV("assets/story_l1_denial_ambient.wav");  /* заглушка -- файла пока нет */
+    snd_story_l1_denial = Mix_LoadWAV("assets/Ambiant_Grust.mp3");
     if (!snd_ambient) { fprintf(stderr, "warning: assets not found — run 'make audio'\n"); nf_log("warning: assets not found -- run 'make audio'"); }
     if (snd_ambient) { Mix_Volume(0, 60); Mix_PlayChannel(0, snd_ambient, -1); }
     apply_master_volume();

@@ -244,9 +244,9 @@ void update_fear(double dt);
  * ========================================================================= */
 extern Mix_Chunk *snd_ambient, *snd_heart, *snd_scare, *snd_pickup, *snd_step, *snd_whisper;
 extern Mix_Chunk *snd_roar, *snd_growl, *snd_creak, *snd_shrine, *snd_thud, *snd_door;
-/* сюжетный режим: эмбиент на каждый этап принятия -- пока заглушка (файла
- * ещё нет, Mix_LoadWAV молча вернёт NULL и звук просто не заиграет; как
- * появится assets/story_l1_denial_ambient.wav, подхватится сам собой). */
+/* сюжетный режим: эмбиент этапа "Отрицание" (assets/Ambiant_Grust.mp3).
+ * Остальные этапы принятия получат свои файлы по мере готовности -- если
+ * файла нет, Mix_LoadWAV молча вернёт NULL и звук просто не заиграет. */
 extern Mix_Chunk *snd_story_l1_denial;
 extern double heart_timer, step_timer;
 
@@ -259,6 +259,7 @@ void play_positional(int channel, double srcX, double srcY);
  * 3D + post-process render passes.
  * ========================================================================= */
 extern uint32_t tex[3][TEX * TEX];         /* 0 wall, 1 floor, 2 ceiling     */
+extern float wall_h;                       /* высота стен/потолка в мировых юнитах */
 extern uint32_t lockmetal[TEX * TEX];
 extern uint32_t brackmetal[TEX * TEX];
 extern uint32_t spr_rgba[11][TEX * TEX];

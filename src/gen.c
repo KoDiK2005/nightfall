@@ -322,6 +322,7 @@ static void generate_props(void) {
 }
 
 static void reset_level(void) {
+    wall_h = 1.0f;   /* сюжетный режим мог поднять стены под двухэтажный дом */
     /* deeper floors demand more keys (more chests to crack, more ground to
      * cover): 3 up top, one more every three floors, capped at MAX_KEYS. */
     num_keys = 3 + (depth - 1) / 3;
