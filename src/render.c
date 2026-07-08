@@ -301,6 +301,33 @@ void build_sprites(void) {
             else if (line) put_spr(5, x, y, pack(90, 80, 60), 2);
             else put_spr(5, x, y, pack(210, 200, 170), 2);
         }
+    /* 6: MOTHER — сюжетный режим, этап "Отрицание": силуэт в платье, руки
+     * скрещены, и вместо лица -- гладкое бледное пятно без черт. У неё
+     * никогда нет настроения; лицо ей просто ни к чему.                 */
+    for (int y = 0; y < TEX; y++)
+        for (int x = 0; x < TEX; x++) {
+            double nx = x - 32.0;
+            int part = 0;                                  /* 1 = платье, 2 = лицо-пятно */
+            /* голова -- гладкий бледный овал, без глаз и рта */
+            double hy = y - 10.0, he = (nx * nx) / (7.0 * 7.0) + (hy * hy) / (8.5 * 8.5);
+            if (he < 1.0) part = 2;
+            /* шея */
+            if (y >= 17 && y <= 19 && fabs(nx) < 3.0) part = part ? part : 1;
+            /* платье -- расширяется книзу, в пол */
+            if (y >= 19 && y <= 62) {
+                double tt = (y - 19) / 43.0, hw = 8.0 + tt * 13.0;
+                if (fabs(nx) < hw) part = part ? part : 1;
+            }
+            /* скрещенные руки на груди -- тёмная горизонтальная полоса */
+            if (y >= 26 && y <= 32 && fabs(nx) < 11.0) part = part ? part : 1;
+            if (part == 1) {
+                int v = 18 + (int)(frand() * 5);
+                put_spr(6, x, y, pack(v, (int)(v * 0.85), (int)(v * 0.95)), 1);   /* тёмное платье */
+            } else if (part == 2) {
+                int v = 150 + (int)(frand() * 12);
+                put_spr(6, x, y, pack(v, (int)(v * 0.94), (int)(v * 0.90)), 2);   /* бледное пятно вместо лица */
+            }
+        }
     /* 7: CHEST — a hunched iron-bound coffer, domed lid, heavy padlock. The
      * key you need is locked inside; opening it is the fright. */
     for (int y = 0; y < TEX; y++)
@@ -679,6 +706,8 @@ static void add_torch(float *buf, int *n, double tx, double tz, double dix, doub
              (float)(tz + diz * (TORCH_REACH + 0.03)), 0.055f);
 }
 
+static int theme_at(int x, int y);   /* объявлена ниже (theme_at), нужна раньше в place_torches */
+
 /* Evenly scatter wall torches (Poisson-disc): shuffle every wall-adjacent
  * cell, then place a torch only where none is already within TORCH_SPACING.
  * Trying every candidate guarantees full coverage (no cell is more than
@@ -692,6 +721,10 @@ static void place_torches(void) {
     for (int y = 1; y < MH - 1; y++)
         for (int x = 1; x < MW - 1; x++) {
             if (!is_open(x, y)) continue;
+            /* сюжетный режим: факелы на открытой лужайке/дороге не нужны --
+             * это дальний край пустоты, а не стена, которую стоит подсвечивать */
+            int th = theme_at(x, y);
+            if (th == RM_LAWN || th == RM_ROAD) continue;
             for (int k = 0; k < 4; k++)
                 if (!is_open(x + dx[k], y + dy[k])) { cx[nc] = x; cy[nc] = y; nc++; break; }
         }
@@ -747,6 +780,8 @@ static void tint_for(int theme) {
         case RM_CELLS:    c[0]=1.08f; c[1]=0.62f; c[2]=0.58f; break;  /* bloodied rust */
         case RM_EXIT:     c[0]=0.58f; c[1]=1.18f; c[2]=0.72f; break;  /* sickly green  */
         case RM_ENTRANCE: c[0]=1.00f; c[1]=0.90f; c[2]=0.74f; break;  /* warm hearth   */
+        case RM_LAWN:     c[0]=0.55f; c[1]=1.05f; c[2]=0.55f; break;  /* green lawn    */
+        case RM_ROAD:     c[0]=0.62f; c[1]=0.62f; c[2]=0.66f; break;  /* grey asphalt  */
         default:          c[0]=0.82f; c[1]=0.84f; c[2]=0.94f; break;  /* corridor grey */
     }
     cur_tint[0]=c[0]; cur_tint[1]=c[1]; cur_tint[2]=c[2];
@@ -776,11 +811,15 @@ void build_world_mesh(void) {
         for (int x = 0; x < MW; x++)
             if (is_open(x, y)) { tint_for(theme_at(x,y)); float a[3]={x,0,y}, b[3]={x+1,0,y}, c[3]={x+1,0,y+1}, d[3]={x,0,y+1}; push_quad(buf,&n,a,b,c,d,0,1,0,1); }
     floorCount = n - floorStart;
-    /* ceiling — same zone colour */
+    /* ceiling — same zone colour. Lawn/road cells skip it: no ceiling reads
+     * as open sky over the void the memory-house sits in. */
     ceilStart = n;
     for (int y = 0; y < MH; y++)
-        for (int x = 0; x < MW; x++)
-            if (is_open(x, y)) { tint_for(theme_at(x,y)); float a[3]={x,1,y+1}, b[3]={x+1,1,y+1}, c[3]={x+1,1,y}, d[3]={x,1,y}; push_quad(buf,&n,a,b,c,d,0,-1,0,1); }
+        for (int x = 0; x < MW; x++) {
+            int th = theme_at(x, y);
+            if (th == RM_LAWN || th == RM_ROAD) continue;
+            if (is_open(x, y)) { tint_for(th); float a[3]={x,1,y+1}, b[3]={x+1,1,y+1}, c[3]={x+1,1,y}, d[3]={x,1,y}; push_quad(buf,&n,a,b,c,d,0,-1,0,1); }
+        }
     ceilCount = n - ceilStart;
     /* locker cabinets + altar pedestals + the descent door (all iron/steel, untinted) */
     cur_tint[0] = cur_tint[1] = cur_tint[2] = 1.0f;
@@ -1130,6 +1169,10 @@ void render_3d(void) {
                        0.72 * loom, (mh + bob) * loom, 0.0, 0, mvp);
         spr_tint[0] = spr_tint[1] = spr_tint[2] = 1.0f;         /* reset for other sprites */
     }
+    /* сюжетный режим: мать появляется в дверях на сцене "Отрицание" --
+     * стоит неподвижно, никакой AI, просто заскриптованное присутствие. */
+    if (story_mother_visible)
+        draw_billboard(story_motherX, story_motherY, 0.62, 1.08, 0.0, 6, mvp);
     /* the hallucinated Stalker: flickers in and out where it isn't really */
     if (phantom_t > 0.0 && ((int)(state_time * 22) % 3) != 0)
         draw_billboard(phantomX, phantomY, 0.66, 0.99, 0.0, 0, mvp);
@@ -1156,19 +1199,14 @@ void render_3d(void) {
             double px = notes[i].x + noteWX[i] * 0.44, pz = notes[i].y + noteWY[i] * 0.44;
             draw_sprite_dir(px, pz, -noteWY[i], noteWX[i], 0.34, 0.40, 0.34, 5, mvp);
         }
-    /* сюжетный режим: воспоминания -- тот же спрайт "записки", свой массив */
-    for (int i = 0; i < story_note_count; i++)
-        if (story_notes[i].active) {
-            double px = story_notes[i].x + story_noteWX[i] * 0.44, pz = story_notes[i].y + story_noteWY[i] * 0.44;
-            draw_sprite_dir(px, pz, -story_noteWY[i], story_noteWX[i], 0.34, 0.40, 0.34, 5, mvp);
-        }
 
     /* additive glows: torch flames, and the door's portal light once open */
     glEnable(GL_BLEND);
     glBlendFunc(GL_ONE, GL_ONE);
     glDepthMask(GL_FALSE);
-    /* the open doorway breathes a soft green light you're drawn toward */
-    if (keys_left == 0) {
+    /* the open doorway breathes a soft green light you're drawn toward --
+     * that neon-portal look fits the dungeon's descent door, not a house */
+    if (keys_left == 0 && !story_mode) {
         double pulse = 0.6 + 0.22 * sin(state_time * 2.4);
         if (descend_t > 0) pulse = 1.1;                 /* flares as you step through */
         draw_billboard(exitX, exitY, 0.34 * pulse, 0.62 * pulse, 0.06, 2, mvp);

@@ -149,6 +149,7 @@ int main(int argc, char **argv) {
     snd_shrine  = Mix_LoadWAV("assets/shrine.wav");
     snd_thud    = Mix_LoadWAV("assets/thud.wav");
     snd_door    = Mix_LoadWAV("assets/damn-why-did-i-come-here.wav");
+    snd_story_l1_denial = Mix_LoadWAV("assets/story_l1_denial_ambient.wav");  /* заглушка -- файла пока нет */
     if (!snd_ambient) { fprintf(stderr, "warning: assets not found — run 'make audio'\n"); nf_log("warning: assets not found -- run 'make audio'"); }
     if (snd_ambient) { Mix_Volume(0, 60); Mix_PlayChannel(0, snd_ambient, -1); }
     apply_master_volume();
@@ -188,8 +189,11 @@ int main(int argc, char **argv) {
     if ((getenv("NIGHTFALL_AUTOPLAY") || shotpath) && !getenv("NIGHTFALL_SHOTTITLE")) { game_state = ST_PLAY; state_time = 0; }
     /* dev: jump straight into the story mode's first stage, skipping the title */
     if (getenv("NIGHTFALL_STORY")) { story_mode = 1; story_start_denial(); game_state = ST_PLAY; state_time = 0; }
-    /* dev screenshot: stand in front of a torch looking at it */
-    if (shotpath && torch_count > 0) {
+    /* dev: jump straight to the door threshold, to test the mother scene without walking there */
+    if (getenv("NIGHTFALL_STORYDOOR")) { posX = 14.5; posY = 13.6; }
+    /* dev screenshot: stand in front of a torch looking at it (skip with
+     * NIGHTFALL_SHOTSPAWN to instead capture the exact spawn view) */
+    if (shotpath && torch_count > 0 && !getenv("NIGHTFALL_SHOTSPAWN")) {
         int bi = 0;                                     /* first torch */
         double cx = torchX[bi] + torchNx[bi] * 0.48, cz = torchZ[bi] + torchNz[bi] * 0.48;
         double tx = -torchNz[bi], tz = torchNx[bi];     /* along the wall */
@@ -266,13 +270,6 @@ int main(int argc, char **argv) {
             double bx2 = nx - noteWX[0] * 1.6, bz2 = nz - noteWY[0] * 1.6;   /* step into the room */
             if (is_open((int)bx2, (int)bz2)) { posX = bx2; posY = bz2; }
             yaw = atan2(noteWY[0], noteWX[0]); pitch = -0.02;
-        }
-        if (getenv("NIGHTFALL_SHOWSNOTE") && story_note_count > 0) {  /* dev: face a story memory */
-            int si = atoi(getenv("NIGHTFALL_SHOWSNOTE"));
-            double nx = story_notes[si].x, nz = story_notes[si].y;
-            double bx2 = nx - story_noteWX[si] * 1.6, bz2 = nz - story_noteWY[si] * 1.6;
-            if (is_open((int)bx2, (int)bz2)) { posX = bx2; posY = bz2; }
-            yaw = atan2(story_noteWY[si], story_noteWX[si]); pitch = -0.02;
         }
         fprintf(stderr, "torches=%d\n", torch_count);
     }
@@ -363,7 +360,7 @@ int main(int argc, char **argv) {
                     game_state = ST_PLAY;
                 }
                 else if (k == SDL_SCANCODE_E && game_state == ST_PLAY && story_mode) {
-                    story_try_interact();
+                    story_try_interact();   /* пропустить текущую реплику (например, матери) */
                 }
                 else if (k == SDL_SCANCODE_E && game_state == ST_PLAY) {
                     if (hidden) hidden = 0;
@@ -422,7 +419,7 @@ int main(int argc, char **argv) {
                 if (ks[SDL_SCANCODE_LEFT])  yaw -= 1.8 * dt;
                 if (ks[SDL_SCANCODE_RIGHT]) yaw += 1.8 * dt;
                 double il = sqrt(ix * ix + iy * iy);
-                double tvx = 0, tvy = 0, target = want_run ? PLAYER_RUN : PLAYER_WALK;
+                double tvx = 0, tvy = 0, target = (want_run ? PLAYER_RUN : PLAYER_WALK) * story_speed_mult;
                 if (il > 1e-4) { ix /= il; iy /= il; tvx = ix * target; tvy = iy * target; }
                 /* ease velocity toward the target (quick to start, quicker to stop) */
                 double rate = (il > 1e-4 ? 11.0 : 14.0) * dt; if (rate > 1.0) rate = 1.0;
@@ -575,9 +572,7 @@ int main(int argc, char **argv) {
         if (game_state == ST_TITLE) draw_title();
         else if (game_state == ST_CAUGHT) draw_jumpscare();
         else if (game_state == ST_STORY_END) draw_story_end();
-        else if (game_state == ST_READING) {
-            if (story_mode) draw_story_reading(); else { draw_hud(); draw_note(); }
-        }
+        else if (game_state == ST_READING) { draw_hud(); draw_note(); }
         else if (game_state == ST_PAUSED)  draw_pause();
         else if (story_mode) {
             draw_story_hud();
@@ -625,6 +620,7 @@ int main(int argc, char **argv) {
     if (snd_shrine)  Mix_FreeChunk(snd_shrine);
     if (snd_thud)    Mix_FreeChunk(snd_thud);
     if (snd_door)    Mix_FreeChunk(snd_door);
+    if (snd_story_l1_denial) Mix_FreeChunk(snd_story_l1_denial);
     Mix_CloseAudio();
     SDL_GL_DeleteContext(ctx);
     SDL_DestroyWindow(win);

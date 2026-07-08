@@ -365,36 +365,23 @@ void draw_note(void) {
 
 /* ---------------------------------------------------------- сюжетный режим */
 /* Свой, урезанный HUD: без ключей/спичек/камней/рассудка -- в "Отрицании"
- * этого просто нет. Показывает только название стадии и счётчик
- * воспоминаний, плюс подсказку E у ближайшего и подсказку у двери-порога. */
+ * этого просто нет. Название этапа сверху, и всплывающие субтитры снизу
+ * по центру -- и для "вспомнил по пути", и для реплик матери (обе идут
+ * через story_subtitle_lines/story_subtitle_a, см. story.c). */
 void draw_story_hud(void) {
     char buf[48];
     snprintf(buf, sizeof(buf), "УРОВЕНЬ %d: СЕМЬЯ", story_level);
     draw_text(16, 16, 3, buf, pack(150, 170, 220));
     draw_text(16, 44, 2, "ЭТАП: ОТРИЦАНИЕ", pack(200, 150, 90));
-    snprintf(buf, sizeof(buf), "ВОСПОМИНАНИЯ %d/%d", story_notes_read, story_note_count);
-    draw_text(16, 68, 2, buf, pack(190, 180, 150));
 
-    if (story_near_note >= 0)
-        draw_text_c(SCREEN_H - 110, 3, "E - ВСПОМНИТЬ", pack(200, 190, 160));
-
-    if (keys_left == 0)
-        draw_text_c(SCREEN_H - 150, 3, "ДВЕРЬ - ВОЙДИ, ЧТОБЫ ИДТИ ДАЛЬШЕ", pack(90, 255, 150));
-}
-
-/* панель чтения воспоминания -- тот же вид, что у обычной lore-записки,
- * но текст берётся из story.c (story_get_reading_lines), не из NOTES[]. */
-void draw_story_reading(void) {
-    for (int i = 0; i < SCREEN_W * SCREEN_H; i++) fb[i] = packa(0, 0, 0, 150);
-    int pw = 560, ph = 300, px = (SCREEN_W - pw) / 2, py = (SCREEN_H - ph) / 2;
-    fill_rect(px, py, pw, ph, packa(24, 22, 18, 240));
-    fill_rect(px, py, pw, 4, packa(90, 80, 60, 255));
-    fill_rect(px, py + ph - 4, pw, 4, packa(90, 80, 60, 255));
-    draw_text_c(py + 26, 3, "ВОСПОМИНАНИЕ", pack(180, 160, 120));
-    const char **lines = story_get_reading_lines(reading_note);
-    int ty = py + 90;
-    if (lines) for (int i = 0; i < 6 && lines[i]; i++) { draw_text_c(ty, 3, lines[i], pack(210, 200, 175)); ty += 34; }
-    draw_text_c(py + ph - 34, 2, "E - ВЕРНУТЬСЯ", pack(130, 120, 100));
+    if (story_subtitle_lines) {
+        int a = (int)(255 * story_subtitle_a);
+        int ty = SCREEN_H - 190;
+        for (int i = 0; i < 4 && story_subtitle_lines[i]; i++) {
+            draw_text_c(ty, 3, story_subtitle_lines[i], packa(220, 210, 190, a));
+            ty += 34;
+        }
+    }
 }
 
 /* экран "этап пройден" -- заглушка до тех пор, пока не реализован Гнев */

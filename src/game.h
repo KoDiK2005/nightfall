@@ -82,7 +82,8 @@ enum { AI_HUNT, AI_SEARCH, AI_WANDER };
 enum { MON_STALKER, MON_LISTENER, MON_WATCHER };
 /* the floor is built from themed rectangular rooms joined by corridors,
  * instead of a featureless maze. Each room's theme decides what it holds. */
-enum { RM_ENTRANCE, RM_KEY, RM_STORAGE, RM_LIBRARY, RM_HALL, RM_EXIT, RM_CELLS };
+enum { RM_ENTRANCE, RM_KEY, RM_STORAGE, RM_LIBRARY, RM_HALL, RM_EXIT, RM_CELLS,
+       RM_LAWN, RM_ROAD };   /* сюжетный режим: открытая лужайка и дорога к дому (без потолка) */
 
 /* ---------------------------------------------------------------- typedefs */
 typedef struct { double x, y; int active; } Key;   /* active = chest still locked */
@@ -243,6 +244,10 @@ void update_fear(double dt);
  * ========================================================================= */
 extern Mix_Chunk *snd_ambient, *snd_heart, *snd_scare, *snd_pickup, *snd_step, *snd_whisper;
 extern Mix_Chunk *snd_roar, *snd_growl, *snd_creak, *snd_shrine, *snd_thud, *snd_door;
+/* сюжетный режим: эмбиент на каждый этап принятия -- пока заглушка (файла
+ * ещё нет, Mix_LoadWAV молча вернёт NULL и звук просто не заиграет; как
+ * появится assets/story_l1_denial_ambient.wav, подхватится сам собой). */
+extern Mix_Chunk *snd_story_l1_denial;
 extern double heart_timer, step_timer;
 
 void apply_master_volume(void);
@@ -304,16 +309,19 @@ void draw_sanity_fx(void);
 void draw_vision(void);
 void draw_screamer(void);
 void draw_story_hud(void);       /* HUD сюжетного режима (вместо draw_hud)      */
-void draw_story_reading(void);   /* панель чтения воспоминания (вместо draw_note) */
 void draw_story_end(void);       /* экран "этап пройден"                        */
 
 /* =========================================================================
  * story.c — сюжетный режим: рукописные (не процедурные) уровни, каждый —
  * отдельная психологическая травма, разбитая на 5 стадий принятия горя
  * (Кюблер-Росс): Отрицание, Гнев, Торги, Депрессия, Принятие.
- * Пока реализован только Уровень 1 / Этап "Отрицание".
+ * Пока реализован только Уровень 1 (семья) / Этап "Отрицание".
+ *
+ * Площадка уровня -- это воспоминание целиком: дом с лужайкой и беседкой,
+ * стоящий посреди пустоты (без потолка над лужайкой/дорогой -- см.
+ * RM_LAWN/RM_ROAD в build_world_mesh). Игрок появляется на проезжей части
+ * перед домом и идёт к двери; по пути всплывают три воспоминания.
  * ========================================================================= */
-#define STORY_MAX_NOTES 8   /* запас на будущие этапы; этап 1 использует 3 */
 
 /* стадии принятия горя -- один уровень сюжетки шагает по ним по порядку */
 enum { STORY_DENIAL, STORY_ANGER, STORY_BARGAINING, STORY_DEPRESSION, STORY_ACCEPTANCE };
@@ -322,18 +330,21 @@ extern int  story_mode;          /* 1, пока идёт сюжетный уро
 extern int  story_level;         /* номер уровня = номер травмы (пока только 1)          */
 extern int  story_stage;         /* текущая стадия из enum выше                          */
 
-/* воспоминания, разбросанные по уровню: подходишь, жмёшь E, читаешь мысль
- * героя. Переиспользует тип Note (x,y,active,text-индекс), но это отдельный
- * от обычных `notes[]` набор -- сюжетный режим не трогает эндлесс-массивы. */
-extern Note   story_notes[STORY_MAX_NOTES];
-extern double story_noteWX[STORY_MAX_NOTES], story_noteWY[STORY_MAX_NOTES];
-extern int    story_note_count;      /* сколько воспоминаний активно на этом этапе */
-extern int    story_notes_read;      /* сколько из них уже прочитано               */
-extern int    story_near_note;       /* индекс ближайшего в радиусе E, иначе -1    */
+extern double story_speed_mult;  /* множитель скорости шага (медленнее по пути к дому) */
+
+/* мать: заскриптованное появление в дверях, без ИИ -- просто стоит и отчитывает */
+extern int    story_mother_visible;
+extern double story_motherX, story_motherY;
+
+/* всплывающие субтитры -- и для "вспомнил" по пути, и для реплик матери.
+ * До 4 строк, формат как у NOTES (NULL обрывает список); NULL целиком,
+ * когда сейчас ничего не показывается. story_subtitle_a -- альфа 0..1
+ * для затухания (задаёт hud.c). */
+extern const char **story_subtitle_lines;
+extern double        story_subtitle_a;
 
 void story_start_denial(void);   /* собрать Уровень 1 / Этап "Отрицание"        */
-void story_update(double dt);    /* движение уже сделано снаружи -- тут триггеры */
-void story_try_interact(void);   /* обработка E: открыть/прочитать воспоминание */
-const char **story_get_reading_lines(int text_id);   /* текст для draw_story_reading */
+void story_update(double dt);    /* фазы этапа: подход к дому -> сцена с матерью */
+void story_try_interact(void);   /* E во время реплики матери -- пропустить её  */
 
 #endif

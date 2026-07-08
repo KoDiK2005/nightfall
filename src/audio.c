@@ -7,6 +7,7 @@
 
 Mix_Chunk *snd_ambient, *snd_heart, *snd_scare, *snd_pickup, *snd_step, *snd_whisper;
 Mix_Chunk *snd_roar, *snd_growl, *snd_creak, *snd_shrine, *snd_thud, *snd_door;
+Mix_Chunk *snd_story_l1_denial;   /* сюжетный режим: эмбиент этапа (заглушка) */
 double heart_timer = 0.0, step_timer = 0.0;
 
 /* Master volume: available since SDL_mixer 2.6. On older libs (some distros)
