@@ -1111,7 +1111,7 @@ void render_3d(void) {
     glBindTexture(GL_TEXTURE_2D, texBracket); glDrawArrays(GL_TRIANGLES, brkStart, brkCount);
 
     /* opaque-ish sprites (billboards) — depth tested, alpha discarded */
-    if (!hidden) {
+    if (!hidden && !story_mode) {   /* сюжетный режим (пока) без монстра */
         /* The Stalker: tall & gaunt, filling the corridor height, with a slow
          * uneasy sway and bob so it never reads as a static post. When it has
          * your scent and closes in it rears up — looming bigger as it lunges. */
@@ -1155,6 +1155,12 @@ void render_3d(void) {
             /* pinned flat to the wall: sit on the wall face, tangent along it */
             double px = notes[i].x + noteWX[i] * 0.44, pz = notes[i].y + noteWY[i] * 0.44;
             draw_sprite_dir(px, pz, -noteWY[i], noteWX[i], 0.34, 0.40, 0.34, 5, mvp);
+        }
+    /* сюжетный режим: воспоминания -- тот же спрайт "записки", свой массив */
+    for (int i = 0; i < story_note_count; i++)
+        if (story_notes[i].active) {
+            double px = story_notes[i].x + story_noteWX[i] * 0.44, pz = story_notes[i].y + story_noteWY[i] * 0.44;
+            draw_sprite_dir(px, pz, -story_noteWY[i], story_noteWX[i], 0.34, 0.40, 0.34, 5, mvp);
         }
 
     /* additive glows: torch flames, and the door's portal light once open */

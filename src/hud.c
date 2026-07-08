@@ -363,6 +363,51 @@ void draw_note(void) {
     draw_text_c(py + ph - 34, 2, "E - ПОЛОЖИТЬ ОБРАТНО", pack(130, 120, 100));
 }
 
+/* ---------------------------------------------------------- сюжетный режим */
+/* Свой, урезанный HUD: без ключей/спичек/камней/рассудка -- в "Отрицании"
+ * этого просто нет. Показывает только название стадии и счётчик
+ * воспоминаний, плюс подсказку E у ближайшего и подсказку у двери-порога. */
+void draw_story_hud(void) {
+    char buf[48];
+    snprintf(buf, sizeof(buf), "УРОВЕНЬ %d: СЕМЬЯ", story_level);
+    draw_text(16, 16, 3, buf, pack(150, 170, 220));
+    draw_text(16, 44, 2, "ЭТАП: ОТРИЦАНИЕ", pack(200, 150, 90));
+    snprintf(buf, sizeof(buf), "ВОСПОМИНАНИЯ %d/%d", story_notes_read, story_note_count);
+    draw_text(16, 68, 2, buf, pack(190, 180, 150));
+
+    if (story_near_note >= 0)
+        draw_text_c(SCREEN_H - 110, 3, "E - ВСПОМНИТЬ", pack(200, 190, 160));
+
+    if (keys_left == 0)
+        draw_text_c(SCREEN_H - 150, 3, "ДВЕРЬ - ВОЙДИ, ЧТОБЫ ИДТИ ДАЛЬШЕ", pack(90, 255, 150));
+}
+
+/* панель чтения воспоминания -- тот же вид, что у обычной lore-записки,
+ * но текст берётся из story.c (story_get_reading_lines), не из NOTES[]. */
+void draw_story_reading(void) {
+    for (int i = 0; i < SCREEN_W * SCREEN_H; i++) fb[i] = packa(0, 0, 0, 150);
+    int pw = 560, ph = 300, px = (SCREEN_W - pw) / 2, py = (SCREEN_H - ph) / 2;
+    fill_rect(px, py, pw, ph, packa(24, 22, 18, 240));
+    fill_rect(px, py, pw, 4, packa(90, 80, 60, 255));
+    fill_rect(px, py + ph - 4, pw, 4, packa(90, 80, 60, 255));
+    draw_text_c(py + 26, 3, "ВОСПОМИНАНИЕ", pack(180, 160, 120));
+    const char **lines = story_get_reading_lines(reading_note);
+    int ty = py + 90;
+    if (lines) for (int i = 0; i < 6 && lines[i]; i++) { draw_text_c(ty, 3, lines[i], pack(210, 200, 175)); ty += 34; }
+    draw_text_c(py + ph - 34, 2, "E - ВЕРНУТЬСЯ", pack(130, 120, 100));
+}
+
+/* экран "этап пройден" -- заглушка до тех пор, пока не реализован Гнев */
+void draw_story_end(void) {
+    for (int y = 0; y < SCREEN_H; y++)
+        for (int x = 0; x < SCREEN_W; x++) fb[y * SCREEN_W + x] = pack(8, 7, 9);
+    draw_text_c(200, 5, "ЭТАП: ОТРИЦАНИЕ - ПРОЙДЕН", pack(200, 150, 90));
+    draw_text_c(270, 3, "ТЫ ГОВОРИШЬ СЕБЕ, ЧТО ВСЁ В ПОРЯДКЕ.", pack(170, 170, 180));
+    draw_text_c(300, 3, "НО ЧТО-ТО ВНУТРИ УЖЕ ТРЕСКАЕТСЯ.", pack(170, 170, 180));
+    draw_text_c(360, 2, "ДАЛЬШЕ: ГНЕВ (В РАЗРАБОТКЕ)", pack(120, 120, 140));
+    if ((int)(state_time * 2) % 2) draw_text_c(420, 3, "ENTER / ESC - В ГЛАВНОЕ МЕНЮ", pack(220, 220, 220));
+}
+
 /* the pause menu: dim the frozen scene and offer sensitivity + volume sliders */
 void draw_pause(void) {
     for (int i = 0; i < SCREEN_W * SCREEN_H; i++) fb[i] = packa(0, 0, 0, 170);
@@ -519,7 +564,13 @@ void draw_title(void) {
     draw_text_c(150, 9, "NIGHTFALL", red);
     draw_text_c(270, 3, "ЧТО-ТО В ТЕМНОТЕ ПРОСНУЛОСЬ.", pack(150, 150, 160));
     draw_text_c(305, 3, "СОБЕРИ КЛЮЧИ. НАЙДИ ДВЕРЬ.", pack(120, 120, 130));
-    if ((int)(state_time * 2) % 2) draw_text_c(380, 4, "НАЖМИ ENTER", pack(220, 220, 220));
+    /* выбор режима: W/S переключают title_sel, Enter подтверждает (main.c) */
+    uint32_t on = pack(220, 220, 220), off = pack(120, 120, 130);
+    draw_text_c(370, 4, title_sel == 0 ? "> БЕСКОНЕЧНЫЙ СПУСК <" : "БЕСКОНЕЧНЫЙ СПУСК",
+                title_sel == 0 ? on : off);
+    draw_text_c(410, 4, title_sel == 1 ? "> СЮЖЕТ <" : "СЮЖЕТ",
+                title_sel == 1 ? on : off);
+    if ((int)(state_time * 2) % 2) draw_text_c(452, 3, "НАЖМИ ENTER", pack(220, 220, 220));
     draw_text_c(SCREEN_H - 84, 2, "КЛАВИШИ ПО РАСКЛАДКЕ - ЕСЛИ НЕ РАБОТАЮТ, ВКЛЮЧИ ENG", pack(150, 120, 60));
     draw_text_c(SCREEN_H - 60, 2, "WASD - ХОДИТЬ   МЫШЬ - ОБЗОР   SHIFT - БЕГ   E - ПРЯТАТЬСЯ   ESC - ВЫХОД", pack(90, 90, 100));
 }

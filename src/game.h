@@ -72,7 +72,8 @@
 #define CH_SHRINE 9              /* looping shrine hum, volume by proximity */
 
 /* ------------------------------------------------------------------- enums */
-enum { ST_TITLE, ST_PLAY, ST_CAUGHT, ST_WIN, ST_READING, ST_PAUSED };
+/* ST_STORY_END — экран завершения этапа в сюжетном режиме (см. story.c) */
+enum { ST_TITLE, ST_PLAY, ST_CAUGHT, ST_WIN, ST_READING, ST_PAUSED, ST_STORY_END };
 enum { AI_HUNT, AI_SEARCH, AI_WANDER };
 /* the floor's horror. Each plays differently:
  *   STALKER  — hunts by sight and sound, lunges up close (floors 1-3)
@@ -111,6 +112,7 @@ typedef struct { int w, h; unsigned char *px; } Vision;   /* RGBA bytes */
 extern double sens_mult;         /* mouse-look sensitivity multiplier   */
 extern int    master_vol;        /* master audio volume 0..128          */
 extern int    pause_sel;         /* highlighted row in the pause menu    */
+extern int    title_sel;         /* 0 = бесконечный спуск, 1 = сюжет     */
 
 extern char   map[MH][MW + 1];
 extern double posX, posY;
@@ -211,6 +213,7 @@ int  is_open(int x, int y);
 int  has_los(double ax, double ay, double bx, double by);
 void set_target(int cx, int cy);
 void pick_wander(void);
+int  wall_dir(int x, int y, int *wx, int *wy);   /* какая соседняя клетка -- стена */
 void new_game(void);
 void open_chest(int i);
 
@@ -300,5 +303,37 @@ void draw_hidden_overlay(void);
 void draw_sanity_fx(void);
 void draw_vision(void);
 void draw_screamer(void);
+void draw_story_hud(void);       /* HUD сюжетного режима (вместо draw_hud)      */
+void draw_story_reading(void);   /* панель чтения воспоминания (вместо draw_note) */
+void draw_story_end(void);       /* экран "этап пройден"                        */
+
+/* =========================================================================
+ * story.c — сюжетный режим: рукописные (не процедурные) уровни, каждый —
+ * отдельная психологическая травма, разбитая на 5 стадий принятия горя
+ * (Кюблер-Росс): Отрицание, Гнев, Торги, Депрессия, Принятие.
+ * Пока реализован только Уровень 1 / Этап "Отрицание".
+ * ========================================================================= */
+#define STORY_MAX_NOTES 8   /* запас на будущие этапы; этап 1 использует 3 */
+
+/* стадии принятия горя -- один уровень сюжетки шагает по ним по порядку */
+enum { STORY_DENIAL, STORY_ANGER, STORY_BARGAINING, STORY_DEPRESSION, STORY_ACCEPTANCE };
+
+extern int  story_mode;          /* 1, пока идёт сюжетный уровень (не бесконечный спуск) */
+extern int  story_level;         /* номер уровня = номер травмы (пока только 1)          */
+extern int  story_stage;         /* текущая стадия из enum выше                          */
+
+/* воспоминания, разбросанные по уровню: подходишь, жмёшь E, читаешь мысль
+ * героя. Переиспользует тип Note (x,y,active,text-индекс), но это отдельный
+ * от обычных `notes[]` набор -- сюжетный режим не трогает эндлесс-массивы. */
+extern Note   story_notes[STORY_MAX_NOTES];
+extern double story_noteWX[STORY_MAX_NOTES], story_noteWY[STORY_MAX_NOTES];
+extern int    story_note_count;      /* сколько воспоминаний активно на этом этапе */
+extern int    story_notes_read;      /* сколько из них уже прочитано               */
+extern int    story_near_note;       /* индекс ближайшего в радиусе E, иначе -1    */
+
+void story_start_denial(void);   /* собрать Уровень 1 / Этап "Отрицание"        */
+void story_update(double dt);    /* движение уже сделано снаружи -- тут триггеры */
+void story_try_interact(void);   /* обработка E: открыть/прочитать воспоминание */
+const char **story_get_reading_lines(int text_id);   /* текст для draw_story_reading */
 
 #endif

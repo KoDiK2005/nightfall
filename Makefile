@@ -45,7 +45,7 @@ endif
 
 # real-3D OpenGL build (primary): main.c + its modules (gen/ai/audio/render/hud),
 # sharing state via game.h. -lz is for the PNG "vision" image decoder.
-SRCS := src/main.c src/gen.c src/ai.c src/audio.c src/render.c src/hud.c src/log.c
+SRCS := src/main.c src/gen.c src/ai.c src/audio.c src/render.c src/hud.c src/log.c src/story.c
 $(BIN)$(EXE): checkdeps $(SRCS) src/game.h
 	$(CC) $(CFLAGS) $(SDL_CF) $(SRCS) -o $(BIN)$(EXE) $(LDFLAGS) $(GL_LIBS) -lz
 

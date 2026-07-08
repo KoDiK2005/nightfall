@@ -27,6 +27,7 @@
 double sens_mult = 1.0;          /* mouse-look sensitivity multiplier   */
 int    master_vol = 100;         /* master audio volume 0..128          */
 int    pause_sel = 0;            /* highlighted row in the pause menu    */
+int    title_sel = 0;            /* 0 = бесконечный спуск, 1 = сюжет     */
 double log_copy_flash = 0.0;     /* >0 while the pause menu shows a copy result */
 int    log_copy_ok = 0;
 
@@ -185,6 +186,8 @@ int main(int argc, char **argv) {
     const char *shotpath = getenv("NIGHTFALL_SHOT");
     int shot_frame = 0;
     if ((getenv("NIGHTFALL_AUTOPLAY") || shotpath) && !getenv("NIGHTFALL_SHOTTITLE")) { game_state = ST_PLAY; state_time = 0; }
+    /* dev: jump straight into the story mode's first stage, skipping the title */
+    if (getenv("NIGHTFALL_STORY")) { story_mode = 1; story_start_denial(); game_state = ST_PLAY; state_time = 0; }
     /* dev screenshot: stand in front of a torch looking at it */
     if (shotpath && torch_count > 0) {
         int bi = 0;                                     /* first torch */
@@ -264,6 +267,13 @@ int main(int argc, char **argv) {
             if (is_open((int)bx2, (int)bz2)) { posX = bx2; posY = bz2; }
             yaw = atan2(noteWY[0], noteWX[0]); pitch = -0.02;
         }
+        if (getenv("NIGHTFALL_SHOWSNOTE") && story_note_count > 0) {  /* dev: face a story memory */
+            int si = atoi(getenv("NIGHTFALL_SHOWSNOTE"));
+            double nx = story_notes[si].x, nz = story_notes[si].y;
+            double bx2 = nx - story_noteWX[si] * 1.6, bz2 = nz - story_noteWY[si] * 1.6;
+            if (is_open((int)bx2, (int)bz2)) { posX = bx2; posY = bz2; }
+            yaw = atan2(story_noteWY[si], story_noteWX[si]); pitch = -0.02;
+        }
         fprintf(stderr, "torches=%d\n", torch_count);
     }
     Uint64 prev = SDL_GetPerformanceCounter();
@@ -290,7 +300,14 @@ int main(int argc, char **argv) {
                 if (k == SDL_SCANCODE_ESCAPE) {
                     if (game_state == ST_PLAY)   { game_state = ST_PAUSED; pause_sel = 0; SDL_SetRelativeMouseMode(SDL_FALSE); }
                     else if (game_state == ST_PAUSED) { game_state = ST_PLAY; SDL_SetRelativeMouseMode(SDL_TRUE); }
+                    else if (game_state == ST_STORY_END) { game_state = ST_TITLE; story_mode = 0; }
                     else running = 0;
+                }
+                /* выбор режима на главном экране: W/S переключают пункт меню */
+                if (game_state == ST_TITLE &&
+                    (k == SDL_SCANCODE_W || k == SDL_SCANCODE_UP ||
+                     k == SDL_SCANCODE_S || k == SDL_SCANCODE_DOWN)) {
+                    title_sel = title_sel ? 0 : 1;
                 }
                 /* pause-menu controls */
                 if (game_state == ST_PAUSED) {
@@ -323,16 +340,30 @@ int main(int argc, char **argv) {
                 }
                 if ((k == SDL_SCANCODE_RETURN || k == SDL_SCANCODE_KP_ENTER ||
                      k == SDL_SCANCODE_SPACE) && game_state == ST_TITLE) {
-                    depth = 1; match_count = 2; rock_count = 2; new_game(); game_state = ST_PLAY; state_time = 0;
+                    if (title_sel == 1) {
+                        story_mode = 1; story_start_denial();
+                    } else {
+                        story_mode = 0;
+                        depth = 1; match_count = 2; rock_count = 2; new_game();
+                    }
+                    game_state = ST_PLAY; state_time = 0;
                 }
                 if (k == SDL_SCANCODE_R && (game_state == ST_CAUGHT || game_state == ST_WIN)) {
                     depth = 1; match_count = 2; rock_count = 2; new_game(); game_state = ST_PLAY; state_time = 0;
+                }
+                /* экран "этап пройден" -- Enter тоже возвращает в меню */
+                if ((k == SDL_SCANCODE_RETURN || k == SDL_SCANCODE_KP_ENTER ||
+                     k == SDL_SCANCODE_SPACE) && game_state == ST_STORY_END) {
+                    game_state = ST_TITLE; story_mode = 0;
                 }
                 /* dismiss a note you're reading -- else-if so the same E press
                  * doesn't fall through and immediately re-open it. */
                 if ((k == SDL_SCANCODE_E || k == SDL_SCANCODE_SPACE ||
                      k == SDL_SCANCODE_RETURN) && game_state == ST_READING) {
                     game_state = ST_PLAY;
+                }
+                else if (k == SDL_SCANCODE_E && game_state == ST_PLAY && story_mode) {
+                    story_try_interact();
                 }
                 else if (k == SDL_SCANCODE_E && game_state == ST_PLAY) {
                     if (hidden) hidden = 0;
@@ -420,6 +451,11 @@ int main(int argc, char **argv) {
             if (stamina <= 0.02) exhausted = 1;
             if (stamina >= 0.30) exhausted = 0;
 
+            if (story_mode) {
+                /* сюжетный режим: своя, гораздо более простая логика --
+                 * без монстра, сундуков, спичек и рассудка. См. story.c. */
+                story_update(dt);
+            } else {
             near_locker = -1;
             for (int i = 0; i < NUM_LOCKERS; i++)
                 if (fabs(posX - lockers[i].x) + fabs(posY - lockers[i].y) < HIDE_DIST) { near_locker = i; break; }
@@ -514,13 +550,14 @@ int main(int argc, char **argv) {
                 if (depth > best_depth) best_depth = depth;
                 nf_log("caught by mon_type=%d at depth=%d", mon_type, depth);
                 if (snd_scare) { Mix_VolumeChunk(snd_scare, 128); Mix_PlayChannel(4, snd_scare, 0); } }
+            }
             update_audio(dt, moving);
         } else {
             update_audio(dt, 0);
         }
 
         /* ---- render: 3D scene, then 2D overlay ---- */
-        if (game_state == ST_TITLE || game_state == ST_CAUGHT) {
+        if (game_state == ST_TITLE || game_state == ST_CAUGHT || game_state == ST_STORY_END) {
             glViewport(0, 0, winW, winH);
             glClearColor(0, 0, 0, 1); glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         } else {
@@ -537,8 +574,14 @@ int main(int argc, char **argv) {
         ov_clear();
         if (game_state == ST_TITLE) draw_title();
         else if (game_state == ST_CAUGHT) draw_jumpscare();
-        else if (game_state == ST_READING) { draw_hud(); draw_note(); }
+        else if (game_state == ST_STORY_END) draw_story_end();
+        else if (game_state == ST_READING) {
+            if (story_mode) draw_story_reading(); else { draw_hud(); draw_note(); }
+        }
         else if (game_state == ST_PAUSED)  draw_pause();
+        else if (story_mode) {
+            draw_story_hud();
+        }
         else {
             draw_sanity_fx();
             if (hidden) draw_hidden_overlay();

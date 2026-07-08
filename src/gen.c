@@ -37,7 +37,7 @@ int is_open(int x, int y) { return x >= 0 && x < MW && y >= 0 && y < MH && map[y
 
 /* find which cardinal neighbour of (x,y) is a wall (so a prop/note/locker can
  * back onto it). Returns 1 and sets *wx,*wy to that direction, else 0. */
-static int wall_dir(int x, int y, int *wx, int *wy) {
+int wall_dir(int x, int y, int *wx, int *wy) {
     static const int wdx[4] = {1, -1, 0, 0}, wdy[4] = {0, 0, 1, -1};
     for (int k = 0; k < 4; k++)
         if (!is_open(x + wdx[k], y + wdy[k])) { *wx = wdx[k]; *wy = wdy[k]; return 1; }
