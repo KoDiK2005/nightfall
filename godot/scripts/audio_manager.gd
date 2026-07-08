@@ -31,23 +31,24 @@ func _on_state_changed(new_state: GameState.State) -> void:
 		ambient.stop()
 
 func _process(delta: float) -> void:
-	if GameState.state != GameState.State.PLAY or player == null or player.monster == null:
+	if GameState.state != GameState.State.PLAY or player == null:
 		return
 
-	var hunting: bool = player.monster.state == player.monster.State.HUNT
-	var d: float = Vector2(player.position.x, player.position.z) \
-		.distance_to(Vector2(player.monster.position.x, player.monster.position.z))
+	# сердцебиение -- только когда на уровне есть монстр (в сюжетном
+	# "Отрицании" его нет), чаще и громче по мере его приближения/тревоги
+	if player.monster != null:
+		var hunting: bool = player.monster.state == player.monster.State.HUNT
+		var d: float = Vector2(player.position.x, player.position.z) \
+			.distance_to(Vector2(player.monster.position.x, player.monster.position.z))
+		heart_timer -= delta
+		if heart_timer <= 0.0:
+			var closeness: float = clamp(1.0 - d / 10.0, 0.0, 1.0)
+			var urgency: float = closeness + (0.4 if hunting else 0.0)
+			heartbeat.volume_db = linear_to_db(clamp(0.15 + urgency * 0.7, 0.0, 1.0))
+			heartbeat.play()
+			heart_timer = max(0.35, 1.1 - urgency * 0.7)
 
-	# сердцебиение чаще и громче, чем ближе монстр и чем он тревожнее
-	heart_timer -= delta
-	if heart_timer <= 0.0:
-		var closeness: float = clamp(1.0 - d / 10.0, 0.0, 1.0)
-		var urgency: float = closeness + (0.4 if hunting else 0.0)
-		heartbeat.volume_db = linear_to_db(clamp(0.15 + urgency * 0.7, 0.0, 1.0))
-		heartbeat.play()
-		heart_timer = max(0.35, 1.1 - urgency * 0.7)
-
-	# шаги под ноги игроку, пока он реально идёт
+	# шаги под ноги игроку, пока он реально идёт -- в любом режиме
 	var moving: bool = Vector2(player.velocity.x, player.velocity.z).length() > 0.3
 	if moving and not player.hidden:
 		step_timer -= delta

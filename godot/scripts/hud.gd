@@ -7,16 +7,19 @@ extends CanvasLayer
 @onready var floor_label: Label = $FloorLabel
 @onready var keys_label: Label = $KeysLabel
 @onready var biome_label: Label = $BiomeLabel
+@onready var items_label: Label = $ItemsLabel
 @onready var stamina_bar: ProgressBar = $StaminaBar
 @onready var sanity_bar: ProgressBar = $SanityBar
 @onready var vignette: ColorRect = $Vignette
 
 var level_gen: Node = null
 var player: CharacterBody3D = null
+var items: Node = null
 
 func _ready() -> void:
 	level_gen = get_tree().get_root().find_child("LevelGen", true, false)
 	player = get_tree().get_root().find_child("Player", true, false)
+	items = get_tree().get_root().find_child("Items", true, false)
 	if level_gen:
 		level_gen.hud_changed.connect(_on_hud_changed)
 		_on_hud_changed()
@@ -30,6 +33,7 @@ func _on_mode_changed(new_mode: GameState.Mode) -> void:
 	floor_label.visible = show_dungeon_hud
 	keys_label.visible = show_dungeon_hud
 	biome_label.visible = show_dungeon_hud
+	items_label.visible = show_dungeon_hud
 
 func _on_hud_changed() -> void:
 	if level_gen == null:
@@ -45,3 +49,5 @@ func _process(_delta: float) -> void:
 	sanity_bar.value = player.sanity * 100.0
 	var dread: float = 1.0 - player.sanity
 	vignette.color.a = clamp(dread * 0.5, 0.0, 0.6)
+	if items_label.visible and items:
+		items_label.text = "СПИЧКИ %d   КАМНИ %d" % [items.match_count, items.rock_count]
