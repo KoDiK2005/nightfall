@@ -49,6 +49,7 @@ func make_noise(pos: Vector2, ttl: float) -> void:
 @onready var props_root: Node3D = $"../Props"
 @onready var world_env: WorldEnvironment = $"../WorldEnvironment"
 @onready var dir_light: DirectionalLight3D = $"../DirectionalLight3D"
+@onready var fade_rect: ColorRect = $"../Fade/Black"
 
 func _ready() -> void:
 	randomize()
@@ -64,6 +65,7 @@ func _ready() -> void:
 func _on_state_changed(new_state: GameState.State) -> void:
 	if new_state == GameState.State.PLAY and GameState.mode == GameState.Mode.ENDLESS:
 		_build_level()
+		_play_descend_fade()   # проявление из черноты и при старте новой игры
 
 func _build_level() -> void:
 	_setup_dungeon_env()
@@ -182,10 +184,21 @@ func try_pickup_nearby(p: Vector2) -> bool:
 			return true
 	return false
 
-## спуск на следующий этаж -- все ключи собраны, игрок дошёл до выхода
+## спуск на следующий этаж -- все ключи собраны, игрок дошёл до выхода.
+## Логика (глубина + перестройка) синхронна, поверх пускаем косметическое
+## проявление из черноты, чтобы новый этаж не "щёлкал" резко (порт fade-to-
+## black спуска из main.c).
 func descend() -> void:
 	GameState.advance_floor()
 	_build_level()
+	_play_descend_fade()
+
+func _play_descend_fade() -> void:
+	if fade_rect == null:
+		return
+	fade_rect.color.a = 1.0
+	var tw := create_tween()
+	tw.tween_property(fade_rect, "color:a", 0.0, 0.7)
 
 func is_open(x: int, y: int) -> bool:
 	if x < 0 or x >= MW or y < 0 or y >= MH:

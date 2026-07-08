@@ -58,6 +58,7 @@ var house_built := false
 @onready var house_props: Node3D = $HouseProps
 @onready var world_env: WorldEnvironment = $"../WorldEnvironment"
 @onready var dir_light: DirectionalLight3D = $"../DirectionalLight3D"
+@onready var fade_rect: ColorRect = $"../Fade/Black"
 
 func _ready() -> void:
 	GameState.state_changed.connect(_on_state_changed)
@@ -274,6 +275,11 @@ func _start_denial() -> void:
 	if mother:
 		mother.visible = false
 	subtitle.hide_line()
+
+	# мягкое проявление из черноты на входе в воспоминание
+	if fade_rect:
+		fade_rect.color.a = 1.0
+		create_tween().tween_property(fade_rect, "color:a", 0.0, 1.2)
 
 	# dev-хук: сразу в свободный обход дома (минуя подход и сцену с матерью)
 	# -- удобно тестировать/скриншотить интерьер, пока идёт работа над домом.
