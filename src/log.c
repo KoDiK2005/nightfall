@@ -41,6 +41,30 @@ void nf_log(const char *fmt, ...) {
     fflush(nf_logfile);              /* flushed every line so a crash doesn't lose it */
 }
 
+/* One-time dump of the machine this session is running on: OS, CPU, RAM,
+ * the SDL video/audio backends actually picked, and the GL driver's own
+ * strings (vendor/renderer/version/GLSL). Purely diagnostic — this is what
+ * turns a bug report into something you can act on without asking the
+ * player twenty questions about their setup. Call once, after the GL
+ * context is current (glGetString needs it) and load_gl() has run. */
+void nf_log_hw(SDL_Window *win) {
+    if (!nf_logfile) return;
+    int w = 0, h = 0;
+    if (win) SDL_GetWindowSize(win, &w, &h);
+    log_timestamp(); fprintf(nf_logfile, "platform=%s cpus=%d ram=%dMB window=%dx%d\n",
+        SDL_GetPlatform(), SDL_GetCPUCount(), SDL_GetSystemRAM(), w, h);
+    log_timestamp(); fprintf(nf_logfile, "video_driver=%s audio_driver=%s\n",
+        SDL_GetCurrentVideoDriver() ? SDL_GetCurrentVideoDriver() : "?",
+        SDL_GetCurrentAudioDriver() ? SDL_GetCurrentAudioDriver() : "?");
+    const char *vendor = (const char *)glGetString(GL_VENDOR);
+    const char *renderer = (const char *)glGetString(GL_RENDERER);
+    const char *version = (const char *)glGetString(GL_VERSION);
+    const char *glsl = (const char *)glGetString(GL_SHADING_LANGUAGE_VERSION);
+    log_timestamp(); fprintf(nf_logfile, "GL vendor=%s renderer=%s version=%s glsl=%s\n",
+        vendor ? vendor : "?", renderer ? renderer : "?", version ? version : "?", glsl ? glsl : "?");
+    fflush(nf_logfile);
+}
+
 void nf_log_close(void) {
     if (!nf_logfile) return;
     fclose(nf_logfile);

@@ -131,9 +131,12 @@ int main(int argc, char **argv) {
     if (!ctx) { fprintf(stderr, "GL context: %s\n", SDL_GetError()); return 1; }
     SDL_GL_SetSwapInterval(1);
     load_gl();
+    nf_log_hw(win);
 
-    if (Mix_OpenAudio(44100, MIX_DEFAULT_FORMAT, 2, 1024) < 0)
+    if (Mix_OpenAudio(44100, MIX_DEFAULT_FORMAT, 2, 1024) < 0) {
         fprintf(stderr, "audio disabled: %s\n", Mix_GetError());
+        nf_log("audio disabled: %s", Mix_GetError());
+    }
     Mix_AllocateChannels(10);                     /* 0-7 in use; 8 creak, 9 shrine hum */
     snd_ambient = Mix_LoadWAV("assets/ambient.wav");
     snd_heart   = Mix_LoadWAV("assets/heartbeat.wav");
@@ -146,7 +149,7 @@ int main(int argc, char **argv) {
     snd_creak   = Mix_LoadWAV("assets/creak.wav");
     snd_shrine  = Mix_LoadWAV("assets/shrine.wav");
     snd_thud    = Mix_LoadWAV("assets/thud.wav");
-    if (!snd_ambient) fprintf(stderr, "warning: assets not found — run 'make audio'\n");
+    if (!snd_ambient) { fprintf(stderr, "warning: assets not found — run 'make audio'\n"); nf_log("warning: assets not found -- run 'make audio'"); }
     if (snd_ambient) { Mix_Volume(0, 60); Mix_PlayChannel(0, snd_ambient, -1); }
     apply_master_volume();
 
