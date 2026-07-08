@@ -47,6 +47,23 @@ static int wall_dir(int x, int y, int *wx, int *wy) {
 
 static void room_center(const Room *r, int *cx, int *cy) { *cx = r->x + r->w / 2; *cy = r->y + r->h / 2; }
 
+int patrol_order[MAX_ROOMS], patrol_len = 0, patrol_pos = 0;
+/* shuffle every non-entrance room into a beat the monster loops while
+ * wandering, so idle movement reads as a patrol through the halls rather
+ * than picking a fresh random cell each time. Re-rolled once per floor. */
+static void build_patrol_route(void) {
+    patrol_len = 0;
+    for (int i = 0; i < room_count; i++) {
+        if (rooms[i].theme == RM_ENTRANCE) continue;
+        patrol_order[patrol_len++] = i;
+    }
+    for (int i = patrol_len - 1; i > 0; i--) {
+        int j = rand() % (i + 1);
+        int t = patrol_order[i]; patrol_order[i] = patrol_order[j]; patrol_order[j] = t;
+    }
+    patrol_pos = patrol_len > 0 ? rand() % patrol_len : 0;
+}
+
 static void carve_rect(int x0, int y0, int w, int h) {
     for (int y = y0; y < y0 + h; y++)
         for (int x = x0; x < x0 + w; x++)
@@ -110,6 +127,7 @@ static void generate_rooms(void) {
         if (keyrooms < num_keys) { rooms[i].theme = RM_KEY; keyrooms++; }
         else { int p = i % 3; rooms[i].theme = p == 0 ? RM_STORAGE : p == 1 ? RM_LIBRARY : RM_CELLS; }
     }
+    build_patrol_route();
     /* -------- pillar candidates in the larger halls (columns for cover) ----- */
     pillar_count = 0;
     for (int i = 0; i < room_count && pillar_count < MAX_PILLARS; i++) {
@@ -141,19 +159,26 @@ static void flood_from_cell(int sx, int sy) {
     }
 }
 void set_target(int cx, int cy) { tgtX = cx; tgtY = cy; flood_from_cell(cx, cy); }
-/* Where the Stalker drifts when it has lost you. Rather than pure noise it
- * often patrols toward the things you must reach — an unopened chest or the
- * exit door — so it haunts your objectives and the halls feel stalked. */
+/* Where the Stalker drifts when it has lost you. Mostly it walks its shuffled
+ * patrol beat room-to-room (build_patrol_route), so idle movement reads as a
+ * route through the halls; sometimes it instead detours to something you must
+ * reach — an unopened chest or the exit door — so it haunts your objectives
+ * as well as patrolling them. */
 void pick_wander(void) {
     double r = frand();
-    if (r < 0.45 && keys_left > 0) {                 /* prowl a still-locked shrine */
+    if (r < 0.20 && keys_left > 0) {                 /* detour: a still-locked shrine */
         int idx[MAX_KEYS], nn = 0;
         for (int i = 0; i < num_keys; i++) if (keys[i].active) idx[nn++] = i;
         if (nn) { int k = idx[rand() % nn]; set_target((int)keys[k].x, (int)keys[k].y); return; }
-    } else if (r < 0.65) {                            /* linger by the way down     */
+    } else if (r < 0.30) {                            /* detour: linger by the way down */
         set_target((int)exitX, (int)exitY); return;
     }
-    for (int i = 0; i < 64; i++) {                    /* otherwise, just roam        */
+    if (patrol_len > 0) {                             /* otherwise, next stop on the beat */
+        patrol_pos = (patrol_pos + 1) % patrol_len;
+        int cx, cy; room_center(&rooms[patrol_order[patrol_pos]], &cx, &cy);
+        if (is_open(cx, cy)) { set_target(cx, cy); return; }
+    }
+    for (int i = 0; i < 64; i++) {                    /* fallback: just roam         */
         int x = 1 + rand() % (MW - 2), y = 1 + rand() % (MH - 2);
         if (is_open(x, y)) { set_target(x, y); return; }
     }

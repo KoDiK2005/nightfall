@@ -167,6 +167,12 @@ extern int    has_up;
 
 extern Room   rooms[MAX_ROOMS];
 extern int    room_count;
+/* the monster's patrol beat: a shuffled circuit of this floor's rooms it
+ * walks in order while wandering, instead of picking a fresh random cell
+ * every time -- so its idle movement reads as a route through the halls. */
+extern int    patrol_order[MAX_ROOMS];
+extern int    patrol_len;
+extern int    patrol_pos;
 extern int    startX, startY;
 extern int    pcellX[MAX_PILLARS], pcellY[MAX_PILLARS];
 extern int    pillar_count;
