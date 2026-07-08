@@ -26,6 +26,19 @@ func _ready() -> void:
 		# сразу в бесконечный режим, минуя титульный экран -- удобно для
 		# скриншотов/тестов (порт NIGHTFALL_AUTOPLAY из C-версии)
 		call_deferred("start_new_game", Mode.ENDLESS)
+	_fps_debug = OS.get_environment("NIGHTFALL_FPS") != ""
+
+var _fps_debug: bool = false
+var _fps_accum: float = 0.0
+func _process(delta: float) -> void:
+	# dev-хук NIGHTFALL_FPS: раз в секунду печатает FPS в stdout -- следим за
+	# производительностью (слабый Intel UHD 620, десятки факелов-источников)
+	if not _fps_debug:
+		return
+	_fps_accum += delta
+	if _fps_accum >= 1.0:
+		_fps_accum = 0.0
+		print("FPS ", Engine.get_frames_per_second())
 
 func advance_floor() -> void:
 	depth += 1

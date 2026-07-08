@@ -154,19 +154,31 @@ func _process(delta: float) -> void:
 	if noise_t > 0.0:
 		noise_t -= delta
 	var p := Vector2(player.position.x, player.position.z)
+	if Input.is_action_just_pressed("interact"):
+		try_pickup_nearby(p)
+	if keys_left == 0 and p.distance_to(exit_pos) < EXIT_DIST:
+		descend()
+
+## подобрать ключ из сундука, если игрок рядом с активным (вынесено из
+## _process, чтобы дёргать и из самотеста без эмуляции ввода)
+func try_pickup_nearby(p: Vector2) -> bool:
 	for c in chests:
 		if not c.active:
 			continue
-		if p.distance_to(c.pos) < PICKUP_DIST and Input.is_action_just_pressed("interact"):
+		if p.distance_to(c.pos) < PICKUP_DIST:
 			c.active = false
 			c.mesh.visible = false
 			keys_left -= 1
 			hud_changed.emit()
 			if keys_left == 0:
 				exit_mesh.get_active_material(0).albedo_color = Color(0.3, 1.0, 0.5)
-	if keys_left == 0 and p.distance_to(exit_pos) < EXIT_DIST:
-		GameState.advance_floor()
-		_build_level()
+			return true
+	return false
+
+## спуск на следующий этаж -- все ключи собраны, игрок дошёл до выхода
+func descend() -> void:
+	GameState.advance_floor()
+	_build_level()
 
 func is_open(x: int, y: int) -> bool:
 	if x < 0 or x >= MW or y < 0 or y >= MH:
