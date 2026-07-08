@@ -117,6 +117,7 @@ func _spawn_monster() -> void:
 	monster.position = Vector3(best.x + 0.5, 0.1, best.y + 0.5)
 	monster.setup(self, player)
 	player.monster = monster
+	player.level_gen = self
 	player.sanity = 1.0
 
 func _process(delta: float) -> void:

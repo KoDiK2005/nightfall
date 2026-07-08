@@ -21,6 +21,7 @@ var near_locker: Node3D = null
 var lockers: Array = []   # заполняется level_gen'ом после генерации уровня
 var sanity: float = 1.0
 var monster: CharacterBody3D = null   # level_gen проставляет после спавна
+var level_gen: Node = null            # level_gen проставляет после спавна
 
 func _ready() -> void:
 	GameState.state_changed.connect(_on_state_changed)
@@ -81,6 +82,11 @@ func _physics_process(delta: float) -> void:
 	velocity.z = direction.z * speed
 	velocity.y = 0.0
 	move_and_slide()
+
+	# бег громкий -- освежает шумовой след под ногами, который монстр
+	# расследует, даже если не увидел и не услышал тебя напрямую
+	if sprinting and level_gen:
+		level_gen.make_noise(Vector2(global_position.x, global_position.z), 1.3)
 
 	stamina += (-STAM_DRAIN if sprinting else STAM_REGEN) * delta
 	stamina = clamp(stamina, 0.0, 1.0)
