@@ -422,3 +422,25 @@ func _spawn_player() -> void:
 	# ставим руками: центр капсулы на 0.9 => глаз камеры (+0.6) на ~1.5 м,
 	# нормальный рост взрослого, а не пригнувшийся вид с 0.1
 	player.position = Vector3(cx, 0.9, cy)
+	player.rotation.y = _spawn_facing(int(cx), int(cy))
+	player.reset_look()
+
+## сориентировать игрока в самую открытую из четырёх сторон -- считаем,
+## сколько клеток пола подряд тянется от спавна, и смотрим туда (иначе
+## игрок нередко утыкается носом в ближнюю стену на старте)
+func _spawn_facing(sx: int, sy: int) -> float:
+	var dirs: Array[Vector2i] = [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]
+	var best_dir := Vector2i(0, 1)
+	var best_open := -1
+	for d in dirs:
+		var run := 0
+		var nx: int = sx + d.x
+		var ny: int = sy + d.y
+		while is_open(nx, ny) and run < 20:
+			run += 1
+			nx += d.x
+			ny += d.y
+		if run > best_open:
+			best_open = run
+			best_dir = d
+	return atan2(-float(best_dir.x), -float(best_dir.y))

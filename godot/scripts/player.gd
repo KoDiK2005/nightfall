@@ -35,6 +35,13 @@ func _on_state_changed(new_state: GameState.State) -> void:
 		exhausted = false
 		hidden = false
 
+## сбросить вертикальный наклон камеры (level_gen зовёт при спавне, чтобы
+## новый этаж не унаследовал задранную/опущенную голову с прошлого)
+func reset_look() -> void:
+	pitch = 0.0
+	if camera:
+		camera.rotation.x = 0.0
+
 func _unhandled_input(event: InputEvent) -> void:
 	if GameState.state != GameState.State.PLAY:
 		return
