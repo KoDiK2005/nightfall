@@ -135,7 +135,13 @@ shell shortcut) so the built `.exe` can find `SDL2.dll` and friends.
 
 | File                | Role                                                        |
 |---------------------|-------------------------------------------------------------|
-| `src/main.c`        | 3D build: OpenGL renderer + game (AI, stealth, sanity, audio)|
+| `src/main.c`        | 3D build entry point: window/audio setup, event loop, player input |
+| `src/game.h`        | Shared types and cross-file declarations for the 3D build   |
+| `src/gen.c`         | Level generation: rooms, biomes, pathing, chests             |
+| `src/ai.c`          | The monster's brain and the sanity/dread system              |
+| `src/audio.c`       | Procedural dread audio                                       |
+| `src/render.c`      | GL setup, procedural textures/sprites, world mesh, render passes |
+| `src/hud.c`         | 2D overlay: font, HUD, menus, hallucinations                 |
 | `src/raycast.c`     | Classic software-raycaster build (`nightfall-classic`)      |
 | `tools/gen_audio.py`| Synthesises every `.wav` from scratch                        |
 | `tools/photos2visions.py`| Grades photos in `photos/` into sanity-loss screamers  |
