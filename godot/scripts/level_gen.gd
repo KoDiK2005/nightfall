@@ -143,6 +143,13 @@ func _spawn_monster() -> void:
 	monster = MONSTER_SCENE.instantiate()
 	add_child(monster)
 	monster.position = Vector3(best.x + 0.5, 0.1, best.y + 0.5)
+	# dev-хук NIGHTFALL_SHOWMON: поставить монстра в паре шагов перед игроком
+	# (для скриншотов светящихся глаз/силуэта), а не в дальнем углу
+	if OS.get_environment("NIGHTFALL_SHOWMON") != "":
+		var fwd := -player.transform.basis.z
+		monster.position = player.position + fwd * 2.5
+		monster.position.y = 0.1
+		monster.frozen = true
 	monster.setup(self, player)
 	player.monster = monster
 	player.level_gen = self

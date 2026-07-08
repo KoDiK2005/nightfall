@@ -1,4 +1,4 @@
-[gd_scene load_steps=5 format=3]
+[gd_scene load_steps=7 format=3]
 
 [ext_resource type="Script" path="res://scripts/monster.gd" id="1"]
 
@@ -14,6 +14,17 @@ height = 1.9
 radius = 0.3
 height = 1.9
 
+[sub_resource type="StandardMaterial3D" id="Mat_eyes"]
+albedo_color = Color(0.9, 0.1, 0.08, 1)
+emission_enabled = true
+emission = Color(1, 0.12, 0.05, 1)
+emission_energy_multiplier = 6.0
+
+[sub_resource type="SphereMesh" id="SphereMesh_eye"]
+material = SubResource("Mat_eyes")
+radius = 0.05
+height = 0.1
+
 [node name="Monster" type="CharacterBody3D"]
 script = ExtResource("1")
 
@@ -24,3 +35,11 @@ mesh = SubResource("CapsuleMesh_monster")
 [node name="CollisionShape3D" type="CollisionShape3D" parent="."]
 position = Vector3(0, 0.95, 0)
 shape = SubResource("CapsuleShape3D_monster")
+
+[node name="EyeL" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.09, 1.55, -0.26)
+mesh = SubResource("SphereMesh_eye")
+
+[node name="EyeR" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.09, 1.55, -0.26)
+mesh = SubResource("SphereMesh_eye")

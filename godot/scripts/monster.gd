@@ -28,6 +28,7 @@ var search_time: float = 0.0
 
 var level_gen: Node = null
 var player: CharacterBody3D = null
+var frozen: bool = false   # dev-хук NIGHTFALL_SHOWMON: стоит на месте для скриншота
 
 func setup(p_level_gen: Node, p_player: CharacterBody3D) -> void:
 	level_gen = p_level_gen
@@ -56,6 +57,7 @@ func _physics_process(delta: float) -> void:
 		return
 	_sense(delta)
 	_move(delta)
+	_face_player()
 
 	if player.hidden:
 		# спрятался -- поймать может, только если оно рядом ищет/охотится
@@ -71,6 +73,15 @@ func _physics_process(delta: float) -> void:
 	var d: float = Vector2(position.x, position.z).distance_to(Vector2(player.position.x, player.position.z))
 	if d < CATCH_DIST:
 		GameState.go_caught()
+
+## развернуть тело лицом к игроку по горизонтали -- меш не крутится от
+## движения сам, а так светящиеся глаза (см. monster.tscn) всегда смотрят
+## на игрока: приближение читается как пара глаз, наплывающих из темноты
+func _face_player() -> void:
+	var t := player.global_position
+	t.y = global_position.y
+	if global_position.distance_to(t) > 0.2:
+		look_at(t, Vector3.UP)
 
 func _sense(delta: float) -> void:
 	if player.hidden:
@@ -179,6 +190,9 @@ func _player_watching() -> bool:
 	return _has_los(Vector2(player.position.x, player.position.z))
 
 func _move(delta: float) -> void:
+	if frozen:
+		velocity = Vector3.ZERO
+		return
 	var speed_mult := 1.0
 	if mon_type == MonType.WATCHER:
 		if _player_watching():
