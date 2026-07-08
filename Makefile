@@ -20,9 +20,11 @@ endif
 
 all: audio $(BIN)$(EXE)
 
-# real-3D OpenGL build (primary); -lz for the PNG "vision" image decoder
-$(BIN)$(EXE): src/main.c
-	$(CC) $(CFLAGS) $(SDL_CF) src/main.c -o $(BIN)$(EXE) $(LDFLAGS) $(GL_LIBS) -lz
+# real-3D OpenGL build (primary): main.c + its modules (gen/ai/audio/render/hud),
+# sharing state via game.h. -lz is for the PNG "vision" image decoder.
+SRCS := src/main.c src/gen.c src/ai.c src/audio.c src/render.c src/hud.c
+$(BIN)$(EXE): $(SRCS) src/game.h
+	$(CC) $(CFLAGS) $(SDL_CF) $(SRCS) -o $(BIN)$(EXE) $(LDFLAGS) $(GL_LIBS) -lz
 
 # original raycasting build (fallback, no GPU needed)
 classic: audio $(CLASSIC)$(EXE)
