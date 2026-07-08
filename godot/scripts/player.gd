@@ -19,6 +19,8 @@ var exhausted: bool = false
 var hidden: bool = false
 var near_locker: Node3D = null
 var lockers: Array = []   # заполняется level_gen'ом после генерации уровня
+var sanity: float = 1.0
+var monster: CharacterBody3D = null   # level_gen проставляет после спавна
 
 func _ready() -> void:
 	GameState.state_changed.connect(_on_state_changed)
@@ -86,3 +88,21 @@ func _physics_process(delta: float) -> void:
 		exhausted = true
 	if stamina >= 0.30:
 		exhausted = false
+
+	_update_sanity(delta)
+
+## Порт update_fear из ai.c: рассудок тает быстрее, когда монстр охотится
+## (и особенно, когда оно тебя видит), медленнее восстанавливается в тишине.
+## "tension" в C-версии приходит из мерцания факелов -- тут грубо
+## приближаем его состоянием монстра, пока не перенесли ту систему целиком.
+func _update_sanity(delta: float) -> void:
+	if monster == null:
+		return
+	var dd: float = min(GameState.depth - 1, 12)
+	var hunting: bool = monster.state == monster.State.HUNT
+	var tension: float = 1.0 if hunting else (0.4 if monster.state == monster.State.SEARCH else 0.0)
+	var drain: float = 0.004 + dd * 0.0025 + tension * 0.05 + (0.03 if hunting else 0.0) + (0.10 if hunting else 0.0)
+	if tension < 0.12 and not hunting:
+		sanity += delta * 0.02
+	sanity -= delta * drain
+	sanity = clamp(sanity, 0.0, 1.0)
