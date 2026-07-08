@@ -191,6 +191,8 @@ int main(int argc, char **argv) {
     if (getenv("NIGHTFALL_STORY")) { story_mode = 1; story_start_denial(); game_state = ST_PLAY; state_time = 0; }
     /* dev: jump straight to the door threshold, to test the mother scene without walking there */
     if (getenv("NIGHTFALL_STORYDOOR")) { posX = 14.5; posY = 13.6; }
+    /* dev: jump straight to the child's room, to check its furniture layout */
+    if (getenv("NIGHTFALL_STORYROOM")) { posX = 4.5; posY = 12.0; yaw = 1.5708; pitch = -0.15; }
     /* dev screenshot: stand in front of a torch looking at it (skip with
      * NIGHTFALL_SHOTSPAWN to instead capture the exact spawn view) */
     if (shotpath && torch_count > 0 && !getenv("NIGHTFALL_SHOTSPAWN")) {
