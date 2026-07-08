@@ -74,8 +74,8 @@ static int    mother_line_idx;
 static double mother_line_timer;
 static const char *mother_line_buf[2];   /* {реплика, NULL} -- под формат subtitle_lines */
 
-#define MOTHER_LINE_DUR 2.6
-#define MEMORY_POPUP_DUR 4.5
+#define MOTHER_LINE_DUR 4.0
+#define MEMORY_POPUP_DUR 8.5
 
 /* дверь дома (порог, где начинается сцена с матерью) и комната, куда
  * героя отправляют после отповеди */
@@ -108,6 +108,66 @@ static void place_gazebo(double cx, double cz) {
         props[prop_count++] = (Prop){ cx, cz, half + 0.25, half + 0.25, 1.05, 1.20, tr * 0.85f, tg * 0.85f, tb * 0.85f };
 }
 
+/* крыша дома -- три вложенные "ступени" вместо гладкого ската (движок
+ * умеет только осепараллельные коробки), плюс труба: силуэт читается как
+ * двускатная крыша, а не плоская коробка без верха.                     */
+static void place_roof(double cx, double cz, double hwx, double hwz) {
+    float tr = 0.32f, tg = 0.16f, tb = 0.13f;    /* тёмная кровля */
+    if (prop_count < MAX_PROPS)      /* карниз -- нависает над стенами   */
+        props[prop_count++] = (Prop){ cx, cz, hwx + 0.4, hwz + 0.4, wall_h, wall_h + 0.16f, tr, tg, tb };
+    if (prop_count < MAX_PROPS)      /* средний ярус -- уже и выше       */
+        props[prop_count++] = (Prop){ cx, cz, hwx * 0.66, hwz * 0.66, wall_h + 0.16f, wall_h + 0.62f, tr * 1.05f, tg * 1.05f, tb * 1.05f };
+    if (prop_count < MAX_PROPS)      /* конёк                            */
+        props[prop_count++] = (Prop){ cx, cz, hwx * 0.30, hwz * 0.30, wall_h + 0.62f, wall_h + 0.86f, tr * 1.1f, tg * 1.1f, tb * 1.1f };
+    if (prop_count < MAX_PROPS)      /* труба -- отец у телевизора, но дом топят */
+        props[prop_count++] = (Prop){ cx + hwx * 0.5, cz - hwz * 0.4, 0.22, 0.22, wall_h + 0.2f, wall_h + 1.3f, 0.32f, 0.28f, 0.26f };
+}
+
+/* Двор дома, где пьют и срываются на детях: не ухоженная лужайка, а
+ * заросший бурьяном участок с мусором, битым стеклом и ржавой развалюхой
+ * машины у забора. Обходит дорогу, дом и беседку.                       */
+static int yard_blocked(double x, double z) {
+    if (x > 9.0 && x < 19.0 && z > 13.0 && z < 20.0) return 1;   /* дом      */
+    if (x > 12.0 && x < 16.0 && z < 14.0) return 1;              /* дорога   */
+    if (fabs(x - 22.0) < 2.3 && fabs(z - 6.0) < 2.3) return 1;   /* беседка  */
+    return 0;
+}
+static void place_yard_clutter(void) {
+    /* заросли бурьяна -- пожелтевшая, неухоженная трава пучками */
+    for (int i = 0; i < 26 && prop_count < MAX_PROPS; i++) {
+        double x = 1.5 + frand() * (MW - 3.0), z = 1.5 + frand() * (MH - 3.0);
+        if (yard_blocked(x, z)) continue;
+        float g = 0.35f + frand() * 0.25f;
+        props[prop_count++] = (Prop){ x, z, 0.08 + frand() * 0.06, 0.08 + frand() * 0.06,
+            0.0, 0.22 + frand() * 0.22, g, g * 1.35f, g * 0.30f };
+    }
+    /* пустые бутылки, брошенные где попало -- особенно у крыльца */
+    for (int i = 0; i < 10 && prop_count < MAX_PROPS; i++) {
+        double x = 12.5 + frand() * 4.0, z = 10.5 + frand() * 3.5;
+        if (yard_blocked(x, z)) continue;
+        props[prop_count++] = (Prop){ x, z, 0.05, 0.05, 0.0, 0.16 + frand() * 0.05, 0.10f, 0.22f, 0.12f };
+    }
+    /* мусор -- смятые кучи, ничем не прикрытые */
+    for (int i = 0; i < 8 && prop_count < MAX_PROPS; i++) {
+        double x = 1.5 + frand() * (MW - 3.0), z = 1.5 + frand() * (MH - 3.0);
+        if (yard_blocked(x, z)) continue;
+        props[prop_count++] = (Prop){ x, z, 0.22 + frand() * 0.16, 0.22 + frand() * 0.16,
+            0.0, 0.14 + frand() * 0.16, 0.32f, 0.29f, 0.24f };
+    }
+    /* ржавый забор -- рваный, с провалами, не по всему периметру */
+    for (int x = 2; x <= MW - 3 && prop_count < MAX_PROPS; x += 2) {
+        if (frand() < 0.35) continue;                     /* провалы в заборе */
+        if (yard_blocked(x, 2.5)) continue;
+        props[prop_count++] = (Prop){ x, 2.3, 0.05, 0.05, 0.0, 0.62, 0.42f, 0.24f, 0.16f };
+    }
+    /* брошенная ржавая машина у забора -- со сплюснутой "крышей" */
+    double cx = MW - 6.0, cz = 5.0;
+    if (prop_count < MAX_PROPS)
+        props[prop_count++] = (Prop){ cx, cz, 1.5, 0.85, 0.0, 0.55, 0.28f, 0.14f, 0.10f };
+    if (prop_count < MAX_PROPS)
+        props[prop_count++] = (Prop){ cx, cz, 1.1, 0.7, 0.55, 0.72, 0.24f, 0.12f, 0.09f };
+}
+
 /* Уровень 1, стадия "Отрицание": дом с лужайкой и беседкой посреди
  * пустоты. Игрок появляется на дороге перед домом.                      */
 void story_start_denial(void) {
@@ -136,9 +196,16 @@ void story_start_denial(void) {
     rooms[room_count++] = (Room){ 3, 3, 2, 2, RM_ENTRANCE };      /* комната героя   */
     rooms[room_count++] = (Room){ 1, 1, MW - 2, MH - 2, RM_LAWN };/* лужайка (фон)   */
 
-    /* беседка -- в стороне от дороги и дома */
+    /* стены дома поднимаются под двухэтажную высоту -- нужно раньше
+     * place_roof (крыша садится на верх стен) */
+    wall_h = 2.0f;
+
+    /* беседка, крыша дома, и заросший захламлённый двор -- в стороне от
+     * дороги и дома, чтобы читалось как двор пьющего отца, а не парк */
     prop_count = 0;
     place_gazebo(22.0, 6.0);
+    place_roof(14.0, 16.5, 4.0, 2.5);
+    place_yard_clutter();
 
     /* точка спавна: на дороге перед домом, лицом к двери */
     startX = 14; startY = 1;
@@ -195,11 +262,6 @@ void story_start_denial(void) {
     biome_amb[0] = 3.6f; biome_amb[1] = 3.5f; biome_amb[2] = 3.3f;
     biome_torch[0] = 1.00f; biome_torch[1] = 0.70f; biome_torch[2] = 0.40f;
 
-    /* стены дома поднимаются под двухэтажную высоту -- лужайка/дорога всё
-     * равно без потолка, так что выше становится только сам дом (и заодно
-     * запечатанная комната героя, ей это не мешает). */
-    wall_h = 2.0f;
-
     build_textures();
     reupload_world_textures();
     build_world_mesh();
@@ -221,7 +283,7 @@ static void update_subtitle_fade(double dt) {
     if (subtitle_remain <= 0.0) { story_subtitle_a = 0.0; return; }
     subtitle_remain -= dt;
     if (subtitle_remain <= 0.0) { story_subtitle_lines = NULL; story_subtitle_a = 0.0; return; }
-    double fade_in = 0.4, fade_out = 0.8;
+    double fade_in = 1.1, fade_out = 1.8;
     double a = 1.0;
     if (subtitle_total - subtitle_remain < fade_in) a = (subtitle_total - subtitle_remain) / fade_in;
     else if (subtitle_remain < fade_out) a = subtitle_remain / fade_out;

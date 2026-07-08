@@ -832,7 +832,12 @@ void build_world_mesh(void) {
         add_locker_box(buf, &n, lockers[i].x, lockers[i].y, lockWX[i], lockWY[i]);
     for (int i = 0; i < num_keys; i++)
         add_box2(buf, &n, pedX[i], pedZ[i], 0.17, 0.17, 0.0, 0.30);   /* shrine plinth */
+    /* сюжетный режим держит ambient сильно выше обычного (лужайка иначе
+     * тонет во тьме) -- нейтрально-серая дверь на таком свету пересвечена
+     * в белое; приглушаем её альбедо, чтобы выглядела как дверь, а не лампа. */
+    if (story_mode) { cur_tint[0] = cur_tint[1] = cur_tint[2] = 0.22f; }
     add_door(buf, &n, exitX, exitY, doorNx, keys_left > 0);
+    if (story_mode) { cur_tint[0] = cur_tint[1] = cur_tint[2] = 1.0f; }
     lockCount = n - lockStart;
     /* wooden torch handles + room clutter (crates, shelves, debris) */
     brkStart = n;
