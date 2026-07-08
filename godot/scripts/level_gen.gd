@@ -13,6 +13,7 @@ const TORCH_SCENE := preload("res://scenes/torch.tscn")
 const PICKUP_DIST := 0.9
 const EXIT_DIST := 0.7
 const MAX_KEYS := 6
+const MONSTER_SCENE := preload("res://scenes/monster.tscn")
 
 var map: Array = []   # map[y][x] == true, если клетка открыта (пол)
 var rooms: Array = [] # Rect2i(x, y, w, h) на каждую комнату
@@ -23,6 +24,7 @@ var keys_left: int = 3
 var chests: Array = []       # [{pos: Vector2, active: bool, mesh: MeshInstance3D}]
 var exit_pos: Vector2 = Vector2.ZERO
 var exit_mesh: MeshInstance3D = null
+var monster: CharacterBody3D = null
 
 signal hud_changed
 
@@ -46,7 +48,56 @@ func _build_level() -> void:
 	_place_torches()
 	_place_keys_and_exit()
 	_spawn_player()
+	_spawn_monster()
 	hud_changed.emit()
+
+## волновой поиск (BFS) от заданной клетки -- порт flood_from_cell из
+## gen.c. Возвращает сетку [y][x] расстояний в клетках, 1<<20 -- недостижимо.
+func flood_from(target: Vector2i) -> Array:
+	var dist: Array = []
+	for _y in range(MH):
+		var row: Array = []
+		row.resize(MW)
+		row.fill(1 << 20)
+		dist.append(row)
+	if not is_open(target.x, target.y):
+		return dist
+	dist[target.y][target.x] = 0
+	var queue: Array = [target]
+	var head := 0
+	var dirs: Array[Vector2i] = [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]
+	while head < queue.size():
+		var c: Vector2i = queue[head]
+		head += 1
+		for d in dirs:
+			var n: Vector2i = c + d
+			if is_open(n.x, n.y) and dist[n.y][n.x] > dist[c.y][c.x] + 1:
+				dist[n.y][n.x] = dist[c.y][c.x] + 1
+				queue.append(n)
+	return dist
+
+## Сталкер стартует как можно дальше от игрока -- порт того же выбора в
+## reset_level (gen.c).
+func _spawn_monster() -> void:
+	if monster:
+		monster.queue_free()
+		monster = null
+	var start: Rect2i = rooms[0]
+	var sx: int = start.position.x + start.size.x / 2
+	var sy: int = start.position.y + start.size.y / 2
+	var best_d := -1
+	var best := Vector2i(sx, sy)
+	for y in range(1, MH - 1):
+		for x in range(1, MW - 1):
+			if is_open(x, y):
+				var d := (x - sx) * (x - sx) + (y - sy) * (y - sy)
+				if d > best_d:
+					best_d = d
+					best = Vector2i(x, y)
+	monster = MONSTER_SCENE.instantiate()
+	add_child(monster)
+	monster.position = Vector3(best.x + 0.5, 0.1, best.y + 0.5)
+	monster.setup(self, player)
 
 func _process(_delta: float) -> void:
 	var p := Vector2(player.position.x, player.position.z)
