@@ -56,6 +56,8 @@ var house_built := false
 @onready var wall_map: GridMap = $"../WallGridMap"
 @onready var floor_map: GridMap = $"../FloorGridMap"
 @onready var house_props: Node3D = $HouseProps
+@onready var world_env: WorldEnvironment = $"../WorldEnvironment"
+@onready var dir_light: DirectionalLight3D = $"../DirectionalLight3D"
 
 func _ready() -> void:
 	GameState.state_changed.connect(_on_state_changed)
@@ -142,7 +144,27 @@ func _paint_region(x0: int, y0: int, x1: int, y1: int) -> void:
 					for layer in range(WALL_LAYERS):
 						wall_map.set_cell_item(Vector3i(x, layer, y), WALL_ITEM)
 
+## Тёплая "домашняя" палитра стен/пола вместо серого камня подземелья
+## (порт bwall/bfloor из story_start_denial в story.c) и уличное освещение:
+## сюжетный двор -- это день, а не тёмный склеп, так что небо/направленный
+## свет держим включёнными (endless-режим их гасит, story возвращает).
+func _setup_house_look() -> void:
+	var wall_mat: StandardMaterial3D = load("res://resources/wall_material.tres")
+	var floor_mat: StandardMaterial3D = load("res://resources/floor_material.tres")
+	wall_mat.albedo_color = Color(0.52, 0.44, 0.34)
+	floor_mat.albedo_color = Color(0.34, 0.26, 0.19)
+	if dir_light:
+		dir_light.visible = true
+	if world_env and world_env.environment:
+		var env := world_env.environment
+		env.background_mode = Environment.BG_SKY
+		env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
+		env.ambient_light_color = Color(0.15, 0.14, 0.16)
+		env.ambient_light_energy = 0.5
+		env.fog_enabled = false
+
 func _build_house() -> void:
+	_setup_house_look()
 	map.clear()
 	for _y in range(MH):
 		var row: Array = []

@@ -418,4 +418,7 @@ func _spawn_player() -> void:
 	var start: Rect2i = rooms[0]
 	var cx: float = start.position.x + start.size.x / 2.0
 	var cy: float = start.position.y + start.size.y / 2.0
-	player.position = Vector3(cx, 0.1, cy)
+	# y=0.9 -- пол в подземелье без коллизии (гравитация 0), поэтому высоту
+	# ставим руками: центр капсулы на 0.9 => глаз камеры (+0.6) на ~1.5 м,
+	# нормальный рост взрослого, а не пригнувшийся вид с 0.1
+	player.position = Vector3(cx, 0.9, cy)
