@@ -322,9 +322,33 @@ Then press the ▶ button (top-right) or `F5` to run.
 On the title screen: `W`/`S` (or the arrow keys) picks between
 "БЕСКОНЕЧНЫЙ СПУСК" (the endless descent) and "СЮЖЕТ" (story mode),
 `Enter` starts. Controls in-game match the C version: WASD move, mouse
-look, Shift run, `E` interact/hide, `F` match, `G` rock, `Esc` pause/quit.
+look, Shift run, `E` interact/hide, `F` match, `G` rock, `Esc` pause (`Q`
+in the pause menu quits to the title), `R` restarts on the caught screen.
+All letter keys bind to the physical key position, so there's no need to
+switch the keyboard layout to English.
+
+### Tests
+
+The port's logic is covered by headless self-tests (no window or
+rendering — they drive the real game methods). From `godot/`:
+
+```bash
+./run_tests.sh
+```
+
+They assert the whole endless loop (generation / connectivity / key
+pickup / descent / catch), the story phase progression, and the pause
+menu. Worth running after editing scripts: a parse error in any `.gd`
+fails the whole scene load, and the tests catch it.
 
 ### Status
+
+Playable in both modes. Endless is a dark enclosed dungeon lit only by
+torches (tall walls, a ceiling, fog, and a monster with glowing eyes that
+track you); the full title → play → caught → restart loop works, with an
+`Esc` pause.
+
+
 
 Ported so far: player movement/stamina, procedural room+corridor level
 generation (via `GridMap`), torches, keys/chests/exit/floor progression,
