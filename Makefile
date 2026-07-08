@@ -24,7 +24,7 @@ else
 	endif
 endif
 
-.PHONY: all audio run run-classic classic clean checkdeps
+.PHONY: all audio run run-classic classic clean checkdeps dist
 
 all: checkdeps audio $(BIN)$(EXE)
 
@@ -67,3 +67,18 @@ run-classic: classic
 
 clean:
 	rm -f $(BIN) $(BIN).exe $(CLASSIC) $(CLASSIC).exe
+
+# Windows only: nightfall.exe is dynamically linked against SDL2/SDL2_mixer/
+# zlib, which live in MSYS2's ucrt64/bin -- fine while you run it from that
+# shell (it's on PATH there), but a plain double-click elsewhere fails with
+# "SDL2.dll was not found". This copies whatever DLLs the built exe actually
+# needs into the project folder, so the whole folder can be zipped and handed
+# to someone who has none of this installed.
+dist: all
+ifeq ($(OS),Windows_NT)
+	@echo "Copying runtime DLLs next to $(BIN)$(EXE) ..."
+	@for f in `ldd $(BIN)$(EXE) | grep -i -E '(ucrt64|mingw64|clang64)' | awk '{print $$3}'`; do cp -u "$$f" .; done
+	@echo "Done -- zip up this whole folder (the .exe, the *.dll files, and assets/) to share it."
+else
+	@echo "dist is a Windows-only target (bundles the DLLs nightfall.exe needs to run standalone)."
+endif

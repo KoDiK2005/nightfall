@@ -3,6 +3,8 @@
 /nightfall.exe
 /nightfall-classic
 /nightfall-classic.exe
+# runtime DLLs `make dist` copies in next to the .exe on Windows
+*.dll
 
 # object files
 *.o

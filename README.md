@@ -202,6 +202,18 @@ out in full.
    ```
    (or just `mingw32-make run`, which builds and launches in one step)
 
+**Sharing the .exe with someone else (e.g. a tester)?** `nightfall.exe` is
+dynamically linked against `SDL2.dll`, `SDL2_mixer.dll` and `zlib1.dll`,
+which live in MSYS2's `ucrt64\bin`. That's on `PATH` inside the MSYS2 shell,
+so it runs fine for you there — but if you just hand someone the bare `.exe`,
+double-clicking it fails with errors like *"SDL2.dll was not found"*. Run
+this instead to gather the exact DLLs it needs right next to it:
+```bash
+mingw32-make dist
+```
+Then zip up the whole folder (the `.exe`, the `.dll` files, and `assets/`)
+and send that — it'll run standalone on a machine with no MSYS2 installed.
+
 ### Optional: classic software-raycaster fallback
 
 No GPU, or an OpenGL 3.3 driver acting up? There's an older raycasting build
