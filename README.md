@@ -52,6 +52,11 @@ and your mind frays quicker. How deep can you get?
   match hissing alight. It heads for the sound and searches there, so a careless
   noise pulls it in — but a well-placed one can lure it away. Its ears sharpen
   the deeper you go, until a sound carries the whole width of the floor.
+- **Rocks — throw a distraction** — scavenge a few off the floor and press
+  `G` to hurl one down the corridor you're facing. It strikes stone and
+  cracks loud enough for the Stalker to go investigate the sound instead of
+  you — a deliberate lure, on demand, instead of hoping a careless noise
+  works in your favour.
 - **Sanity** — your composure erodes in the dark, faster when the Stalker
   hunts you and worst of all when it has you in *sight*. As your mind frays
   the world answers: a breathing vignette closes in, the shadows bleed red,
@@ -127,6 +132,7 @@ shell shortcut) so the built `.exe` can find `SDL2.dll` and friends.
 | `Shift`        | Run (uses stamina) |
 | `E`            | Open a chest · hide in / leave a locker · read / close a note |
 | `F`            | Strike a match (light vs. being seen) |
+| `G`            | Throw a rock (a lure, away from you) |
 | `Enter`        | Start         |
 | `R`            | Retry / replay|
 | `Esc`          | Pause / resume (in the pause menu: `W`/`S` pick, `A`/`D` adjust, `Q` to title) |

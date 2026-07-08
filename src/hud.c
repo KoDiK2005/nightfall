@@ -401,6 +401,8 @@ void draw_hud(void) {
     draw_text(16, 72, 2, BIOMES[biome % NBIOMES].name, pack(120, 120, 140));
     snprintf(buf, sizeof(buf), "СПИЧКИ %d", match_count);
     draw_text(16, 96, 2, buf, match_burn > 0.0 ? pack(255, 170, 80) : pack(150, 138, 108));
+    snprintf(buf, sizeof(buf), "КАМНИ %d", rock_count);
+    draw_text(16, 116, 2, buf, pack(150, 148, 140));
 
     /* contextual stair prompts */
     double ed = fabs(posX - exitX) + fabs(posY - exitY);
@@ -446,6 +448,8 @@ void draw_hud(void) {
         draw_text_c(SCREEN_H - 110, 3, "E - СПРЯТАТЬСЯ", pack(200, 200, 160));
     else if (match_count > 0 && match_burn <= 0.0 && !hidden)
         draw_text_c(SCREEN_H - 110, 2, "F - ЗАЖЕЧЬ СПИЧКУ", pack(210, 150, 90));
+    else if (rock_count > 0 && rockFlyT <= 0.0 && !hidden)
+        draw_text_c(SCREEN_H - 110, 2, "G - БРОСИТЬ КАМЕНЬ", pack(160, 158, 150));
 
     /* key-sense compass: a golden tick slides along a top strip to point the
      * way to the nearest un-opened chest — brighter the closer you are. Fades

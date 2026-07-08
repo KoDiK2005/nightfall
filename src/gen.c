@@ -347,6 +347,16 @@ static void reset_level(void) {
         matchpick[i].x = x + 0.5; matchpick[i].y = y + 0.5; matchpick[i].active = 1; i++;
     }
 
+    /* rocks to throw as a lure; a fresh handful each floor, same spread as matches */
+    rockFlyT = 0.0;
+    for (int i = 0; i < MAX_ROCKPICK; i++) rockpick[i].active = 0;
+    int rp = 2 + rand() % 2;                               /* 2-3 per floor */
+    for (int i = 0, tries = 0; i < rp && tries < 400; tries++) {
+        int x = 1 + rand() % (MW - 2), y = 1 + rand() % (MH - 2);
+        if (!is_open(x, y) || (abs(x - startX) + abs(y - startY)) < 4) continue;
+        rockpick[i].x = x + 0.5; rockpick[i].y = y + 0.5; rockpick[i].active = 1; i++;
+    }
+
     /* raise the candidate pillars into columns, skipping any that would block
      * a key, the exit, the spawn, or sever the floor's connectivity.        */
     for (int p = 0; p < pillar_count; p++) {

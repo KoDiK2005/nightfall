@@ -39,6 +39,7 @@
 #define MAX_PROPS 150
 #define MAX_TORCHES 48
 #define MAX_MATCHPICK 4
+#define MAX_ROCKPICK 4
 #define MAX_VISIONS 24
 
 #define PLAYER_WALK 3.1
@@ -63,6 +64,10 @@
 #define VIS_DUR       0.5
 #define SCREAMER_DUR  0.85
 
+#define ROCK_FLY_DUR   0.35 /* seconds a thrown rock is airborne */
+#define ROCK_MAX_RANGE 9.0  /* how far a throw can carry before it just drops */
+#define ROCK_NOISE_TTL 5.0  /* how long the monster can still hear it land */
+
 #define CH_CREAK  8              /* chest-lid creak on open   */
 #define CH_SHRINE 9              /* looping shrine hum, volume by proximity */
 
@@ -83,6 +88,7 @@ typedef struct { double x, y; int active; } Key;   /* active = chest still locke
 typedef struct { double x, y; } Locker;
 typedef struct { double x, y; int active, text; } Note;
 typedef struct { double x, y; int active; } MatchPick;
+typedef struct { double x, y; int active; } RockPick;
 typedef struct { int x, y, w, h, theme; } Room;
 /* clutter that gives each room type its own character: crates, barrels,
  * book spines, bones, rubble. tr/tg/tb tints the box so a prop reads as its
@@ -143,6 +149,15 @@ extern int    near_note;
 extern MatchPick matchpick[MAX_MATCHPICK];
 extern int    match_count;
 extern double match_burn;
+
+/* rocks: pocket a few off the floor, throw one (facing direction) to make it
+ * strike stone somewhere down the corridor -- a deliberate lure the monster
+ * will go and investigate, away from you. */
+extern RockPick rockpick[MAX_ROCKPICK];
+extern int    rock_count;
+extern double rockFlyT;                       /* >0 while a thrown rock is airborne */
+extern double rockFX0, rockFY0;                /* where it was thrown from          */
+extern double rockTX, rockTY;                  /* where it will land                */
 
 extern int    depth;
 extern int    best_depth;
@@ -208,7 +223,7 @@ void update_fear(double dt);
  * audio.c — procedural sound effects and the dread-driven mix.
  * ========================================================================= */
 extern Mix_Chunk *snd_ambient, *snd_heart, *snd_scare, *snd_pickup, *snd_step, *snd_whisper;
-extern Mix_Chunk *snd_roar, *snd_growl, *snd_creak, *snd_shrine;
+extern Mix_Chunk *snd_roar, *snd_growl, *snd_creak, *snd_shrine, *snd_thud;
 extern double heart_timer, step_timer;
 
 void apply_master_volume(void);
@@ -221,7 +236,7 @@ void update_audio(double dt, int moving);
 extern uint32_t tex[3][TEX * TEX];         /* 0 wall, 1 floor, 2 ceiling     */
 extern uint32_t lockmetal[TEX * TEX];
 extern uint32_t brackmetal[TEX * TEX];
-extern uint32_t spr_rgba[10][TEX * TEX];
+extern uint32_t spr_rgba[11][TEX * TEX];
 
 extern float torchX[MAX_TORCHES], torchZ[MAX_TORCHES];
 extern float torchNx[MAX_TORCHES], torchNz[MAX_TORCHES];

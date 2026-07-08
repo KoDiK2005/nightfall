@@ -69,6 +69,11 @@ MatchPick matchpick[MAX_MATCHPICK];
 int    match_count = 0;          /* matches in your pocket             */
 double match_burn  = 0.0;        /* seconds the struck match still burns */
 
+RockPick rockpick[MAX_ROCKPICK];
+int    rock_count = 0;
+double rockFlyT = 0.0;
+double rockFX0, rockFY0, rockTX, rockTY;
+
 int    depth = 1;                /* current floor (1 = topmost)        */
 int    best_depth = 1;           /* deepest floor reached this session */
 double mon_speed = MONSTER_SPD;  /* scales with depth                  */
@@ -135,6 +140,7 @@ int main(int argc, char **argv) {
     snd_growl   = Mix_LoadWAV("assets/growl.wav");
     snd_creak   = Mix_LoadWAV("assets/creak.wav");
     snd_shrine  = Mix_LoadWAV("assets/shrine.wav");
+    snd_thud    = Mix_LoadWAV("assets/thud.wav");
     if (!snd_ambient) fprintf(stderr, "warning: assets not found — run 'make audio'\n");
     if (snd_ambient) { Mix_Volume(0, 60); Mix_PlayChannel(0, snd_ambient, -1); }
     apply_master_volume();
@@ -223,6 +229,16 @@ int main(int argc, char **argv) {
                         yaw = atan2(tz - pz, tx - px); pitch = -0.1; }
                 }
         }
+        if (getenv("NIGHTFALL_SHOWROCK") && rockpick[0].active) {  /* dev: face a rock pickup */
+            double tx = rockpick[0].x, tz = rockpick[0].y;
+            for (double s = 1.6; s >= 1.0; s -= 0.3)
+                for (int d = 0; d < 4; d++) {
+                    double ox = (d==0)-(d==1), oz = (d==2)-(d==3);
+                    double px = tx + ox * s, pz = tz + oz * s;
+                    if (is_open((int)px, (int)pz)) { posX = px; posY = pz;
+                        yaw = atan2(tz - pz, tx - px); pitch = -0.1; }
+                }
+        }
         if (getenv("NIGHTFALL_SHOWPROP") && prop_count > 0) {   /* face room clutter */
             int pi = atoi(getenv("NIGHTFALL_SHOWPROP"));
             if (pi < 0 || pi >= prop_count) pi = 0;
@@ -295,10 +311,10 @@ int main(int argc, char **argv) {
                 }
                 if ((k == SDL_SCANCODE_RETURN || k == SDL_SCANCODE_KP_ENTER ||
                      k == SDL_SCANCODE_SPACE) && game_state == ST_TITLE) {
-                    depth = 1; match_count = 2; new_game(); game_state = ST_PLAY; state_time = 0;
+                    depth = 1; match_count = 2; rock_count = 2; new_game(); game_state = ST_PLAY; state_time = 0;
                 }
                 if (k == SDL_SCANCODE_R && (game_state == ST_CAUGHT || game_state == ST_WIN)) {
-                    depth = 1; match_count = 2; new_game(); game_state = ST_PLAY; state_time = 0;
+                    depth = 1; match_count = 2; rock_count = 2; new_game(); game_state = ST_PLAY; state_time = 0;
                 }
                 /* dismiss a note you're reading -- else-if so the same E press
                  * doesn't fall through and immediately re-open it. */
@@ -322,6 +338,21 @@ int main(int argc, char **argv) {
                     match_count--; match_burn = MATCH_DUR;
                     make_noise(posX, posY, 2.0);           /* the strike hisses */
                     if (snd_step) { Mix_VolumeChunk(snd_step, 90); Mix_PlayChannel(2, snd_step, 0); }
+                }
+                /* throw a rock: it lands down the corridor and knocks loud
+                 * enough to pull the monster there -- away from you. */
+                else if (k == SDL_SCANCODE_G && game_state == ST_PLAY && !hidden &&
+                         rock_count > 0 && rockFlyT <= 0.0) {
+                    double fx = cos(yaw), fy = sin(yaw);
+                    double landX = posX, landY = posY;
+                    for (double s = 0.4; s <= ROCK_MAX_RANGE; s += 0.25) {
+                        if (!is_open((int)(posX + fx * s), (int)(posY + fy * s))) break;
+                        landX = posX + fx * s; landY = posY + fy * s;
+                    }
+                    rock_count--;
+                    rockFX0 = posX; rockFY0 = posY;
+                    rockTX = landX; rockTY = landY;
+                    rockFlyT = ROCK_FLY_DUR;
                 }
             }
             if (e.type == SDL_MOUSEMOTION && game_state == ST_PLAY && !hidden) {
@@ -416,6 +447,30 @@ int main(int argc, char **argv) {
                         if (snd_pickup) Mix_PlayChannel(3, snd_pickup, 0);
                     }
                 }
+            /* walk over a rock to pocket it */
+            for (int i = 0; i < MAX_ROCKPICK; i++)
+                if (rockpick[i].active) {
+                    double dx = posX - rockpick[i].x, dy = posY - rockpick[i].y;
+                    if (dx * dx + dy * dy < PICKUP_DIST * PICKUP_DIST) {
+                        rockpick[i].active = 0; rock_count++;
+                        if (snd_pickup) Mix_PlayChannel(3, snd_pickup, 0);
+                    }
+                }
+            /* a thrown rock lands: the strike carries as a noise the monster
+             * can go investigate, at a volume that fades with how far it flew. */
+            if (rockFlyT > 0.0) {
+                rockFlyT -= dt;
+                if (rockFlyT <= 0.0) {
+                    rockFlyT = 0.0;
+                    make_noise(rockTX, rockTY, ROCK_NOISE_TTL);
+                    if (snd_thud) {
+                        double thrown = sqrt((rockTX - rockFX0) * (rockTX - rockFX0) + (rockTY - rockFY0) * (rockTY - rockFY0));
+                        int vol = (int)(110 - 6 * thrown); if (vol < 40) vol = 40;
+                        Mix_VolumeChunk(snd_thud, vol);
+                        Mix_PlayChannel(2, snd_thud, 0);
+                    }
+                }
+            }
             /* step through the open door -> a fade-to-black descent transition */
             if (descend_t > 0.0) {
                 descend_t -= dt;
@@ -514,6 +569,7 @@ int main(int argc, char **argv) {
     if (snd_growl)   Mix_FreeChunk(snd_growl);
     if (snd_creak)   Mix_FreeChunk(snd_creak);
     if (snd_shrine)  Mix_FreeChunk(snd_shrine);
+    if (snd_thud)    Mix_FreeChunk(snd_thud);
     Mix_CloseAudio();
     SDL_GL_DeleteContext(ctx);
     SDL_DestroyWindow(win);

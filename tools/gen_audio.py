@@ -264,6 +264,32 @@ def make_creak(seconds=0.8):
     return out
 
 
+def make_thud(seconds=0.35):
+    """A thrown rock striking stone: a sharp filtered knock plus a couple of
+    fading skitter-bounces, then quiet -- something to draw an ear toward."""
+    n = int(seconds * SR)
+    out = [0.0] * n
+    lp = 0.0
+
+    def knock(start_t, gain, freq):
+        for i in range(n):
+            t = i / SR - start_t
+            if t < 0:
+                continue
+            out[i] += gain * math.exp(-40 * t) * math.sin(math.tau * freq * t)
+
+    knock(0.0, 1.0, 145.0)                 # the main hit
+    knock(0.05, 0.4, 210.0)                # a quick skitter bounce
+    knock(0.11, 0.18, 260.0)               # a last tiny tick as it settles
+    for i in range(n):
+        t = i / SR
+        white = random.uniform(-1, 1)
+        lp = lp * 0.80 + white * 0.20      # short filtered crack on impact
+        env = math.exp(-70 * t)
+        out[i] += 0.5 * env * lp
+    return out
+
+
 def make_shrine(seconds=8.0):
     """A soft, sacred-but-wrong choral hum for the key shrines: a sustained
     open chord with a minor tinge, slow choral vibrato, and an airy breath
@@ -328,6 +354,7 @@ def main():
     # the bytes) of the sounds generated above.
     write_wav("creak.wav", make_creak())
     write_wav("shrine.wav", make_shrine())
+    write_wav("thud.wav", make_thud())
     print("Done.")
 
 

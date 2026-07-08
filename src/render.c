@@ -13,7 +13,7 @@
 uint32_t tex[3][TEX * TEX];         /* 0 wall, 1 floor, 2 ceiling     */
 uint32_t lockmetal[TEX * TEX];      /* opaque steel for locker boxes  */
 uint32_t brackmetal[TEX * TEX];     /* dark iron for torch brackets   */
-uint32_t spr_rgba[10][TEX * TEX];   /* 0 mon,1 key,2 down,3 loc,4 flame,5 note,6 up,7 chest,8 dust,9 match */
+uint32_t spr_rgba[11][TEX * TEX];   /* 0 mon,1 key,2 down,3 loc,4 flame,5 note,6 up,7 chest,8 dust,9 match,10 rock */
 
 /* torches fixed to walls: warm point lights that flicker */
 float torchX[MAX_TORCHES], torchZ[MAX_TORCHES];   /* flame world pos  */
@@ -172,7 +172,7 @@ void build_textures(void) {
  *   a = 0   transparent (discarded)
  *   a = 128 shaded by the flashlight
  *   a = 255 self-lit glow                                                    */
-static uint8_t spr_flg[10][TEX * TEX];
+static uint8_t spr_flg[11][TEX * TEX];
 static void put_spr(int t, int x, int y, uint32_t col, uint8_t flg) {
     if (x < 0 || x >= TEX || y < 0 || y >= TEX) return;
     spr_flg[t][y * TEX + x] = flg;
@@ -363,8 +363,20 @@ void build_sprites(void) {
             if (y >= 12 && y <= 30 && abs(x - mx) <= 1) put_spr(9, x, y, pack(210, 180, 120), 2);
             if (y >= 12 && y <= 17 && abs(x - mx) <= 2) put_spr(9, x, y, pack(220, 70, 40), 2);
         }
+    /* 10: ROCK — a plain lumpy grey-brown stone, dim and self-lit (flag 2) just
+     * enough to pick out of the dark, like the other floor pickups. */
+    for (int y = 0; y < TEX; y++)
+        for (int x = 0; x < TEX; x++) {
+            double dx = (x - 32.0) / 15.0, dy = (y - 36.0) / 12.0;
+            double bump = 0.10 * sin(x * 0.7 + y * 1.3);           /* lumpy silhouette */
+            if (dx * dx + dy * dy > 1.0 + bump) continue;
+            double edge = dx * dx + dy * dy;                       /* darker toward the rim */
+            int v = (int)(70 - edge * 26) + (int)(frand() * 10);
+            if (v < 20) v = 20;
+            put_spr(10, x, y, pack(v, (int)(v * 0.94), (int)(v * 0.86)), 2);
+        }
     /* bake the flag into the alpha byte for the shader */
-    for (int t = 0; t < 10; t++)
+    for (int t = 0; t < 11; t++)
         for (int i = 0; i < TEX * TEX; i++) {
             int a = spr_flg[t][i] == 0 ? 0 : (spr_flg[t][i] == 1 ? 128 : 255);
             spr_rgba[t][i] = (spr_rgba[t][i] & 0x00FFFFFF) | ((uint32_t)a << 24);
@@ -529,7 +541,7 @@ static GLuint sceneFBO = 0, sceneTex = 0, sceneDepth = 0;
 static int   fboW = 0, fboH = 0;                 /* current FBO allocation      */
 static int   rndW = SCREEN_W, rndH = SCREEN_H;   /* internal 3D render size     */
 static GLuint worldVAO, worldVBO, sprVAO, sprVBO, ovVAO, ovVBO;
-static GLuint texWall, texFloor, texCeil, texLocker, texBracket, texSpr[10], texOverlay, texMap;
+static GLuint texWall, texFloor, texCeil, texLocker, texBracket, texSpr[11], texOverlay, texMap;
 static int   floorStart, floorCount, ceilStart, ceilCount, wallCount;
 static int   lockStart, lockCount, brkStart, brkCount;
 
@@ -898,7 +910,7 @@ void gl_init(void) {
     texWall = make_texture(tex[0]); texFloor = make_texture(tex[1]); texCeil = make_texture(tex[2]);
     texLocker = make_texture(lockmetal);
     texBracket = make_texture(brackmetal);
-    for (int i = 0; i < 10; i++) texSpr[i] = make_texture(spr_rgba[i]);
+    for (int i = 0; i < 11; i++) texSpr[i] = make_texture(spr_rgba[i]);
     glGenTextures(1, &texMap);                 /* filled per-maze by upload_map */
     glActiveTexture_(GL_TEXTURE1);
     glBindTexture(GL_TEXTURE_2D, texMap);      /* keep the occlusion map on unit 1 */
@@ -1137,6 +1149,16 @@ void render_3d(void) {
     for (int i = 0; i < MAX_MATCHPICK; i++)
         if (matchpick[i].active)
             draw_billboard(matchpick[i].x, matchpick[i].y, 0.17, 0.17, 0.04 + 0.02 * sin(state_time * 2.0 + i), 9, mvp);
+    /* scattered rock pickups, and a rock currently arcing through the air */
+    for (int i = 0; i < MAX_ROCKPICK; i++)
+        if (rockpick[i].active)
+            draw_billboard(rockpick[i].x, rockpick[i].y, 0.15, 0.13, 0.02, 10, mvp);
+    if (rockFlyT > 0.0) {
+        double p = 1.0 - rockFlyT / ROCK_FLY_DUR;              /* 0 at throw .. 1 at impact */
+        double fx = rockFX0 + (rockTX - rockFX0) * p, fz = rockFY0 + (rockTY - rockFY0) * p;
+        double arc = sin(p * 3.14159265) * 0.45;               /* rises then falls */
+        draw_billboard(fx, fz, 0.14, 0.14, 0.35 + arc, 10, mvp);
+    }
     for (int i = 0; i < NUM_NOTES; i++)
         if (notes[i].active) {
             /* pinned flat to the wall: sit on the wall face, tangent along it */
