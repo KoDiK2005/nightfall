@@ -125,6 +125,49 @@ out in full.
    ```
    (or just `make run`, which builds and launches in one step)
 
+### macOS
+
+1. Install [Homebrew](https://brew.sh/) if you don't have it yet, then install
+   everything needed to get the code and build it — `git`, `make`/`gcc` come
+   from Apple's Command Line Tools, so install those first, then the
+   SDL2 libraries and `pkg-config`:
+   ```bash
+   xcode-select --install
+   brew install sdl2 sdl2_mixer pkg-config python3
+   ```
+2. Make sure Homebrew's `pkg-config` files are on `PKG_CONFIG_PATH` (needed
+   for the build to find SDL2 — Homebrew doesn't add this to your shell by
+   default). On Apple Silicon Homebrew lives under `/opt/homebrew`, on Intel
+   Macs under `/usr/local`:
+   ```bash
+   export PKG_CONFIG_PATH="$(brew --prefix)/lib/pkgconfig:$PKG_CONFIG_PATH"
+   ```
+   (Add that line to your `~/.zshrc` so you don't have to repeat it.)
+3. Download the source code:
+   ```bash
+   git clone https://github.com/KoDiK2005/nightfall.git
+   cd nightfall
+   ```
+4. Build the game:
+   ```bash
+   make
+   ```
+   This generates the audio assets and compiles the 3D build (`nightfall`).
+   The Makefile links OpenGL as a macOS framework, not `libGL`, so no extra
+   flags are needed.
+5. Run it:
+   ```bash
+   ./nightfall
+   ```
+   (or just `make run`, which builds and launches in one step)
+
+   macOS's OpenGL driver is deprecated (Apple has pushed everyone toward
+   Metal since Mojave) but still ships and still supports the 3.3 core
+   profile this game requests, so the real-3D build runs natively — no
+   translation layer needed. If a particular Mac's driver ever refuses to
+   create that context, fall back to `make run-classic` below, which needs
+   no GPU-specific API at all.
+
 ### Windows (MSYS2 / MinGW)
 
 1. Install [MSYS2](https://www.msys2.org/) — this gives you a Linux-like
