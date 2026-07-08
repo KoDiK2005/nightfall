@@ -14,6 +14,10 @@ var mode: Mode = Mode.ENDLESS
 var depth: int = 1
 var best_depth: int = 1
 
+func _ready() -> void:
+	if OS.get_environment("NIGHTFALL_STORY") != "":
+		call_deferred("start_new_game", Mode.STORY)
+
 func advance_floor() -> void:
 	depth += 1
 	if depth > best_depth:

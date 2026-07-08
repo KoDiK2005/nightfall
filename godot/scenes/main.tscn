@@ -1,4 +1,4 @@
-[gd_scene load_steps=13 format=3]
+[gd_scene load_steps=25 format=3]
 
 [ext_resource type="Script" path="res://scripts/player.gd" id="1"]
 [ext_resource type="Script" path="res://scripts/level_gen.gd" id="2"]
@@ -8,6 +8,36 @@
 [ext_resource type="PackedScene" path="res://scenes/caught.tscn" id="6"]
 [ext_resource type="Script" path="res://scripts/items.gd" id="7"]
 [ext_resource type="PackedScene" path="res://scenes/notes.tscn" id="8"]
+[ext_resource type="Script" path="res://scripts/story_level.gd" id="9"]
+[ext_resource type="PackedScene" path="res://scenes/story_subtitle.tscn" id="10"]
+
+[sub_resource type="PlaneMesh" id="PlaneMesh_yard"]
+size = Vector2(40, 40)
+
+[sub_resource type="StandardMaterial3D" id="Mat_yard"]
+albedo_color = Color(0.18, 0.22, 0.16, 1)
+roughness = 1.0
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_yard"]
+size = Vector3(40, 0.2, 40)
+
+[sub_resource type="BoxMesh" id="BoxMesh_house"]
+size = Vector3(8, 2.5, 6)
+
+[sub_resource type="StandardMaterial3D" id="Mat_house"]
+albedo_color = Color(0.32, 0.24, 0.18, 1)
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_house"]
+size = Vector3(8, 2.5, 6)
+
+[sub_resource type="BoxMesh" id="BoxMesh_room"]
+size = Vector3(4, 2.5, 4)
+
+[sub_resource type="StandardMaterial3D" id="Mat_room"]
+albedo_color = Color(0.30, 0.26, 0.24, 1)
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_room"]
+size = Vector3(4, 2.5, 4)
 
 [sub_resource type="CapsuleMesh" id="CapsuleMesh_player"]
 radius = 0.35
@@ -83,3 +113,35 @@ visible = false
 script = ExtResource("7")
 
 [node name="Notes" parent="." instance=ExtResource("8")]
+
+[node name="StoryWorld" type="Node3D" parent="."]
+script = ExtResource("9")
+
+[node name="Yard" type="StaticBody3D" parent="StoryWorld"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.1, 15)
+
+[node name="Mesh" type="MeshInstance3D" parent="StoryWorld/Yard"]
+mesh = SubResource("PlaneMesh_yard")
+surface_material_override/0 = SubResource("Mat_yard")
+
+[node name="Shape" type="CollisionShape3D" parent="StoryWorld/Yard"]
+shape = SubResource("BoxShape3D_yard")
+
+[node name="House" type="StaticBody3D" parent="StoryWorld"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.25, 16.5)
+
+[node name="Mesh" type="MeshInstance3D" parent="StoryWorld/House"]
+mesh = SubResource("BoxMesh_house")
+surface_material_override/0 = SubResource("Mat_house")
+
+[node name="Shape" type="CollisionShape3D" parent="StoryWorld/House"]
+shape = SubResource("BoxShape3D_house")
+
+[node name="Room" type="StaticBody3D" parent="StoryWorld"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 15, 1.25, 15)
+
+[node name="Mesh" type="MeshInstance3D" parent="StoryWorld/Room"]
+mesh = SubResource("BoxMesh_room")
+surface_material_override/0 = SubResource("Mat_room")
+
+[node name="StorySubtitle" parent="." instance=ExtResource("10")]
