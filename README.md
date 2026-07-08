@@ -193,6 +193,9 @@ out in full.
    mingw32-make
    ```
    This generates the audio assets and compiles the 3D build (`nightfall.exe`).
+   (`mingw32-make` is just the historical name of the `make` binary that
+   ships with every MinGW toolchain — it builds a 64-bit `nightfall.exe`
+   here, same as the packages above; nothing 32-bit is actually involved.)
 5. Run it:
    ```bash
    ./nightfall.exe
