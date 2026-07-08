@@ -14,6 +14,7 @@ const PICKUP_DIST := 0.9
 const EXIT_DIST := 0.7
 const MAX_KEYS := 6
 const MONSTER_SCENE := preload("res://scenes/monster.tscn")
+const NUM_LOCKERS := 5
 
 var map: Array = []   # map[y][x] == true, если клетка открыта (пол)
 var rooms: Array = [] # Rect2i(x, y, w, h) на каждую комнату
@@ -322,6 +323,31 @@ func _place_keys_and_exit() -> void:
 	props_root.add_child(exit_mesh)
 	if keys_left == 0:
 		exit_mesh.get_active_material(0).albedo_color = Color(0.3, 1.0, 0.5)
+
+	_place_lockers(exit_room_idx)
+
+## шкафчики, где можно спрятаться -- порт locker-плейсмента из reset_level
+## (gen.c): по одному на комнату, не в стартовой/финальной.
+func _place_lockers(exit_room_idx: int) -> void:
+	player.lockers.clear()
+	var locker_mat := StandardMaterial3D.new()
+	locker_mat.albedo_color = Color(0.25, 0.28, 0.3)
+
+	var candidates: Array = range(1, rooms.size()).filter(func(i): return i != exit_room_idx)
+	candidates.shuffle()
+	for i in candidates:
+		if player.lockers.size() >= NUM_LOCKERS:
+			break
+		var r: Rect2i = rooms[i]
+		var cx: float = r.position.x + 0.5 + randi() % max(r.size.x - 1, 1)
+		var cy: float = r.position.y + 0.5 + randi() % max(r.size.y - 1, 1)
+		var mesh := MeshInstance3D.new()
+		mesh.mesh = BoxMesh.new()
+		mesh.mesh.size = Vector3(0.5, 1.8, 0.5)
+		mesh.material_override = locker_mat
+		mesh.position = Vector3(cx, 0.9, cy)
+		props_root.add_child(mesh)
+		player.lockers.append(mesh)
 
 func _spawn_player() -> void:
 	if rooms.is_empty() or player == null:

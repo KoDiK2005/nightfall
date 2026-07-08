@@ -10,6 +10,7 @@ const SEE_RANGE := 7.0
 const HEAR_WALK := 3.0
 const HEAR_RUN := 6.5
 const CATCH_DIST := 0.6
+const CHECK_DIST := 1.0   # на таком расстоянии оно "проверяет" шкафчик
 const SPEED := 1.55   # MONSTER_SPD в game.h
 
 var state: State = State.WANDER
@@ -31,11 +32,25 @@ func _physics_process(delta: float) -> void:
 		return
 	_sense(delta)
 	_move(delta)
+
+	if player.hidden:
+		# спрятался -- поймать может, только если оно рядом ищет/охотится
+		# и оказалось у самого шкафчика (см. CHECK_DIST в main.c)
+		if (state == State.HUNT or state == State.SEARCH) and player.lockers.size() > 0:
+			var mypos2d := Vector2(position.x, position.z)
+			var ppos2d := Vector2(player.position.x, player.position.z)
+			if mypos2d.distance_to(ppos2d) < CHECK_DIST:
+				player.hidden = false
+				GameState.go_caught()
+		return
+
 	var d: float = Vector2(position.x, position.z).distance_to(Vector2(player.position.x, player.position.z))
 	if d < CATCH_DIST:
 		GameState.go_caught()
 
 func _sense(delta: float) -> void:
+	if player.hidden:
+		return
 	var mypos := Vector2(position.x, position.z)
 	var ppos := Vector2(player.position.x, player.position.z)
 	var d := mypos.distance_to(ppos)
