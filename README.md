@@ -1,5 +1,7 @@
 # 🕯️ NIGHTFALL
 
+*[Читать на русском](README.ru.md)*
+
 A first-person **horror game for Linux and Windows**, written in C on a hand-rolled
 engine (SDL2 + OpenGL 3.3 + SDL2_mixer). No game engine, no external art —
 the walls, the monster and the sound are all generated in code.
