@@ -1,6 +1,7 @@
 # build artifact
 /nightfall
 /nightfall.exe
+/nightfall-classic
 /nightfall-classic.exe
 
 # object files

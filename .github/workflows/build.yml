@@ -18,6 +18,19 @@ jobs:
       - name: Build
         run: make
 
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: brew install sdl2 sdl2_mixer pkg-config
+
+      - name: Build
+        run: |
+          export PKG_CONFIG_PATH="$(brew --prefix)/lib/pkgconfig:$PKG_CONFIG_PATH"
+          make
+
   windows:
     runs-on: windows-latest
     defaults:
