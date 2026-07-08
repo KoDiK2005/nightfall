@@ -1,4 +1,4 @@
-[gd_scene load_steps=25 format=3]
+[gd_scene load_steps=26 format=3]
 
 [ext_resource type="Script" path="res://scripts/player.gd" id="1"]
 [ext_resource type="Script" path="res://scripts/level_gen.gd" id="2"]
@@ -10,6 +10,7 @@
 [ext_resource type="PackedScene" path="res://scenes/notes.tscn" id="8"]
 [ext_resource type="Script" path="res://scripts/story_level.gd" id="9"]
 [ext_resource type="PackedScene" path="res://scenes/story_subtitle.tscn" id="10"]
+[ext_resource type="PackedScene" path="res://scenes/pause.tscn" id="11"]
 
 [sub_resource type="PlaneMesh" id="PlaneMesh_yard"]
 size = Vector2(58, 38)
@@ -112,3 +113,5 @@ shape = SubResource("BoxShape3D_yard")
 [node name="HouseProps" type="Node3D" parent="StoryWorld"]
 
 [node name="StorySubtitle" parent="." instance=ExtResource("10")]
+
+[node name="Pause" parent="." instance=ExtResource("11")]
