@@ -20,6 +20,16 @@ func _ready() -> void:
 	if level_gen:
 		level_gen.hud_changed.connect(_on_hud_changed)
 		_on_hud_changed()
+	GameState.mode_changed.connect(_on_mode_changed)
+	_on_mode_changed(GameState.mode)
+
+func _on_mode_changed(new_mode: GameState.Mode) -> void:
+	# этаж/ключи/биом относятся только к бесконечному спуску -- в сюжетке
+	# их не из чего заполнить, и держать заглушку "ЭТАЖ 1" на экране незачем.
+	var show_dungeon_hud := new_mode == GameState.Mode.ENDLESS
+	floor_label.visible = show_dungeon_hud
+	keys_label.visible = show_dungeon_hud
+	biome_label.visible = show_dungeon_hud
 
 func _on_hud_changed() -> void:
 	if level_gen == null:

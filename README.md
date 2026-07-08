@@ -331,14 +331,18 @@ generation (via `GridMap`), torches, keys/chests/exit/floor progression,
 all three horrors' AI (sight, sound, the Watcher's freeze-when-watched),
 lockers, sanity with a screen vignette, ambient/heartbeat/footstep audio,
 matches/rocks, six biome palettes, lore notes, and the endless mode's full
-game-state flow (title → play → caught → retry). Story mode has its first,
-deliberately small slice: a yard, a placeholder house, the mother
-encounter, and the memory subtitles on the approach — not the full
-two-storey house from the C version yet.
+game-state flow (title → play → caught → retry). Story mode's first stage
+("Denial") now has a real two-storey house layout (rooms, doorways, a
+stairway between floors, some furniture — laid out after `story.c`, but
+simplified) instead of a placeholder box: the yard, the approach with
+three popup memories, the mother encounter at the door, and free roam of
+the house afterward. The roof is a flat cap (not the stepped one from the
+C version), and furniture/yard clutter are a trimmed-down subset of the
+original list.
 
 Still boxes standing in for real geometry/art in a few places (the lore
-notes, the story mode's house) — that's the next layer of polish once the
-remaining systems are ported.
+notes in story mode, the yard's gazebo and car) — that's the next layer of
+polish once the remaining systems are ported.
 
 ## License
 

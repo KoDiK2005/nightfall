@@ -1,19 +1,31 @@
 extends Node3D
-## Сюжетный режим, первый срез (по мотивам story.c, но с нуля и заметно
-## проще -- как и в C-версии, сначала одна комната, потом дом целиком).
-## Двор без стен (открытая лужайка), дом-коробка с дверью, дорога от
-## забора к порогу. Три воспоминания всплывают субтитрами по пути; у
-## двери героя встречает мать без лица, отчитывает, и он оказывается
-## в своей комнате.
+## Сюжетный режим, уровень 1 ("Отрицание") -- порт story.c
+## (build_ground_floor/build_upper_floor/story_update). Дом рисуется на той
+## же плоской сетке, что и подземелье (WallGridMap/FloorGridMap, шаг 1
+## клетка = 1 метр), только вместо процедурных комнат -- прописанный вручную
+## план. "Второй этаж" -- отдельное крыло той же карты, вынесенное на восток
+## (движок не умеет по-настоящему многоуровневые Z-этажи, см. story.c) --
+## связано с первым лестницей-триггером в холле.
 
-const HOUSE_CENTER := Vector3(0, 0, 15)
-const HOUSE_SIZE := Vector3(8, 2.5, 6)          # ширина, высота стен, глубина
-const DOOR_POS := Vector3(0, 0, 12)             # порог -- южная стена дома
-const SPAWN_POS := Vector3(0, 0.1, 2)
-const MOTHER_POS := Vector3(0, 0, 13.0)   # чуть перед сплошной коробкой дома, а не внутри неё
-const ROOM_POS := Vector3(15, 0.1, 15)
+const MW := 56
+const MH := 34
+const WALL_ITEM := 0
+const FLOOR_ITEM := 1
+const WALL_LAYERS := 2   # двухэтажная высота стен -- две клетки GridMap друг на друге
 
-const MEMORY_Z := [5.0, 8.0, 11.0]
+const DOOR_POS := Vector3(14.5, 0, 13.5)
+const MOTHER_POS := Vector3(14.5, 0, 14.6)
+const SPAWN_POS := Vector3(14.5, 0.1, 2.5)
+const KID1_POS := Vector3(46.0, 0.1, 3.0)
+
+const STAIRS_UP := Vector2(15.5, 20.5)
+const STAIRS_UP_TO := Vector3(43.5, 0.1, 6.5)
+const STAIRS_DN := Vector2(36.5, 6.5)
+const STAIRS_DN_TO := Vector3(15.5, 0.1, 22.5)
+const STAIRS_TRIGGER_DIST := 1.0
+const STAIRS_COOLDOWN := 1.5
+
+const MEMORY_Z := [4.0, 7.0, 10.0]
 const MEMORY_TEXTS := [
 	["МАТЬ КРИЧИТ ИЗ-ЗА РАЗБИТОЙ ТАРЕЛКИ.", "ЭТО НЕ ЗЛОСТЬ. ЭТО ВОСПИТАНИЕ.", "У ВСЕХ ТАК В СЕМЬЕ."],
 	["ОТЕЦ СНОВА ЗАСНУЛ ПЕРЕД ТЕЛЕВИЗОРОМ.", "БУТЫЛКА НА ПОЛУ -- ОБЫЧНОЕ ДЕЛО.", "ЗНАЧИТ ВСЁ НОРМАЛЬНО."],
@@ -34,9 +46,16 @@ var memory_seen: Array = [false, false, false]
 var mother: Node3D = null
 var mother_line_idx: int = 0
 var mother_line_timer: float = 0.0
+var stairs_cooldown: float = 0.0
+
+var map: Array = []   # map[y][x] == true, если клетка открыта (не стена)
+var house_built := false
 
 @onready var player: CharacterBody3D = $"../Player"
 @onready var subtitle: CanvasLayer = $"../StorySubtitle"
+@onready var wall_map: GridMap = $"../WallGridMap"
+@onready var floor_map: GridMap = $"../FloorGridMap"
+@onready var house_props: Node3D = $HouseProps
 
 func _ready() -> void:
 	GameState.state_changed.connect(_on_state_changed)
@@ -58,9 +77,145 @@ func _on_state_changed(new_state: GameState.State) -> void:
 	if new_state == GameState.State.PLAY and GameState.mode == GameState.Mode.STORY:
 		_start_denial()
 
+## -------------------------------------------------------------- геометрия
+
+func is_open(x: int, y: int) -> bool:
+	if x < 0 or x >= MW or y < 0 or y >= MH:
+		return false
+	return map[y][x]
+
+func _carve(x0: int, y0: int, x1: int, y1: int) -> void:
+	for y in range(y0, y1 + 1):
+		for x in range(x0, x1 + 1):
+			if x > 0 and x < MW - 1 and y > 0 and y < MH - 1:
+				map[y][x] = true
+
+func _wall_ring(x0: int, y0: int, x1: int, y1: int) -> void:
+	for x in range(x0, x1 + 1):
+		map[y0][x] = false
+		map[y1][x] = false
+	for y in range(y0, y1 + 1):
+		map[y][x0] = false
+		map[y][x1] = false
+
+func _door_gap(x: int, y: int) -> void:
+	map[y][x] = true
+
+## порт build_ground_floor (story.c): тамбур, бойлерная, холл с лестницей,
+## гостевой санузел, гостевая спальня/кабинет, кухня-гостиная одним пространством.
+func _build_ground_floor() -> void:
+	_wall_ring(8, 13, 32, 31)
+	_wall_ring(12, 13, 16, 16)
+	_wall_ring(17, 13, 20, 16)
+	_wall_ring(12, 17, 16, 22)
+	_wall_ring(8, 17, 11, 20)
+	_wall_ring(8, 21, 14, 27)
+
+	_door_gap(14, 13)
+	_door_gap(16, 14); _door_gap(17, 14)
+	_door_gap(14, 16); _door_gap(14, 17)
+	_door_gap(16, 18); _door_gap(16, 19); _door_gap(16, 20)
+	_door_gap(11, 18); _door_gap(12, 18)
+	_door_gap(13, 21); _door_gap(13, 22)
+
+## порт build_upper_floor: отдельное крыло восточнее, связано только лестницей.
+func _build_upper_floor() -> void:
+	_wall_ring(34, 1, 53, 12)
+	_wall_ring(35, 1, 43, 5)
+	_wall_ring(44, 1, 48, 5)
+	_wall_ring(49, 1, 53, 5)
+	_wall_ring(35, 7, 40, 11)
+	_door_gap(39, 5)
+	_door_gap(46, 5)
+	_door_gap(51, 5)
+	_door_gap(37, 7)
+
+func _paint_region(x0: int, y0: int, x1: int, y1: int) -> void:
+	for y in range(y0, y1 + 1):
+		for x in range(x0, x1 + 1):
+			if is_open(x, y):
+				floor_map.set_cell_item(Vector3i(x, 0, y), FLOOR_ITEM)
+			else:
+				var neighbours_open: bool = is_open(x + 1, y) or is_open(x - 1, y) \
+					or is_open(x, y + 1) or is_open(x, y - 1)
+				if neighbours_open:
+					for layer in range(WALL_LAYERS):
+						wall_map.set_cell_item(Vector3i(x, layer, y), WALL_ITEM)
+
+func _build_house() -> void:
+	map.clear()
+	for _y in range(MH):
+		var row: Array = []
+		row.resize(MW)
+		row.fill(false)
+		map.append(row)
+
+	_carve(1, 1, MW - 2, MH - 2)
+	_build_ground_floor()
+	_build_upper_floor()
+
+	wall_map.clear()
+	floor_map.clear()
+	_paint_region(8, 13, 32, 31)
+	_paint_region(34, 1, 53, 12)
+
+	for child in house_props.get_children():
+		child.queue_free()
+	_place_roof()
+	_place_ground_floor_furniture()
+	_place_upper_floor_furniture()
+	house_built = true
+
+func _prop(pos: Vector3, size: Vector3, color: Color) -> void:
+	var mesh := MeshInstance3D.new()
+	mesh.mesh = BoxMesh.new()
+	mesh.mesh.size = size
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = color
+	mesh.material_override = mat
+	mesh.position = pos
+	house_props.add_child(mesh)
+
+## плоская крыша-заглушка над каждым крылом -- проще ступенчатой из C-версии,
+## но закрывает вид на небо изнутри дома.
+func _place_roof() -> void:
+	_prop(Vector3(20.0, 2.15, 22.0), Vector3(25.0, 0.3, 19.0), Color(0.30, 0.16, 0.13))
+	_prop(Vector3(43.5, 2.15, 6.5), Vector3(20.0, 0.3, 12.0), Color(0.30, 0.16, 0.13))
+
+## подмножество place_ground_floor_furniture (story.c) -- по предмету на
+## комнату вместо полного списка, для узнаваемости планировки.
+func _place_ground_floor_furniture() -> void:
+	_prop(Vector3(15.3, 0.65, 13.6), Vector3(1.0, 1.3, 0.36), Color(0.32, 0.22, 0.16))    # шкаф в тамбуре
+	_prop(Vector3(18.4, 0.55, 14.4), Vector3(0.6, 1.1, 0.6), Color(0.42, 0.42, 0.44))     # котёл
+	for i in range(6):   # лестница наверх -- растущие ступени
+		_prop(Vector3(15.3, (0.14 + i * 0.16) * 0.5, 18.4 + i * 0.35), Vector3(0.9, 0.14 + i * 0.16, 0.32), Color(0.36, 0.28, 0.20))
+	_prop(Vector3(9.3, 0.19, 18.3), Vector3(0.36, 0.38, 0.4), Color(0.75, 0.75, 0.75))    # унитаз
+	_prop(Vector3(9.6, 0.13, 25.3), Vector3(2.0, 0.26, 1.1), Color(0.42, 0.36, 0.28))     # кровать гостевой
+	_prop(Vector3(12.7, 0.23, 22.6), Vector3(0.84, 0.46, 0.64), Color(0.36, 0.26, 0.18))  # стол
+	_prop(Vector3(20.0, 0.25, 15.6), Vector3(1.8, 0.5, 1.1), Color(0.42, 0.30, 0.22))     # кухонный остров
+	_prop(Vector3(26.0, 0.21, 15.5), Vector3(1.7, 0.42, 1.7), Color(0.40, 0.30, 0.22))    # обеденный стол
+	_prop(Vector3(27.0, 0.21, 26.0), Vector3(2.6, 0.42, 1.1), Color(0.30, 0.22, 0.30))    # диван
+	_prop(Vector3(27.0, 0.25, 28.0), Vector3(1.1, 0.5, 0.36), Color(0.18, 0.16, 0.16))    # ТВ-тумба
+
+## подмножество place_upper_floor_furniture (story.c).
+func _place_upper_floor_furniture() -> void:
+	_prop(Vector3(38.0, 0.14, 3.4), Vector3(2.4, 0.28, 1.2), Color(0.40, 0.30, 0.30))     # кровать мастер-спальни
+	_prop(Vector3(41.3, 0.65, 2.4), Vector3(0.6, 1.3, 0.7), Color(0.30, 0.22, 0.18))       # гардероб
+	_prop(Vector3(KID1_POS.x, 0.13, KID1_POS.z + 0.5), Vector3(1.7, 0.26, 0.9), Color(0.40, 0.34, 0.26))  # кровать детская 1
+	_prop(Vector3(46.6, 0.23, 2.3), Vector3(0.56, 0.46, 0.56), Color(0.42, 0.30, 0.20))    # стол детская 1
+	_prop(Vector3(51.0, 0.13, 3.5), Vector3(1.7, 0.26, 0.9), Color(0.38, 0.30, 0.30))      # кровать детская 2
+	_prop(Vector3(50.4, 0.23, 2.3), Vector3(0.56, 0.46, 0.56), Color(0.40, 0.28, 0.20))    # стол детская 2
+	_prop(Vector3(39.0, 0.19, 8.4), Vector3(0.36, 0.38, 0.4), Color(0.75, 0.75, 0.75))     # унитаз санузла
+	_prop(Vector3(36.6, 0.3, 10.3), Vector3(0.56, 0.6, 0.56), Color(0.68, 0.68, 0.70))     # стиральная машина
+
+## -------------------------------------------------------------- сценарий
+
 func _start_denial() -> void:
+	if not house_built:
+		_build_house()
 	phase = Phase.APPROACH
 	memory_seen = [false, false, false]
+	stairs_cooldown = 0.0
 	player.velocity = Vector3.ZERO
 	player.global_position = SPAWN_POS
 	player.rotation.y = 0.0
@@ -81,7 +236,7 @@ func _process(delta: float) -> void:
 		Phase.CONFRONT:
 			_process_confront(delta)
 		Phase.AFTERMATH:
-			pass   # он в своей комнате -- дальше следующий шаг порта
+			_process_aftermath(delta)
 
 func _process_approach(_delta: float) -> void:
 	# совсем медленный, тяжёлый шаг -- время прочитать всплывающие воспоминания
@@ -123,9 +278,23 @@ func skip_line() -> void:
 func _end_confront() -> void:
 	mother.visible = false
 	player.story_speed_mult = 1.0
-	player.global_position = ROOM_POS
+	player.global_position = KID1_POS
 	phase = Phase.AFTERMATH
 	subtitle.hide_line()
+
+## герой уже наверху -- дом открыт для свободного обхода, включая лестницу
+## между этажами (в обе стороны, с коротким "остыванием" после перехода).
+func _process_aftermath(delta: float) -> void:
+	if stairs_cooldown > 0.0:
+		stairs_cooldown -= delta
+		return
+	var p := Vector2(player.global_position.x, player.global_position.z)
+	if p.distance_to(STAIRS_UP) < STAIRS_TRIGGER_DIST:
+		player.global_position = STAIRS_UP_TO
+		stairs_cooldown = STAIRS_COOLDOWN
+	elif p.distance_to(STAIRS_DN) < STAIRS_TRIGGER_DIST:
+		player.global_position = STAIRS_DN_TO
+		stairs_cooldown = STAIRS_COOLDOWN
 
 func _make_mother() -> Node3D:
 	var body := CharacterBody3D.new()

@@ -16,6 +16,11 @@ var best_depth: int = 1
 
 func _ready() -> void:
 	if OS.get_environment("NIGHTFALL_STORY") != "":
+		# ставим mode сразу (синхронно), чтобы LevelGen._ready() (запускается
+		# позже, при построении дерева сцены) не успел собрать подземелье
+		# для ENDLESS раньше, чем режим реально переключится на STORY --
+		# сам переход состояния (сигналы/спавн) всё равно откладываем.
+		mode = Mode.STORY
 		call_deferred("start_new_game", Mode.STORY)
 
 func advance_floor() -> void:
