@@ -22,6 +22,10 @@ func _ready() -> void:
 		# сам переход состояния (сигналы/спавн) всё равно откладываем.
 		mode = Mode.STORY
 		call_deferred("start_new_game", Mode.STORY)
+	elif OS.get_environment("NIGHTFALL_AUTOPLAY") != "":
+		# сразу в бесконечный режим, минуя титульный экран -- удобно для
+		# скриншотов/тестов (порт NIGHTFALL_AUTOPLAY из C-версии)
+		call_deferred("start_new_game", Mode.ENDLESS)
 
 func advance_floor() -> void:
 	depth += 1

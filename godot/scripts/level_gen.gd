@@ -8,6 +8,7 @@ const MW := 29
 const MH := 21
 const WALL_ITEM := 0
 const FLOOR_ITEM := 1
+const WALL_H := 2   # стены в две клетки высотой -- иначе игрок видит поверх них
 const TORCH_SPACING := 2.6   # совпадает с TORCH_SPACING в render.c
 const TORCH_SCENE := preload("res://scenes/torch.tscn")
 const PICKUP_DIST := 0.9
@@ -46,6 +47,8 @@ func make_noise(pos: Vector2, ttl: float) -> void:
 @onready var player: CharacterBody3D = $"../Player"
 @onready var torch_root: Node3D = $"../Torches"
 @onready var props_root: Node3D = $"../Props"
+@onready var world_env: WorldEnvironment = $"../WorldEnvironment"
+@onready var dir_light: DirectionalLight3D = $"../DirectionalLight3D"
 
 func _ready() -> void:
 	randomize()
@@ -63,6 +66,7 @@ func _on_state_changed(new_state: GameState.State) -> void:
 		_build_level()
 
 func _build_level() -> void:
+	_setup_dungeon_env()
 	biome_name = Biomes.apply(GameState.depth)
 	_generate()
 	_paint()
@@ -71,6 +75,27 @@ func _build_level() -> void:
 	_spawn_player()
 	_spawn_monster()
 	hud_changed.emit()
+
+## Тёмное замкнутое подземелье: гасим "дневной" направленный свет и небо,
+## оставляем очень слабый эмбиент и плотный тёмный туман -- так основной
+## свет идёт от факелов, а даль тонет в черноте (порт AMBIENT/FOG_K и общей
+## беспросветности из C-версии). Сюжетный режим на улице свою среду ставит
+## сам (см. story_level.gd), так что трогаем окружение только здесь.
+func _setup_dungeon_env() -> void:
+	if dir_light:
+		dir_light.visible = false
+	if world_env == null or world_env.environment == null:
+		return
+	var env := world_env.environment
+	env.background_mode = Environment.BG_COLOR
+	env.background_color = Color(0.02, 0.02, 0.03)
+	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
+	env.ambient_light_color = Color(0.10, 0.10, 0.13)
+	env.ambient_light_energy = 0.25
+	env.fog_enabled = true
+	env.fog_light_color = Color(0.03, 0.03, 0.04)
+	env.fog_density = 0.14
+	env.fog_sky_affect = 0.0
 
 ## волновой поиск (BFS) от заданной клетки -- порт flood_from_cell из
 ## gen.c. Возвращает сетку [y][x] расстояний в клетках, 1<<20 -- недостижимо.
@@ -218,14 +243,20 @@ func _paint() -> void:
 		for x in range(MW):
 			if is_open(x, y):
 				floor_map.set_cell_item(Vector3i(x, 0, y), FLOOR_ITEM)
+				# потолок над каждой открытой клеткой -- замыкает пространство
+				# сверху, чтобы небо не проглядывало (тот же плоский тайл пола,
+				# поднятый на высоту стен)
+				floor_map.set_cell_item(Vector3i(x, WALL_H, y), FLOOR_ITEM)
 			else:
 				# стена рисуется, только если рядом есть открытая клетка --
 				# как в build_world_mesh (render.c): по одной грани на
-				# открытого соседа, а не сплошной блок камня повсюду.
+				# открытого соседа, а не сплошной блок камня повсюду. В высоту
+				# -- WALL_H клеток, иначе игрок смотрит поверх стен.
 				var neighbours_open: bool = is_open(x + 1, y) or is_open(x - 1, y) \
 					or is_open(x, y + 1) or is_open(x, y - 1)
 				if neighbours_open:
-					wall_map.set_cell_item(Vector3i(x, 0, y), WALL_ITEM)
+					for layer in range(WALL_H):
+						wall_map.set_cell_item(Vector3i(x, layer, y), WALL_ITEM)
 
 func _place_torches() -> void:
 	for t in torches:
