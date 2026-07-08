@@ -107,7 +107,10 @@ static void try_move(double nx, double ny, double r) {
 /* -------------------------------------------------------------------- main */
 int main(int argc, char **argv) {
     (void)argc; (void)argv;
-    srand(getenv("NIGHTFALL_SEED") ? (unsigned)atoi(getenv("NIGHTFALL_SEED")) : (unsigned)time(NULL));
+    unsigned seed = getenv("NIGHTFALL_SEED") ? (unsigned)atoi(getenv("NIGHTFALL_SEED")) : (unsigned)time(NULL);
+    srand(seed);
+    nf_log_init();
+    nf_log("NIGHTFALL start, seed=%u", seed);
     if (getenv("NIGHTFALL_NOOCCL")) occl_on = 0;
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO) != 0) {
         fprintf(stderr, "SDL_Init: %s\n", SDL_GetError()); return 1;
@@ -480,6 +483,7 @@ int main(int argc, char **argv) {
                     double save = descend_t;                /* new_game() resets it; keep the fade */
                     depth++; if (depth > best_depth) best_depth = depth;
                     new_game();
+                    nf_log("descended to depth=%d, mon_type=%d", depth, mon_type);
                     descend_t = save; descend_done = 1;
                 }
                 if (descend_t <= 0.0) { descend_t = 0.0; descend_done = 0; state_time = 0; }
@@ -493,7 +497,8 @@ int main(int argc, char **argv) {
             /* climb back up */
             if (has_up && descend_t == 0.0) {
                 double ud = (posX - upX) * (posX - upX) + (posY - upY) * (posY - upY);
-                if (ud < 0.4) { depth--; new_game(); state_time = 0; }
+                if (ud < 0.4) { depth--; new_game(); state_time = 0;
+                    nf_log("climbed back to depth=%d, mon_type=%d", depth, mon_type); }
             }
             double md = sqrt((posX - monX) * (posX - monX) + (posY - monY) * (posY - monY));
             int caught = (!hidden && md < CATCH_DIST && !shotpath);
@@ -504,6 +509,7 @@ int main(int argc, char **argv) {
             }
             if (caught) { game_state = ST_CAUGHT; state_time = 0;
                 if (depth > best_depth) best_depth = depth;
+                nf_log("caught by mon_type=%d at depth=%d", mon_type, depth);
                 if (snd_scare) { Mix_VolumeChunk(snd_scare, 128); Mix_PlayChannel(4, snd_scare, 0); } }
             update_audio(dt, moving);
         } else {
@@ -576,5 +582,7 @@ int main(int argc, char **argv) {
     SDL_GL_DeleteContext(ctx);
     SDL_DestroyWindow(win);
     SDL_Quit();
+    nf_log("session end, best_depth=%d", best_depth);
+    nf_log_close();
     return 0;
 }

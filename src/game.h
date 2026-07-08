@@ -182,6 +182,14 @@ uint32_t pack(int r, int g, int b);
 double   frand(void);
 
 /* =========================================================================
+ * log.c — a plain-text session log written next to the executable, purely
+ * for players to attach to a bug report; nothing is ever sent anywhere.
+ * ========================================================================= */
+void nf_log_init(void);
+void nf_log_close(void);
+void nf_log(const char *fmt, ...);
+
+/* =========================================================================
  * gen.c — level generation: rooms, biome palette, pathing queries, level
  * reset, and level-object interactions (opening a chest).
  * ========================================================================= */

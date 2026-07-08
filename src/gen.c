@@ -473,6 +473,7 @@ void new_game(void) {
 void open_chest(int i) {
     if (i < 0 || i >= num_keys || !keys[i].active) return;
     keys[i].active = 0; keys_left--;
+    nf_log("chest opened (key %d/%d) at depth=%d", num_keys - keys_left, num_keys, depth);
     make_noise(keys[i].x, keys[i].y, 6.0);       /* the lid's crack carries far */
     if (snd_creak) {
         Mix_VolumeChunk(snd_creak, 110); Mix_PlayChannel(CH_CREAK, snd_creak, 0);

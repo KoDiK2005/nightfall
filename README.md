@@ -161,6 +161,15 @@ shell shortcut) so the built `.exe` can find `SDL2.dll` and friends.
 | `R`            | Retry / replay|
 | `Esc`          | Pause / resume (in the pause menu: `W`/`S` pick, `A`/`D` adjust, `Q` to title) |
 
+## Found a bug?
+
+Every run writes `nightfall_log.txt` next to the executable — the seed, which
+floor and chest you were on, and how the run ended (caught, or quit). Nothing
+is ever sent anywhere; it's a local file for you. If something breaks, please
+[open an issue](https://github.com/KoDiK2005/nightfall/issues) and paste in
+the last few lines of that file plus the seed it mentions — that's usually
+enough to reproduce the exact run.
+
 ## How it works
 
 | File                | Role                                                        |
@@ -172,6 +181,7 @@ shell shortcut) so the built `.exe` can find `SDL2.dll` and friends.
 | `src/audio.c`       | Procedural dread audio                                       |
 | `src/render.c`      | GL setup, procedural textures/sprites, world mesh, render passes |
 | `src/hud.c`         | 2D overlay: font, HUD, menus, hallucinations                 |
+| `src/log.c`         | Writes `nightfall_log.txt` for bug reports (nothing is sent over the network) |
 | `src/raycast.c`     | Classic software-raycaster build (`nightfall-classic`)      |
 | `tools/gen_audio.py`| Synthesises every `.wav` from scratch                        |
 | `tools/photos2visions.py`| Grades photos in `photos/` into sanity-loss screamers  |
