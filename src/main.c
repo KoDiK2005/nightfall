@@ -153,7 +153,7 @@ static uint32_t fb[SCREEN_W * SCREEN_H];
 static uint32_t tex[3][TEX * TEX];         /* 0 wall, 1 floor, 2 ceiling     */
 static uint32_t lockmetal[TEX * TEX];      /* opaque steel for locker boxes  */
 static uint32_t brackmetal[TEX * TEX];     /* dark iron for torch brackets   */
-static uint32_t spr_rgba[8][TEX * TEX];    /* 0 mon,1 key,2 down,3 loc,4 flame,5 note,6 up,7 chest */
+static uint32_t spr_rgba[9][TEX * TEX];    /* 0 mon,1 key,2 down,3 loc,4 flame,5 note,6 up,7 chest,8 dust */
 
 /* torches fixed to walls: warm point lights that flicker */
 static float  torchX[MAX_TORCHES], torchZ[MAX_TORCHES];   /* flame world pos  */
@@ -578,7 +578,7 @@ static void build_textures(void) {
  *   a = 0   transparent (discarded)
  *   a = 128 shaded by the flashlight
  *   a = 255 self-lit glow                                                    */
-static uint8_t spr_flg[8][TEX * TEX];
+static uint8_t spr_flg[9][TEX * TEX];
 static void put_spr(int t, int x, int y, uint32_t col, uint8_t flg) {
     if (x < 0 || x >= TEX || y < 0 || y >= TEX) return;
     spr_flg[t][y * TEX + x] = flg;
@@ -739,8 +739,21 @@ static void build_sprites(void) {
             if (abs(x - 32) < 4 && y > lidy - 2 && y < lidy + 6) put_spr(7, x, y, pack(190, 150, 40), 1);
             if (abs(x - 32) < 3 && y > lidy - 6 && y < lidy - 1) put_spr(7, x, y, pack(150, 120, 30), 1); /* shackle */
         }
+    /* 8: DUST MOTE — a soft round speck of warm, ember-lit dust for additive
+     * blending near torches. rgb IS the faint light it adds; kept dim so a
+     * mote only whispers into the frame. Alpha flag 2 across the disc makes it
+     * emissive (unlit glow) with a gaussian rgb falloff for a soft edge.      */
+    for (int y = 0; y < TEX; y++)
+        for (int x = 0; x < TEX; x++) {
+            double dx = x - 32.0, dy = y - 32.0;
+            double r2 = dx * dx + dy * dy;
+            if (r2 > 100.0) continue;                       /* radius ~10px disc */
+            double g = exp(-r2 / 36.0);                     /* soft gaussian core */
+            int R = (int)(70 * g), G = (int)(52 * g), B = (int)(28 * g);
+            put_spr(8, x, y, pack(R, G, B), 2);
+        }
     /* bake the flag into the alpha byte for the shader */
-    for (int t = 0; t < 8; t++)
+    for (int t = 0; t < 9; t++)
         for (int i = 0; i < TEX * TEX; i++) {
             int a = spr_flg[t][i] == 0 ? 0 : (spr_flg[t][i] == 1 ? 128 : 255);
             spr_rgba[t][i] = (spr_rgba[t][i] & 0x00FFFFFF) | ((uint32_t)a << 24);
@@ -1471,7 +1484,7 @@ static GLuint sceneFBO = 0, sceneTex = 0, sceneDepth = 0;
 static int   fboW = 0, fboH = 0;                 /* current FBO allocation      */
 static int   rndW = SCREEN_W, rndH = SCREEN_H;   /* internal 3D render size     */
 static GLuint worldVAO, worldVBO, sprVAO, sprVBO, ovVAO, ovVBO;
-static GLuint texWall, texFloor, texCeil, texLocker, texBracket, texSpr[8], texOverlay, texMap;
+static GLuint texWall, texFloor, texCeil, texLocker, texBracket, texSpr[9], texOverlay, texMap;
 static int   floorStart, floorCount, ceilStart, ceilCount, wallCount;
 static int   lockStart, lockCount, brkStart, brkCount;
 
@@ -1852,7 +1865,7 @@ static void gl_init(void) {
     texWall = make_texture(tex[0]); texFloor = make_texture(tex[1]); texCeil = make_texture(tex[2]);
     texLocker = make_texture(lockmetal);
     texBracket = make_texture(brackmetal);
-    for (int i = 0; i < 8; i++) texSpr[i] = make_texture(spr_rgba[i]);
+    for (int i = 0; i < 9; i++) texSpr[i] = make_texture(spr_rgba[i]);
     glGenTextures(1, &texMap);                 /* filled per-maze by upload_map */
     glActiveTexture_(GL_TEXTURE1);
     glBindTexture(GL_TEXTURE_2D, texMap);      /* keep the occlusion map on unit 1 */
@@ -1905,7 +1918,10 @@ static void draw_billboard(double wx, double wz, double w, double h, double base
 /* All the flame billboards (torches + altar candles) share one texture and
  * additive blend, and their draw order doesn't matter — so batch every quad
  * into a single buffer and issue ONE draw call instead of ~50+ per frame. */
-static float flamebuf[(MAX_TORCHES * 2 + MAX_KEYS * 2) * 6 * 11];
+#define MOTES_PER_TORCH 5
+/* sized for the largest single additive batch: torch/candle flames, OR the
+ * dust motes (MOTES_PER_TORCH per torch), whichever needs more quads. */
+static float flamebuf[(MAX_TORCHES * MOTES_PER_TORCH + MAX_KEYS * 2) * 6 * 11];
 static int   flamen = 0;
 static void flame_quad(double wx, double wz, double w, double h, double base) {
     double rx = -sin(yaw), rz = cos(yaw);
@@ -1919,16 +1935,16 @@ static void flame_quad(double wx, double wz, double w, double h, double base) {
     push_v(flamebuf, &flamen, cx + hx, y1, cz + hz, 1, 0, 0, 0, 0);
     push_v(flamebuf, &flamen, cx - hx, y1, cz - hz, 0, 0, 0, 0, 0);
 }
-static void flush_flames(float mvp[16]) {
+static void flush_flames(float mvp[16], GLuint tex) {
     if (flamen == 0) return;
     glBindVertexArray_(sprVAO);
     glBindBuffer_(GL_ARRAY_BUFFER, sprVBO);
     glBufferData_(GL_ARRAY_BUFFER, flamen * 11 * sizeof(float), flamebuf, GL_DYNAMIC_DRAW);
     glUniformMatrix4fv_(u_mvp, 1, GL_FALSE, mvp);
     glUniform1i_(u_mode, 1);
-    glUniform3f_(u_sprtint, 1.0f, 1.0f, 1.0f);            /* flames are never tinted */
+    glUniform3f_(u_sprtint, 1.0f, 1.0f, 1.0f);            /* glows are never tinted */
     glActiveTexture_(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, texSpr[4]);
+    glBindTexture(GL_TEXTURE_2D, tex);
     glDrawArrays(GL_TRIANGLES, 0, flamen);
     flamen = 0;
 }
@@ -2114,7 +2130,34 @@ static void render_3d(void) {
         flame_quad(fx, fz, s * 1.15, s * 1.7,  base);         /* tongue */
         flame_quad(fx, fz, s * 0.62, s * 1.05, base + 0.04);  /* core   */
     }
-    flush_flames(mvp);                                        /* one draw for every flame */
+    flush_flames(mvp, texSpr[4]);                             /* one draw for every flame */
+
+    /* dust motes: a few embers of dust drift and rise in each torch's glow.
+     * Each mote's path is derived procedurally from the torch index + time, so
+     * there is no per-frame state to keep -- it loops as it rises, swelling in
+     * then shrinking away (the additive footprint IS the fade). Far torches are
+     * skipped so the motes only clutter the space you're actually near.      */
+    for (int i = 0; i < torch_count; i++) {
+        double fx = torchX[i] + torchNx[i] * TORCH_REACH;
+        double fz = torchZ[i] + torchNz[i] * TORCH_REACH;
+        double ddx = fx - posX, ddz = fz - posY;
+        if (ddx * ddx + ddz * ddz > 49.0) continue;           /* > 7 units: skip */
+        double tang_x = torchNz[i], tang_z = -torchNx[i];     /* along the wall  */
+        for (int m = 0; m < MOTES_PER_TORCH; m++) {
+            double seed = i * 3.7 + m * 1.61803;
+            double rise = 1.4 + 0.5 * sin(seed);              /* per-mote period */
+            double p = fmod(state_time / rise + seed, 1.0);   /* 0 low .. 1 high */
+            double env = sin(p * 3.14159);                    /* fade in/out env */
+            double lat = 0.22 * sin(seed * 2.3 + state_time * 0.7 + p * 2.0);
+            double fwd = 0.10 * sin(seed * 1.7 + state_time * 0.5);
+            double mx = fx + tang_x * lat + torchNx[i] * fwd;
+            double mz = fz + tang_z * lat + torchNz[i] * fwd;
+            double my = TORCH_TIP_Y - 0.28 + p * 0.7;         /* rise past the flame */
+            double sz = 0.028 * env;                          /* swell in, shrink out */
+            flame_quad(mx, mz, sz, sz, my);
+        }
+    }
+    flush_flames(mvp, texSpr[8]);                             /* one draw for every mote */
     glDepthMask(GL_TRUE);
     glDisable(GL_BLEND);
 }
