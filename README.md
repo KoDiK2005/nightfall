@@ -12,7 +12,7 @@ renderer is kept as a GPU-free fallback (`make run-classic`).
 
 You wake in a torchlit maze with no light of your own. **Something is in
 here with you.** Crack open the key-chests, take the stairs down — floor
-after floor, deeper into the dark. You can climb back up, too. Read the
+after floor, deeper into the dark, with no way back up. Read the
 scraps of paper left by those before you. And pray *The Stalker* doesn't
 find you — because when it does, it fills the screen. Every floor down it
 grows faster and keener, the torches thin out, more keys lock the door,

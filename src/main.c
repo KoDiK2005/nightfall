@@ -79,8 +79,6 @@ double rockFX0, rockFY0, rockTX, rockTY;
 int    depth = 1;                /* current floor (1 = topmost)        */
 int    best_depth = 1;           /* deepest floor reached this session */
 double mon_speed = MONSTER_SPD;  /* scales with depth                  */
-double upX, upY;                 /* stairs back up (only when depth>1) */
-int    has_up = 0;
 
 Room   rooms[MAX_ROOMS];
 int    room_count = 0;
@@ -149,6 +147,7 @@ int main(int argc, char **argv) {
     snd_creak   = Mix_LoadWAV("assets/creak.wav");
     snd_shrine  = Mix_LoadWAV("assets/shrine.wav");
     snd_thud    = Mix_LoadWAV("assets/thud.wav");
+    snd_door    = Mix_LoadWAV("assets/damn-why-did-i-come-here.wav");
     if (!snd_ambient) { fprintf(stderr, "warning: assets not found — run 'make audio'\n"); nf_log("warning: assets not found -- run 'make audio'"); }
     if (snd_ambient) { Mix_Volume(0, 60); Mix_PlayChannel(0, snd_ambient, -1); }
     apply_master_volume();
@@ -501,14 +500,8 @@ int main(int argc, char **argv) {
                 double ed = (posX - exitX) * (posX - exitX) + (posY - exitY) * (posY - exitY);
                 if (ed < 0.36) {                            /* enter the doorway */
                     descend_t = 1.6;
-                    if (snd_pickup) Mix_PlayChannel(3, snd_pickup, 0);
+                    if (snd_door) Mix_PlayChannel(3, snd_door, 0);
                 }
-            }
-            /* climb back up */
-            if (has_up && descend_t == 0.0) {
-                double ud = (posX - upX) * (posX - upX) + (posY - upY) * (posY - upY);
-                if (ud < 0.4) { depth--; new_game(); state_time = 0;
-                    nf_log("climbed back to depth=%d, mon_type=%d", depth, mon_type); }
             }
             double md = sqrt((posX - monX) * (posX - monX) + (posY - monY) * (posY - monY));
             int caught = (!hidden && md < CATCH_DIST && !shotpath);
@@ -588,6 +581,7 @@ int main(int argc, char **argv) {
     if (snd_creak)   Mix_FreeChunk(snd_creak);
     if (snd_shrine)  Mix_FreeChunk(snd_shrine);
     if (snd_thud)    Mix_FreeChunk(snd_thud);
+    if (snd_door)    Mix_FreeChunk(snd_door);
     Mix_CloseAudio();
     SDL_GL_DeleteContext(ctx);
     SDL_DestroyWindow(win);

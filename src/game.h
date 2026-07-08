@@ -54,7 +54,7 @@
 #define HEAR_WALK   3.0
 #define HEAR_RUN    6.5
 #define STAM_DRAIN  0.34
-#define STAM_REGEN  0.22
+#define STAM_REGEN  (0.22 / 3.0)
 
 #define MOUSE_SENS  0.0022
 #define AMBIENT     0.015   /* almost black; all real light comes from torches */
@@ -162,8 +162,6 @@ extern double rockTX, rockTY;                  /* where it will land            
 extern int    depth;
 extern int    best_depth;
 extern double mon_speed;
-extern double upX, upY;
-extern int    has_up;
 
 extern Room   rooms[MAX_ROOMS];
 extern int    room_count;
@@ -241,7 +239,7 @@ void update_fear(double dt);
  * audio.c — procedural sound effects and the dread-driven mix.
  * ========================================================================= */
 extern Mix_Chunk *snd_ambient, *snd_heart, *snd_scare, *snd_pickup, *snd_step, *snd_whisper;
-extern Mix_Chunk *snd_roar, *snd_growl, *snd_creak, *snd_shrine, *snd_thud;
+extern Mix_Chunk *snd_roar, *snd_growl, *snd_creak, *snd_shrine, *snd_thud, *snd_door;
 extern double heart_timer, step_timer;
 
 void apply_master_volume(void);

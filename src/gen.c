@@ -341,10 +341,6 @@ static void reset_level(void) {
       if (fabs(ddx) >= fabs(ddy)) { doorNx = ddx >= 0 ? 1 : -1; doorNz = 0; }
       else                        { doorNx = 0; doorNz = ddy >= 0 ? 1 : -1; } }
     descend_t = 0.0; descend_done = 0;
-    has_up = (depth > 1);
-    int ux = rooms[0].x + 1, uy = rooms[0].y + 1;
-    if (ux == startX && uy == startY) ux = rooms[0].x + rooms[0].w - 2;
-    upX = ux + 0.5; upY = uy + 0.5;
 
     /* keys sit on pedestals at the heart of the shrine (RM_KEY) rooms */
     keys_left = num_keys;

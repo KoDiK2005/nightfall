@@ -301,15 +301,6 @@ void build_sprites(void) {
             else if (line) put_spr(5, x, y, pack(90, 80, 60), 2);
             else put_spr(5, x, y, pack(210, 200, 170), 2);
         }
-    /* 6: STAIRS UP — a cold blue doorway of light (mirror of the exit) */
-    for (int y = 0; y < TEX; y++)
-        for (int x = 0; x < TEX; x++) {
-            int frame = (x >= 16 && x <= 47 && y >= 6 && y <= 60);
-            int edge = frame && (x <= 19 || x >= 44 || y <= 9);
-            int inner = (x >= 22 && x <= 41 && y >= 12 && y <= 60);
-            if (edge) put_spr(6, x, y, pack(90, 170, 255), 2);
-            else if (inner) { int b = 40 + (60 - y) * 2; put_spr(6, x, y, pack(30, 60, b < 0 ? 0 : b), 2); }
-        }
     /* 7: CHEST — a hunched iron-bound coffer, domed lid, heavy padlock. The
      * key you need is locked inside; opening it is the fright. */
     for (int y = 0; y < TEX; y++)
@@ -1165,7 +1156,6 @@ void render_3d(void) {
             double px = notes[i].x + noteWX[i] * 0.44, pz = notes[i].y + noteWY[i] * 0.44;
             draw_sprite_dir(px, pz, -noteWY[i], noteWX[i], 0.34, 0.40, 0.34, 5, mvp);
         }
-    if (has_up) draw_billboard(upX, upY, 0.95, 0.95, 0.02, 6, mvp);  /* stairs up   */
 
     /* additive glows: torch flames, and the door's portal light once open */
     glEnable(GL_BLEND);

@@ -417,10 +417,6 @@ void draw_hud(void) {
     double ed = fabs(posX - exitX) + fabs(posY - exitY);
     if (ed < 1.6) draw_text_c(SCREEN_H - 150, 3,
         keys_left == 0 ? "ДВЕРЬ - ВОЙДИ ЧТОБЫ СПУСТИТЬСЯ" : "ДВЕРЬ ЗАПЕРТА - НАЙДИ КЛЮЧИ", pack(90, 255, 150));
-    if (has_up) {
-        double ud = fabs(posX - upX) + fabs(posY - upY);
-        if (ud < 1.4) draw_text_c(SCREEN_H - 150, 3, "ЛЕСТНИЦА ВВЕРХ - ВСТАНЬ ЧТОБЫ ПОДНЯТЬСЯ", pack(120, 190, 255));
-    }
 
     int bw = 220, bh = 16, bx = 16, by = SCREEN_H - 80;
     fill_rect(bx - 2, by - 2, bw + 4, bh + 4, pack(20, 20, 24));
