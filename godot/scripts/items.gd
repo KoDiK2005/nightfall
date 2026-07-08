@@ -32,10 +32,13 @@ func _on_state_changed(new_state: GameState.State) -> void:
 func _unhandled_input(event: InputEvent) -> void:
 	if GameState.state != GameState.State.PLAY or player.hidden:
 		return
+	# physical_keycode, а не keycode -- у пользователя раскладка ЙЦУКЕН, и
+	# по keycode физическая F/G отдавала бы кириллицу (см. память про
+	# sdl-input-scancodes). Совпадает с тем, как заданы действия move_*/run.
 	if event is InputEventKey and event.pressed and not event.echo:
-		if event.keycode == KEY_F:
+		if event.physical_keycode == KEY_F:
 			_strike_match()
-		elif event.keycode == KEY_G:
+		elif event.physical_keycode == KEY_G:
 			_throw_rock()
 
 func _strike_match() -> void:

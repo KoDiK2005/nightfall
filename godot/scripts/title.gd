@@ -28,7 +28,10 @@ func _unhandled_input(event: InputEvent) -> void:
 	if not visible:
 		return
 	if event is InputEventKey and event.pressed:
-		if event.keycode == KEY_UP or event.keycode == KEY_DOWN or event.keycode == KEY_W or event.keycode == KEY_S:
+		# W/S -- по physical_keycode (раскладка ЙЦУКЕН отдала бы кириллицу по
+		# keycode); стрелки/Enter/Space от раскладки не зависят.
+		if event.keycode == KEY_UP or event.keycode == KEY_DOWN \
+				or event.physical_keycode == KEY_W or event.physical_keycode == KEY_S:
 			sel = 1 - sel
 			_update_labels()
 		elif event.keycode == KEY_ENTER or event.keycode == KEY_SPACE:

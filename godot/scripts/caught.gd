@@ -15,5 +15,7 @@ func _on_state_changed(new_state: GameState.State) -> void:
 func _unhandled_input(event: InputEvent) -> void:
 	if not visible:
 		return
-	if event is InputEventKey and event.pressed and event.keycode == KEY_R:
-		GameState.start_new_game()
+	# physical_keycode -- раскладка ЙЦУКЕН (физическая R по keycode = кириллица);
+	# рестарт в том же режиме, в котором поймали, а не всегда в бесконечный
+	if event is InputEventKey and event.pressed and event.physical_keycode == KEY_R:
+		GameState.start_new_game(GameState.mode)
