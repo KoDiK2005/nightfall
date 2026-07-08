@@ -6,6 +6,7 @@ extends CanvasLayer
 
 @onready var floor_label: Label = $FloorLabel
 @onready var keys_label: Label = $KeysLabel
+@onready var biome_label: Label = $BiomeLabel
 @onready var stamina_bar: ProgressBar = $StaminaBar
 @onready var sanity_bar: ProgressBar = $SanityBar
 @onready var vignette: ColorRect = $Vignette
@@ -25,6 +26,7 @@ func _on_hud_changed() -> void:
 		return
 	floor_label.text = "ЭТАЖ %d" % GameState.depth
 	keys_label.text = "КЛЮЧИ %d/%d" % [level_gen.num_keys - level_gen.keys_left, level_gen.num_keys]
+	biome_label.text = level_gen.biome_name
 
 func _process(_delta: float) -> void:
 	if player == null:

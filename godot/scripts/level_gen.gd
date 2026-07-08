@@ -29,6 +29,7 @@ var monster: CharacterBody3D = null
 
 var noise_pos: Vector2 = Vector2.ZERO
 var noise_t: float = 0.0
+var biome_name: String = ""
 
 signal hud_changed
 
@@ -61,6 +62,7 @@ func _on_state_changed(new_state: GameState.State) -> void:
 		_build_level()
 
 func _build_level() -> void:
+	biome_name = Biomes.apply(GameState.depth)
 	_generate()
 	_paint()
 	_place_torches()

@@ -1,22 +1,17 @@
-[gd_resource type="MeshLibrary" load_steps=7 format=3]
+[gd_resource type="MeshLibrary" load_steps=5 format=3]
 
-[sub_resource type="StandardMaterial3D" id="Mat_wall"]
-albedo_color = Color(0.62, 0.58, 0.5, 1)
-roughness = 0.9
+[ext_resource type="Material" path="res://resources/wall_material.tres" id="1"]
+[ext_resource type="Material" path="res://resources/floor_material.tres" id="2"]
 
 [sub_resource type="BoxMesh" id="BoxMesh_wall"]
-material = SubResource("Mat_wall")
+material = ExtResource("1")
 size = Vector3(1, 1, 1)
 
 [sub_resource type="BoxShape3D" id="BoxShape3D_wall"]
 size = Vector3(1, 1, 1)
 
-[sub_resource type="StandardMaterial3D" id="Mat_floor"]
-albedo_color = Color(0.35, 0.32, 0.3, 1)
-roughness = 1.0
-
 [sub_resource type="BoxMesh" id="BoxMesh_floor"]
-material = SubResource("Mat_floor")
+material = ExtResource("2")
 size = Vector3(1, 0.1, 1)
 
 [resource]
