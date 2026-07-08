@@ -540,6 +540,9 @@ static void apply_biome_palette(void) {
     }
 }
 static void build_textures(void) {
+    /* the deeper you go, the more the stone has rotted: cracks spread, grime
+     * pools and the walls begin to weep. 0 near the top .. 1 by floor ~13. */
+    double wear = (depth - 1) / 12.0; if (wear > 1.0) wear = 1.0;
     for (int y = 0; y < TEX; y++)
         for (int x = 0; x < TEX; x++) {
             int i = y * TEX + x;
@@ -551,10 +554,20 @@ static void build_textures(void) {
             else {
                 /* cold grey-brown stone, recoloured by the biome; picks up torchlight */
                 int r = base * 0.92, g = base * 0.86, b = base * 0.80;
-                if (frand() < 0.05) { r -= 16; g -= 16; b -= 14; }   /* dark stains */
+                if (frand() < 0.05 + 0.22 * wear) { r -= 16; g -= 16; b -= 14; }   /* dark stains, worse deeper */
+                /* branching hairline cracks that spread across the face with depth */
+                double ridge = fabs(sin(x * 0.20 + 2.4 * sin(y * 0.11)));
+                if (ridge < 0.05 + 0.05 * wear) { int d = (int)(28 * (0.4 + wear)); r -= d; g -= d; b -= d; }
+                /* deep floors weep: dark, rusty blood seeping down the stone */
+                if (wear > 0.35 && frand() < 0.05 * wear) { r += (int)(22 * wear); g -= 12; b -= 8; }
+                if (r < 4) r = 4;
+                if (g < 3) g = 3;
+                if (b < 3) b = 3;
                 tex[0][i] = pack(r * bwall[0], g * bwall[1], b * bwall[2]);
             }
             int f = 30 + (int)(frand() * 14);
+            if (frand() < 0.12 * wear) f -= 12;                  /* grime pooling on deep floors */
+            if (f < 6) f = 6;
             int crack = ((x * 7 + y * 3) % 29 < 2);
             tex[1][i] = crack ? pack(8 * bfloor[0], 9 * bfloor[1], 10 * bfloor[2])
                               : pack(f * bfloor[0], f * bfloor[1], (f + 4) * bfloor[2]);
@@ -1462,13 +1475,40 @@ static const char *FSRC =
 static const char *OVS =
     "#version 330 core\n"
     "layout(location=0) in vec2 aPos; layout(location=1) in vec2 aUV;\n"
-    "out vec2 vUV; void main(){ vUV=aUV; gl_Position=vec4(aPos,0.0,1.0); }\n";
+    "uniform vec2 uOfs;\n"                 /* screen-shake offset (jumpscare) */
+    "out vec2 vUV; void main(){ vUV=aUV; gl_Position=vec4(aPos+uOfs,0.0,1.0); }\n";
 static const char *OFS =
     "#version 330 core\n"
     "in vec2 vUV; uniform sampler2D uTex; out vec4 frag;\n"
     "void main(){ frag = texture(uTex, vUV); }\n";
+/* Post-process: samples the rendered 3D scene and applies a VHS-horror grade —
+ * chromatic aberration that swells toward the edges (and on a scare), animated
+ * film grain, a faint rolling scanline, and a screen-shake UV offset. This is
+ * the pass that upscales the offscreen FBO to the window, replacing a raw blit. */
+static const char *PFS =
+    "#version 330 core\n"
+    "in vec2 vUV; out vec4 frag;\n"
+    "uniform sampler2D uTex;\n"
+    "uniform vec2 uScreenSize;\n"
+    "uniform float uTime, uAber, uGrain;\n"
+    "uniform vec2 uShake;\n"
+    "float hash(vec2 p){ p=fract(p*vec2(123.34,345.45)); p+=dot(p,p+34.345); return fract(p.x*p.y); }\n"
+    "void main(){\n"
+    "  vec2 uv = vec2(vUV.x, 1.0 - vUV.y) + uShake;\n"   /* flip to GL orientation, then shake */
+    "  vec2 off = (uv - 0.5) * uAber;\n"                 /* radial: grows toward the edges */
+    "  float r = texture(uTex, uv + off).r;\n"
+    "  float g = texture(uTex, uv).g;\n"
+    "  float b = texture(uTex, uv - off).b;\n"
+    "  vec3 col = vec3(r, g, b);\n"
+    "  float n = hash(uv * uScreenSize + fract(uTime) * vec2(37.0, 17.0));\n"
+    "  col += (n - 0.5) * uGrain;\n"                     /* film grain */
+    "  col *= 0.97 + 0.03 * sin(uv.y * uScreenSize.y * 1.4 + uTime * 4.0);\n"  /* rolling scanline */
+    "  frag = vec4(col, 1.0);\n"
+    "}\n";
 
-static GLuint prog3d, progOv;
+static GLuint prog3d, progOv, progPost;
+static GLint u_ovofs;                                    /* overlay shake offset */
+static GLint up_scr, up_time, up_aber, up_grain, up_shake;
 static GLint u_mvp, u_campos, u_camdir, u_amb, u_fogk, u_flick, u_mode;
 static GLint u_ambtint, u_scrsize, u_sprtint;
 static float spr_tint[3] = {1.0f, 1.0f, 1.0f};   /* colour multiply for the next sprite */
@@ -1821,6 +1861,13 @@ static void setup_attribs(void) {
 static void gl_init(void) {
     prog3d = link_prog(VSRC, FSRC);
     progOv = link_prog(OVS, OFS);
+    progPost = link_prog(OVS, PFS);
+    u_ovofs   = glGetUniformLocation_(progOv, "uOfs");
+    up_scr    = glGetUniformLocation_(progPost, "uScreenSize");
+    up_time   = glGetUniformLocation_(progPost, "uTime");
+    up_aber   = glGetUniformLocation_(progPost, "uAber");
+    up_grain  = glGetUniformLocation_(progPost, "uGrain");
+    up_shake  = glGetUniformLocation_(progPost, "uShake");
     u_mvp = glGetUniformLocation_(prog3d, "uMVP");
     u_campos = glGetUniformLocation_(prog3d, "uCamPos");
     u_camdir = glGetUniformLocation_(prog3d, "uCamDir");
@@ -2465,11 +2512,48 @@ static void save_ppm(const char *path) {
     free(px);
 }
 
+/* upscale the offscreen 3D scene to the window through the post-process grade:
+ * chromatic aberration + film grain + rolling scanline, with an optional
+ * screen-shake that spikes on scares (chest screamer, hallucination flash) and
+ * as a frayed mind bleeds the colour apart. Replaces the old raw blit. */
+static void present_scene(void) {
+    double scare = 0.0;
+    if (screamer_t > 0.0) scare = fmax(scare, screamer_t / SCREAMER_DUR);
+    if (vision_t   > 0.0) scare = fmax(scare, 0.6 * vision_t / VIS_DUR);
+    double dread = 1.0 - sanity;
+    double aber  = 0.0028 + 0.012 * dread + 0.055 * scare;   /* uv split at the edge */
+    double grain = 0.045 + 0.10  * dread + 0.12  * scare;
+    double smag  = 0.012 * scare;                            /* shake magnitude (uv) */
+    float sx = (float)(smag * sin(state_time * 57.0));
+    float sy = (float)(smag * cos(state_time * 43.0));
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_BLEND);
+    glUseProgram_(progPost);
+    glActiveTexture_(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, sceneTex);
+    glUniform1i_(glGetUniformLocation_(progPost, "uTex"), 0);
+    glUniform2f_(up_scr, (float)winW, (float)winH);
+    glUniform1f_(up_time, (float)state_time);
+    glUniform1f_(up_aber, (float)aber);
+    glUniform1f_(up_grain, (float)grain);
+    glUniform2f_(up_shake, sx, sy);
+    glBindVertexArray_(ovVAO);
+    glDrawArrays(GL_TRIANGLES, 0, 6);
+}
+
 static void present_overlay(void) {
     glDisable(GL_DEPTH_TEST);
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     glUseProgram_(progOv);
+    /* the catch jumpscare kicks the whole overlay for the first moments */
+    float ox = 0.0f, oy = 0.0f;
+    if (game_state == ST_CAUGHT && state_time < 0.6) {
+        float k = (float)(0.05 * (0.6 - state_time) / 0.6);
+        ox = k * sinf((float)state_time * 71.0f);
+        oy = k * cosf((float)state_time * 53.0f);
+    }
+    glUniform2f_(u_ovofs, ox, oy);
     glActiveTexture_(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, texOverlay);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, SCREEN_W, SCREEN_H, 0, GL_BGRA, GL_UNSIGNED_BYTE, fb);
@@ -2811,11 +2895,9 @@ int main(int argc, char **argv) {
             glClearColor(0, 0, 0, 1); glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         } else {
             render_3d();                                 /* into the offscreen FBO */
-            glBindFramebuffer_(GL_READ_FRAMEBUFFER, sceneFBO);
-            glBindFramebuffer_(GL_DRAW_FRAMEBUFFER, 0);
-            glBlitFramebuffer_(0, 0, rndW, rndH, 0, 0, winW, winH, GL_COLOR_BUFFER_BIT, GL_LINEAR);
             glBindFramebuffer_(GL_FRAMEBUFFER, 0);
             glViewport(0, 0, winW, winH);
+            present_scene();                             /* post-process upscale to window */
         }
 
         /* dev screenshot: capture the pure 3D scene after a few settling frames */
