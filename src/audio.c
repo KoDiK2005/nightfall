@@ -16,6 +16,20 @@ void apply_master_volume(void) {
     Mix_MasterVolume(master_vol);
 #endif
 }
+
+/* Pan a channel toward a world point relative to the player's facing, using
+ * SDL_mixer's built-in position effect (a cheap per-channel stereo-pan post
+ * filter, not a per-frame cost). Distance is left at 0 -- loudness by
+ * proximity is already hand-tuned per sound via Mix_VolumeChunk, so this
+ * only adds *direction*, it doesn't re-attenuate on top of that.          */
+void play_positional(int channel, double srcX, double srcY) {
+    double dx = srcX - posX, dy = srcY - posY;
+    double fwd = dx * cos(yaw) + dy * sin(yaw);
+    double rgt = -dx * sin(yaw) + dy * cos(yaw);
+    double deg = atan2(rgt, fwd) * (180.0 / 3.14159265);   /* 0 ahead, +right */
+    if (deg < 0) deg += 360.0;
+    Mix_SetPosition(channel, (Sint16)deg, 0);
+}
 void update_audio(double dt, int moving) {
     double d = sqrt((posX - monX) * (posX - monX) + (posY - monY) * (posY - monY));
     double target = d < 9 ? (1.0 - d / 9.0) : 0.0;
@@ -31,19 +45,22 @@ void update_audio(double dt, int moving) {
     }
     if (moving && game_state == ST_PLAY) {
         step_timer -= dt;
-        if (step_timer <= 0) { Mix_VolumeChunk(snd_step, 60); Mix_PlayChannel(2, snd_step, 0); step_timer = 0.42; }
+        if (step_timer <= 0) { Mix_VolumeChunk(snd_step, 60); Mix_PlayChannel(2, snd_step, 0);
+            Mix_SetPosition(2, 0, 0);                  /* your own feet: dead centre */
+            step_timer = 0.42; }
     }
     /* shrine hum: a soft choral drone that swells as you near an unopened chest */
     if (snd_shrine) {
-        double nd = 1e9;
+        double nd = 1e9; int nk = -1;
         if (game_state == ST_PLAY)
             for (int i = 0; i < num_keys; i++)
                 if (keys[i].active) {
                     double dx = posX - keys[i].x, dy = posY - keys[i].y, dk = sqrt(dx * dx + dy * dy);
-                    if (dk < nd) nd = dk;
+                    if (dk < nd) { nd = dk; nk = i; }
                 }
         int vol = (nd < 6.5) ? (int)(58 * (1.0 - nd / 6.5)) : 0;
         if (vol > 0 && !Mix_Playing(CH_SHRINE)) Mix_PlayChannel(CH_SHRINE, snd_shrine, -1);
         Mix_Volume(CH_SHRINE, vol);
+        if (vol > 0 && nk >= 0) play_positional(CH_SHRINE, keys[nk].x, keys[nk].y);
     }
 }

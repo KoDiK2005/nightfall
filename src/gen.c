@@ -474,7 +474,10 @@ void open_chest(int i) {
     if (i < 0 || i >= num_keys || !keys[i].active) return;
     keys[i].active = 0; keys_left--;
     make_noise(keys[i].x, keys[i].y, 6.0);       /* the lid's crack carries far */
-    if (snd_creak) { Mix_VolumeChunk(snd_creak, 110); Mix_PlayChannel(CH_CREAK, snd_creak, 0); }
+    if (snd_creak) {
+        Mix_VolumeChunk(snd_creak, 110); Mix_PlayChannel(CH_CREAK, snd_creak, 0);
+        play_positional(CH_CREAK, keys[i].x, keys[i].y);
+    }
     if (snd_pickup) Mix_PlayChannel(3, snd_pickup, 0);
     if (nvisions > 0) {                          /* the screamer needs a photo */
         screamer_idx = rand() % nvisions;

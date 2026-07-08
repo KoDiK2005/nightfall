@@ -228,6 +228,7 @@ extern double heart_timer, step_timer;
 
 void apply_master_volume(void);
 void update_audio(double dt, int moving);
+void play_positional(int channel, double srcX, double srcY);
 
 /* =========================================================================
  * render.c — GL setup, procedural textures/sprites, the world mesh, and the

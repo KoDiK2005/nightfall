@@ -95,6 +95,7 @@ void update_ai(double dt, int moving, int sprinting) {
             if (snd_roar) {
                 Mix_VolumeChunk(snd_roar, (int)(55 + 73 * (1.0 - fmin(d, 12.0) / 12.0)));
                 Mix_PlayChannel(6, snd_roar, 0);
+                play_positional(6, monX, monY);
             }
             growl_timer = 5.5 + frand() * 2.0;            /* let the long roar breathe */
         }
@@ -108,6 +109,7 @@ void update_ai(double dt, int moving, int sprinting) {
             if (snd_growl && mon_type != MON_WATCHER) {
                 Mix_VolumeChunk(snd_growl, (int)(40 + 68 * (1.0 - fmin(d, 12.0) / 12.0)));
                 Mix_PlayChannel(7, snd_growl, 0);         /* own channel, won't cut the roar */
+                play_positional(7, monX, monY);
             }
             growl_timer = 1.8 + frand() * 2.4;
         }

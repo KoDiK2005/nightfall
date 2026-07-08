@@ -337,7 +337,8 @@ int main(int argc, char **argv) {
                          match_count > 0 && match_burn <= 0.0) {
                     match_count--; match_burn = MATCH_DUR;
                     make_noise(posX, posY, 2.0);           /* the strike hisses */
-                    if (snd_step) { Mix_VolumeChunk(snd_step, 90); Mix_PlayChannel(2, snd_step, 0); }
+                    if (snd_step) { Mix_VolumeChunk(snd_step, 90); Mix_PlayChannel(2, snd_step, 0);
+                        Mix_SetPosition(2, 0, 0); }        /* your own hands: dead centre */
                 }
                 /* throw a rock: it lands down the corridor and knocks loud
                  * enough to pull the monster there -- away from you. */
@@ -468,6 +469,7 @@ int main(int argc, char **argv) {
                         int vol = (int)(110 - 6 * thrown); if (vol < 40) vol = 40;
                         Mix_VolumeChunk(snd_thud, vol);
                         Mix_PlayChannel(2, snd_thud, 0);
+                        play_positional(2, rockTX, rockTY);
                     }
                 }
             }
