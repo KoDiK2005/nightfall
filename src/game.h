@@ -29,15 +29,15 @@
 #define SCREEN_H 576
 #define TEX      64
 
-#define MW 29
-#define MH 21
+#define MW 54
+#define MH 42
 #define MAX_KEYS 6           /* array capacity; the live count scales with depth */
 #define NUM_LOCKERS 5
 #define NUM_NOTES 2
-#define MAX_ROOMS 14
+#define MAX_ROOMS 26         /* сюжетный режим: полный двухэтажный дом занимает много комнат */
 #define MAX_PILLARS 24
-#define MAX_PROPS 150
-#define MAX_TORCHES 48
+#define MAX_PROPS 260        /* сюжетный режим: мебель по всему дому + захламлённый двор */
+#define MAX_TORCHES 96
 #define MAX_MATCHPICK 4
 #define MAX_ROCKPICK 4
 #define MAX_VISIONS 24

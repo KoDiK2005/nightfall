@@ -100,9 +100,22 @@ uint32_t pack(int r, int g, int b) { return packa(r, g, b, 255); }
 double frand(void) { return rand() / (double)RAND_MAX; }
 
 /* ------------------------------------------------------------------ physics */
+/* props (furniture, yard clutter, gazebo posts, the car hulk, ...) had no
+ * collision at all -- purely visual, walk-through. Blocks against anything
+ * at roughly standing height; stuff mounted above head height (the roof's
+ * eaves, the chimney) is deliberately excluded so it doesn't wall off open
+ * ground underneath it. */
+static int prop_blocks(double x, double y, double r) {
+    for (int i = 0; i < prop_count; i++) {
+        if (props[i].y0 >= 1.6) continue;
+        if (props[i].y1 - props[i].y0 < 0.10) continue;   /* a step/decal, not an obstacle -- walk over it */
+        if (fabs(x - props[i].x) < props[i].hwx + r && fabs(y - props[i].z) < props[i].hwz + r) return 1;
+    }
+    return 0;
+}
 static void try_move(double nx, double ny, double r) {
-    if (is_open((int)(nx + (nx > posX ? r : -r)), (int)posY)) posX = nx;
-    if (is_open((int)posX, (int)(ny + (ny > posY ? r : -r)))) posY = ny;
+    if (is_open((int)(nx + (nx > posX ? r : -r)), (int)posY) && !prop_blocks(nx, posY, r)) posX = nx;
+    if (is_open((int)posX, (int)(ny + (ny > posY ? r : -r))) && !prop_blocks(posX, ny, r)) posY = ny;
 }
 
 /* -------------------------------------------------------------------- main */
@@ -190,9 +203,9 @@ int main(int argc, char **argv) {
     /* dev: jump straight into the story mode's first stage, skipping the title */
     if (getenv("NIGHTFALL_STORY")) { story_mode = 1; story_start_denial(); game_state = ST_PLAY; state_time = 0; }
     /* dev: jump straight to the door threshold, to test the mother scene without walking there */
-    if (getenv("NIGHTFALL_STORYDOOR")) { posX = 14.5; posY = 13.6; }
+    if (getenv("NIGHTFALL_STORYDOOR")) { posX = 14.5; posY = 12.8; }
     /* dev: jump straight to the child's room, to check its furniture layout */
-    if (getenv("NIGHTFALL_STORYROOM")) { posX = 4.5; posY = 12.0; yaw = 1.5708; pitch = -0.15; }
+    if (getenv("NIGHTFALL_STORYROOM")) { posX = 46.0; posY = 3.0; yaw = 1.5708; pitch = -0.15; }
     /* dev screenshot: stand in front of a torch looking at it (skip with
      * NIGHTFALL_SHOTSPAWN to instead capture the exact spawn view) */
     if (shotpath && torch_count > 0 && !getenv("NIGHTFALL_SHOTSPAWN")) {
