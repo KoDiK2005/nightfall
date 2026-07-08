@@ -1,18 +1,25 @@
 extends CharacterBody3D
-## Порт мозга Сталкера из ai.c: три состояния (HUNT/SEARCH/WANDER),
-## восприятие по зрению (дистанция + луч на стены) и по слуху (дистанция,
-## громче при беге), навигация -- волновой поиск (BFS) по той же сетке,
-## что и уровень, как gdist в C-версии.
+## Порт мозга трёх ужасов из ai.c. Общий костяк -- три состояния
+## (WANDER/SEARCH/HUNT) и волновой поиск (BFS) по сетке уровня (как gdist
+## в C-версии); восприятие разное по типу:
+##  STALKER  -- зрение (луч+дистанция) и слух, рвётся ближе на подходе
+##  LISTENER -- слепой, но с намного более острым слухом
+##  WATCHER  -- замирает, пока игрок на него смотрит, иначе мчится
 
 enum State { WANDER, SEARCH, HUNT }
+enum MonType { STALKER, LISTENER, WATCHER }
 
 const SEE_RANGE := 7.0
 const HEAR_WALK := 3.0
 const HEAR_RUN := 6.5
+const LISTENER_HEAR_WALK := 7.2   # HEAR_WALK * 2.4, как в ai.c
+const LISTENER_HEAR_RUN := 12.4
 const CATCH_DIST := 0.6
 const CHECK_DIST := 1.0   # на таком расстоянии оно "проверяет" шкафчик
 const SPEED := 1.55   # MONSTER_SPD в game.h
+const WATCHER_RUSH_MULT := 2.3   # совпадает с render.c
 
+var mon_type: MonType = MonType.STALKER
 var state: State = State.WANDER
 var target_cell: Vector2i = Vector2i.ZERO
 var dist_grid: Array = []   # BFS-дистанции от target_cell, как gdist в C
@@ -25,7 +32,24 @@ var player: CharacterBody3D = null
 func setup(p_level_gen: Node, p_player: CharacterBody3D) -> void:
 	level_gen = p_level_gen
 	player = p_player
+	mon_type = _pick_type()
 	pick_wander()
+
+## Порт выбора ужаса по глубине из gen.c: первая встреча со Слухачом на
+## 4 этаже, с Наблюдателем -- на 7, дальше вразнобой из уже открытых типов.
+func _pick_type() -> MonType:
+	var depth: int = GameState.depth
+	if depth < 4:
+		return MonType.STALKER
+	elif depth == 4:
+		return MonType.LISTENER
+	elif depth == 7:
+		return MonType.WATCHER
+	else:
+		var options: Array = [MonType.STALKER, MonType.LISTENER]
+		if depth >= 7:
+			options.append(MonType.WATCHER)
+		return options[randi() % options.size()]
 
 func _physics_process(delta: float) -> void:
 	if level_gen == null or player == null or GameState.state != GameState.State.PLAY:
@@ -55,14 +79,24 @@ func _sense(delta: float) -> void:
 	var ppos := Vector2(player.position.x, player.position.z)
 	var d := mypos.distance_to(ppos)
 	var sensed := false
+	var speed := Vector2(player.velocity.x, player.velocity.z).length()
 
-	if d < SEE_RANGE and _has_los(ppos):
-		sensed = true
-	else:
-		var speed := Vector2(player.velocity.x, player.velocity.z).length()
-		var hear := HEAR_RUN if speed > 3.5 else HEAR_WALK
+	if mon_type == MonType.LISTENER:
+		# слепой -- зрение не участвует вовсе, только гораздо более острый слух
+		var hear := LISTENER_HEAR_RUN if speed > 3.5 else LISTENER_HEAR_WALK
 		if speed > 0.5 and d < hear:
 			sensed = true
+	elif mon_type == MonType.WATCHER:
+		# знает про игрока всегда -- просто не может сдвинуться, пока
+		# игрок на него смотрит (см. _move)
+		sensed = true
+	else:
+		if d < SEE_RANGE and _has_los(ppos):
+			sensed = true
+		else:
+			var hear := HEAR_RUN if speed > 3.5 else HEAR_WALK
+			if speed > 0.5 and d < hear:
+				sensed = true
 
 	if sensed:
 		state = State.HUNT
@@ -130,7 +164,28 @@ func pick_wander() -> void:
 			set_target(Vector2i(x, y))
 			return
 
+## смотрит ли игрок в его сторону сейчас (см. player_sees_monster в ai.c):
+## внутри узкого конуса обзора и без стен между ними.
+func _player_watching() -> bool:
+	var to_mon := Vector2(position.x - player.position.x, position.z - player.position.z)
+	var dist := to_mon.length()
+	if dist < 0.7:
+		return true
+	var fwd := -player.transform.basis.z
+	var fwd2d := Vector2(fwd.x, fwd.z).normalized()
+	var facing: float = fwd2d.dot(to_mon.normalized())
+	if facing < 0.42:   # вне ~65° конуса вперёд
+		return false
+	return _has_los(Vector2(player.position.x, player.position.z))
+
 func _move(delta: float) -> void:
+	var speed_mult := 1.0
+	if mon_type == MonType.WATCHER:
+		if _player_watching():
+			velocity = Vector3.ZERO
+			return
+		speed_mult = WATCHER_RUSH_MULT
+
 	var cx := int(position.x)
 	var cz := int(position.z)
 	if cx < 0 or cz < 0 or cz >= dist_grid.size() or cx >= dist_grid[0].size():
@@ -149,7 +204,7 @@ func _move(delta: float) -> void:
 	var dir := (target_pos - position)
 	dir.y = 0
 	if dir.length() > 0.05:
-		velocity = dir.normalized() * SPEED
+		velocity = dir.normalized() * SPEED * speed_mult
 	else:
 		velocity = Vector3.ZERO
 	move_and_slide()
