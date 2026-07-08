@@ -133,27 +133,50 @@ static int yard_blocked(double x, double z) {
     return 0;
 }
 static void place_yard_clutter(void) {
-    /* заросли бурьяна -- пожелтевшая, неухоженная трава пучками */
-    for (int i = 0; i < 26 && prop_count < MAX_PROPS; i++) {
+    /* заросли бурьяна -- пожелтевшая, неухоженная трава пучками, гуще у стен */
+    for (int i = 0; i < 46 && prop_count < MAX_PROPS; i++) {
         double x = 1.5 + frand() * (MW - 3.0), z = 1.5 + frand() * (MH - 3.0);
         if (yard_blocked(x, z)) continue;
-        float g = 0.35f + frand() * 0.25f;
-        props[prop_count++] = (Prop){ x, z, 0.08 + frand() * 0.06, 0.08 + frand() * 0.06,
-            0.0, 0.22 + frand() * 0.22, g, g * 1.35f, g * 0.30f };
+        float g = 0.32f + frand() * 0.28f;
+        props[prop_count++] = (Prop){ x, z, 0.07 + frand() * 0.07, 0.07 + frand() * 0.07,
+            0.0, 0.20 + frand() * 0.28, g, g * 1.35f, g * 0.28f };
     }
-    /* пустые бутылки, брошенные где попало -- особенно у крыльца */
-    for (int i = 0; i < 10 && prop_count < MAX_PROPS; i++) {
+    /* мелкие камни, разбросанные по всему двору */
+    for (int i = 0; i < 16 && prop_count < MAX_PROPS; i++) {
+        double x = 1.5 + frand() * (MW - 3.0), z = 1.5 + frand() * (MH - 3.0);
+        if (yard_blocked(x, z)) continue;
+        float g = 0.30f + frand() * 0.12f;
+        props[prop_count++] = (Prop){ x, z, 0.06 + frand() * 0.05, 0.06 + frand() * 0.05,
+            0.0, 0.07 + frand() * 0.06, g, g * 0.96f, g * 0.92f };
+    }
+    /* пустые бутылки -- бурое и зелёное стекло вперемешку, особенно у крыльца */
+    for (int i = 0; i < 15 && prop_count < MAX_PROPS; i++) {
         double x = 12.5 + frand() * 4.0, z = 10.5 + frand() * 3.5;
         if (yard_blocked(x, z)) continue;
-        props[prop_count++] = (Prop){ x, z, 0.05, 0.05, 0.0, 0.16 + frand() * 0.05, 0.10f, 0.22f, 0.12f };
+        int brown = frand() < 0.5;
+        props[prop_count++] = (Prop){ x, z, 0.05, 0.05, 0.0, 0.16 + frand() * 0.05,
+            brown ? 0.20f : 0.10f, brown ? 0.14f : 0.22f, brown ? 0.06f : 0.12f };
     }
-    /* мусор -- смятые кучи, ничем не прикрытые */
-    for (int i = 0; i < 8 && prop_count < MAX_PROPS; i++) {
+    /* ещё бутылки, раскиданные по всему двору -- не только у крыльца */
+    for (int i = 0; i < 10 && prop_count < MAX_PROPS; i++) {
         double x = 1.5 + frand() * (MW - 3.0), z = 1.5 + frand() * (MH - 3.0);
         if (yard_blocked(x, z)) continue;
-        props[prop_count++] = (Prop){ x, z, 0.22 + frand() * 0.16, 0.22 + frand() * 0.16,
-            0.0, 0.14 + frand() * 0.16, 0.32f, 0.29f, 0.24f };
+        int brown = frand() < 0.5;
+        props[prop_count++] = (Prop){ x, z, 0.05, 0.05, 0.0, 0.16 + frand() * 0.05,
+            brown ? 0.20f : 0.10f, brown ? 0.14f : 0.22f, brown ? 0.06f : 0.12f };
     }
+    /* мусор -- смятые кучи, ничем не прикрытые, гуще у стен дома */
+    for (int i = 0; i < 14 && prop_count < MAX_PROPS; i++) {
+        double x = 1.5 + frand() * (MW - 3.0), z = 1.5 + frand() * (MH - 3.0);
+        if (yard_blocked(x, z)) continue;
+        props[prop_count++] = (Prop){ x, z, 0.18 + frand() * 0.20, 0.18 + frand() * 0.20,
+            0.0, 0.12 + frand() * 0.18, 0.32f, 0.29f, 0.24f };
+    }
+    /* куча мусора и старых листьев прямо у стен дома, будто годами не убирали */
+    { double wallx[4] = { 9.6, 18.4, 12, 16 }, wallz[4] = { 15, 17, 13.6, 13.6 };
+      for (int i = 0; i < 4 && prop_count < MAX_PROPS; i++)
+          props[prop_count++] = (Prop){ wallx[i], wallz[i], 0.30 + frand() * 0.14, 0.24 + frand() * 0.12,
+              0.0, 0.10 + frand() * 0.10, 0.30f, 0.27f, 0.16f }; }
     /* ржавый забор -- рваный, с провалами, не по всему периметру */
     for (int x = 2; x <= MW - 3 && prop_count < MAX_PROPS; x += 2) {
         if (frand() < 0.35) continue;                     /* провалы в заборе */
@@ -166,6 +189,21 @@ static void place_yard_clutter(void) {
         props[prop_count++] = (Prop){ cx, cz, 1.5, 0.85, 0.0, 0.55, 0.28f, 0.14f, 0.10f };
     if (prop_count < MAX_PROPS)
         props[prop_count++] = (Prop){ cx, cz, 1.1, 0.7, 0.55, 0.72, 0.24f, 0.12f, 0.09f };
+
+    /* бельевая верёвка на двух покосившихся столбах -- забыта, бельё
+     * никогда не снимают */
+    double clx0 = 20.0, clx1 = 23.0, clz = 12.0;
+    if (prop_count < MAX_PROPS) props[prop_count++] = (Prop){ clx0, clz, 0.05, 0.05, 0.0, 1.0, 0.30f, 0.22f, 0.16f };
+    if (prop_count < MAX_PROPS) props[prop_count++] = (Prop){ clx1, clz, 0.05, 0.05, 0.0, 1.0, 0.30f, 0.22f, 0.16f };
+    if (prop_count < MAX_PROPS) props[prop_count++] = (Prop){ (clx0 + clx1) / 2, clz, (clx1 - clx0) / 2, 0.02, 0.97, 1.0, 0.55f, 0.52f, 0.46f };
+    if (prop_count < MAX_PROPS) props[prop_count++] = (Prop){ clx0 + 0.6, clz, 0.14, 0.03, 0.7, 0.95, 0.62f, 0.60f, 0.55f };   /* забытая тряпка */
+
+    /* шаткое крыльцо со ступенькой у самой двери */
+    if (prop_count < MAX_PROPS) props[prop_count++] = (Prop){ 14.5, 13.3, 1.1, 0.5, 0.0, 0.16, 0.28f, 0.24f, 0.20f };
+    /* засохший цветок в треснувшем горшке рядом с крыльцом -- единственная
+     * попытка уюта, давно заброшенная */
+    if (prop_count < MAX_PROPS) props[prop_count++] = (Prop){ 13.0, 13.5, 0.14, 0.14, 0.0, 0.22, 0.32f, 0.20f, 0.14f };
+    if (prop_count < MAX_PROPS) props[prop_count++] = (Prop){ 13.0, 13.5, 0.03, 0.03, 0.22, 0.42, 0.35f, 0.30f, 0.10f };
 }
 
 /* Уровень 1, стадия "Отрицание": дом с лужайкой и беседкой посреди
@@ -225,7 +263,7 @@ void story_start_denial(void) {
     for (int i = 0; i < DENIAL_MEMORIES; i++) memory_seen[i] = 0;
     story_subtitle_lines = NULL; story_subtitle_a = 0.0;
     story_mother_visible = 0;
-    story_speed_mult = 0.45;   /* медленнее, чтобы успеть прочитать воспоминания */
+    story_speed_mult = 0.26;   /* совсем медленный, тяжёлый шаг -- время прочитать всё */
 
     /* обнулить всё, что относится к бесконечному режиму, чтобы не
      * протащить призраков предыдущей игры на лужайку: сундуки/ключи,
