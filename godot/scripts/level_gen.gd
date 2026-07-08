@@ -50,7 +50,8 @@ func make_noise(pos: Vector2, ttl: float) -> void:
 func _ready() -> void:
 	randomize()
 	AudioManager.player = player
-	_build_level()
+	if GameState.mode == GameState.Mode.ENDLESS:
+		_build_level()
 	GameState.state_changed.connect(_on_state_changed)
 	if OS.get_environment("NIGHTFALL_GDTRACE") != "":
 		print("GDTRACE rooms=%d player_pos=%s wall_items=%d floor_items=%d torches=%d keys=%d" % [
@@ -58,7 +59,7 @@ func _ready() -> void:
 			floor_map.get_used_cells().size(), torches.size(), num_keys])
 
 func _on_state_changed(new_state: GameState.State) -> void:
-	if new_state == GameState.State.PLAY:
+	if new_state == GameState.State.PLAY and GameState.mode == GameState.Mode.ENDLESS:
 		_build_level()
 
 func _build_level() -> void:
@@ -123,7 +124,7 @@ func _spawn_monster() -> void:
 	player.sanity = 1.0
 
 func _process(delta: float) -> void:
-	if GameState.state != GameState.State.PLAY:
+	if GameState.state != GameState.State.PLAY or GameState.mode != GameState.Mode.ENDLESS:
 		return
 	if noise_t > 0.0:
 		noise_t -= delta
