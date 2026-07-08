@@ -15,17 +15,11 @@ material = ExtResource("2")
 size = Vector3(1, 0.1, 1)
 
 [resource]
-_data = {
-"0": {
-"mesh": SubResource("BoxMesh_wall"),
-"mesh_transform": Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.5, 0),
-"name": "wall",
-"shapes": [SubResource("BoxShape3D_wall"), Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.5, 0)]
-},
-"1": {
-"mesh": SubResource("BoxMesh_floor"),
-"mesh_transform": Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.05, 0),
-"name": "floor",
-"shapes": []
-}
-}
+item/0/name = "wall"
+item/0/mesh = SubResource("BoxMesh_wall")
+item/0/mesh_transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.5, 0)
+item/0/shapes = [SubResource("BoxShape3D_wall"), Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.5, 0)]
+item/1/name = "floor"
+item/1/mesh = SubResource("BoxMesh_floor")
+item/1/mesh_transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.05, 0)
+item/1/shapes = []
