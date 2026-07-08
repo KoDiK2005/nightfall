@@ -6,12 +6,14 @@ Generates all sound assets from scratch (no external files) so the repo is
 fully self-contained. Uses only the Python standard library.
 
 Outputs (44.1 kHz, mono, 16-bit PCM WAV) into ../assets:
-    ambient.wav    - long, loopable dread drone with wind
     heartbeat.wav  - a single lub-dub beat (game re-triggers it, faster as
                      the monster gets closer)
     scare.wav      - the jumpscare screech
     pickup.wav     - a soft chime for picking up a key
     step.wav       - a muffled footstep
+
+Some assets (ambient.wav, roar.wav, creak.wav) are hand-picked/mixed custom
+recordings, not generated here -- see the comments in main() below.
 """
 
 import math
@@ -340,7 +342,10 @@ def main():
     random.seed(1917)
     os.makedirs(OUT, exist_ok=True)
     print("Generating audio assets...")
-    write_wav("ambient.wav", make_ambient())
+    # ambient.wav is now a hand-mixed custom recording (the game's main
+    # ambient bed), not procedural -- do NOT regenerate it here or it would
+    # clobber that asset. (make_ambient() is kept above as a fallback if you
+    # want to restore the procedural drone.)
     write_wav("heartbeat.wav", make_heartbeat())
     write_wav("scare.wav", make_scare())
     write_wav("pickup.wav", make_pickup())
@@ -350,9 +355,8 @@ def main():
     # procedural -- do NOT regenerate it here or it would clobber that asset.
     # (make_roar() is kept above as a fallback if you want to restore it.)
     write_wav("growl.wav", make_growl())
-    # new assets appended last so they don't perturb the RNG stream (and thus
-    # the bytes) of the sounds generated above.
-    write_wav("creak.wav", make_creak())
+    # creak.wav (the chest-open sound) is also now a custom recording -- do
+    # NOT regenerate it here. (make_creak() is kept above as a fallback.)
     write_wav("shrine.wav", make_shrine())
     write_wav("thud.wav", make_thud())
     print("Done.")
