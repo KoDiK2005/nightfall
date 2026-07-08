@@ -10,26 +10,59 @@ const WALL_ITEM := 0
 const FLOOR_ITEM := 1
 const TORCH_SPACING := 2.6   # совпадает с TORCH_SPACING в render.c
 const TORCH_SCENE := preload("res://scenes/torch.tscn")
+const PICKUP_DIST := 0.9
+const EXIT_DIST := 0.7
+const MAX_KEYS := 6
 
 var map: Array = []   # map[y][x] == true, если клетка открыта (пол)
 var rooms: Array = [] # Rect2i(x, y, w, h) на каждую комнату
 var torches: Array = []   # Node3D-инстансы факелов этого уровня
 
+var num_keys: int = 3
+var keys_left: int = 3
+var chests: Array = []       # [{pos: Vector2, active: bool, mesh: MeshInstance3D}]
+var exit_pos: Vector2 = Vector2.ZERO
+var exit_mesh: MeshInstance3D = null
+
+signal hud_changed
+
 @onready var wall_map: GridMap = $"../WallGridMap"
 @onready var floor_map: GridMap = $"../FloorGridMap"
 @onready var player: CharacterBody3D = $"../Player"
 @onready var torch_root: Node3D = $"../Torches"
+@onready var props_root: Node3D = $"../Props"
 
 func _ready() -> void:
 	randomize()
+	_build_level()
+	if OS.get_environment("NIGHTFALL_GDTRACE") != "":
+		print("GDTRACE rooms=%d player_pos=%s wall_items=%d floor_items=%d torches=%d keys=%d" % [
+			rooms.size(), player.position, wall_map.get_used_cells().size(),
+			floor_map.get_used_cells().size(), torches.size(), num_keys])
+
+func _build_level() -> void:
 	_generate()
 	_paint()
 	_place_torches()
+	_place_keys_and_exit()
 	_spawn_player()
-	if OS.get_environment("NIGHTFALL_GDTRACE") != "":
-		print("GDTRACE rooms=%d player_pos=%s wall_items=%d floor_items=%d torches=%d" % [
-			rooms.size(), player.position, wall_map.get_used_cells().size(),
-			floor_map.get_used_cells().size(), torches.size()])
+	hud_changed.emit()
+
+func _process(_delta: float) -> void:
+	var p := Vector2(player.position.x, player.position.z)
+	for c in chests:
+		if not c.active:
+			continue
+		if p.distance_to(c.pos) < PICKUP_DIST and Input.is_action_just_pressed("interact"):
+			c.active = false
+			c.mesh.visible = false
+			keys_left -= 1
+			hud_changed.emit()
+			if keys_left == 0:
+				exit_mesh.get_active_material(0).albedo_color = Color(0.3, 1.0, 0.5)
+	if keys_left == 0 and p.distance_to(exit_pos) < EXIT_DIST:
+		GameState.advance_floor()
+		_build_level()
 
 func is_open(x: int, y: int) -> bool:
 	if x < 0 or x >= MW or y < 0 or y >= MH:
@@ -163,6 +196,74 @@ func _wall_dir(x: int, y: int) -> Vector2i:
 	if not is_open(x, y + 1): return Vector2i(0, 1)
 	if not is_open(x, y - 1): return Vector2i(0, -1)
 	return Vector2i.ZERO
+
+## Ключи в сундуках (порт reset_level из gen.c): 3 на первом этаже, плюс
+## один за каждые три этажа, максимум MAX_KEYS. Раскладываются по центрам
+## комнат, кроме стартовой. Выход -- в комнате, самой дальней от старта.
+func _place_keys_and_exit() -> void:
+	for c in chests:
+		c.mesh.queue_free()
+	chests.clear()
+	if exit_mesh:
+		exit_mesh.queue_free()
+		exit_mesh = null
+	for child in props_root.get_children():
+		child.queue_free()
+
+	num_keys = min(3 + (GameState.depth - 1) / 3, MAX_KEYS)
+	keys_left = num_keys
+
+	var start: Rect2i = rooms[0]
+	var start_center := Vector2(start.position.x + start.size.x / 2.0, start.position.y + start.size.y / 2.0)
+
+	# самая дальняя от старта комната -- выход
+	var exit_room_idx := 0
+	var best_d := -1.0
+	for i in range(1, rooms.size()):
+		var r: Rect2i = rooms[i]
+		var c := Vector2(r.position.x + r.size.x / 2.0, r.position.y + r.size.y / 2.0)
+		var d := c.distance_squared_to(start_center)
+		if d > best_d:
+			best_d = d
+			exit_room_idx = i
+
+	var key_gold := StandardMaterial3D.new()
+	key_gold.albedo_color = Color(0.95, 0.8, 0.2)
+	key_gold.emission_enabled = true
+	key_gold.emission = Color(0.6, 0.45, 0.05)
+
+	var placed_keys := 0
+	for i in range(1, rooms.size()):
+		if placed_keys >= num_keys:
+			break
+		if i == exit_room_idx:
+			continue
+		var r: Rect2i = rooms[i]
+		var cx: float = r.position.x + r.size.x / 2.0
+		var cy: float = r.position.y + r.size.y / 2.0
+		var mesh := MeshInstance3D.new()
+		mesh.mesh = BoxMesh.new()
+		mesh.mesh.size = Vector3(0.3, 0.3, 0.3)
+		mesh.material_override = key_gold
+		mesh.position = Vector3(cx, 0.4, cy)
+		props_root.add_child(mesh)
+		chests.append({"pos": Vector2(cx, cy), "active": true, "mesh": mesh})
+		placed_keys += 1
+
+	var er: Rect2i = rooms[exit_room_idx]
+	exit_pos = Vector2(er.position.x + er.size.x / 2.0, er.position.y + er.size.y / 2.0)
+	var exit_red := StandardMaterial3D.new()
+	exit_red.albedo_color = Color(1.0, 0.25, 0.25)
+	exit_red.emission_enabled = true
+	exit_red.emission = Color(0.6, 0.1, 0.1)
+	exit_mesh = MeshInstance3D.new()
+	exit_mesh.mesh = BoxMesh.new()
+	exit_mesh.mesh.size = Vector3(0.8, 1.6, 0.15)
+	exit_mesh.material_override = exit_red
+	exit_mesh.position = Vector3(exit_pos.x, 0.8, exit_pos.y)
+	props_root.add_child(exit_mesh)
+	if keys_left == 0:
+		exit_mesh.get_active_material(0).albedo_color = Color(0.3, 1.0, 0.5)
 
 func _spawn_player() -> void:
 	if rooms.is_empty() or player == null:
