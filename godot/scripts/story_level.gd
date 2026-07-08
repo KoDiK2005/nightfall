@@ -159,8 +159,11 @@ func _setup_house_look() -> void:
 		var env := world_env.environment
 		env.background_mode = Environment.BG_SKY
 		env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
-		env.ambient_light_color = Color(0.15, 0.14, 0.16)
-		env.ambient_light_energy = 0.5
+		# высокий ambient -- комнаты дома под крышей отрезаны от неба и
+		# направленного света, так что без него интерьер чёрный; вместо окон
+		# заливаем всё рассеянным дневным светом (как высокий biome_amb в story.c)
+		env.ambient_light_color = Color(0.85, 0.82, 0.78)
+		env.ambient_light_energy = 1.5
 		env.fog_enabled = false
 
 func _build_house() -> void:
@@ -186,6 +189,7 @@ func _build_house() -> void:
 	_place_roof()
 	_place_ground_floor_furniture()
 	_place_upper_floor_furniture()
+	_place_lamps()
 	house_built = true
 
 func _prop(pos: Vector3, size: Vector3, color: Color) -> void:
@@ -197,6 +201,28 @@ func _prop(pos: Vector3, size: Vector3, color: Color) -> void:
 	mesh.material_override = mat
 	mesh.position = pos
 	house_props.add_child(mesh)
+
+## тёплая потолочная лампа: ровный ambient делает комнаты плоскими, поэтому
+## добавляем по мягкому точечному свету в основные помещения -- появляется
+## объём и градиент к углам, без теней (дёшево для Intel UHD 620).
+func _lamp(x: float, z: float) -> void:
+	var lamp := OmniLight3D.new()
+	lamp.position = Vector3(x, 1.85, z)
+	lamp.light_color = Color(1.0, 0.9, 0.72)
+	lamp.light_energy = 1.1
+	lamp.omni_range = 7.0
+	lamp.shadow_enabled = false
+	house_props.add_child(lamp)
+
+func _place_lamps() -> void:
+	# первый этаж
+	_lamp(24.0, 22.0)   # кухня-гостиная
+	_lamp(14.0, 19.0)   # холл с лестницей
+	_lamp(11.0, 24.0)   # гостевая спальня
+	# второй этаж
+	_lamp(38.0, 3.0)    # мастер-спальня
+	_lamp(46.0, 3.0)    # детская 1
+	_lamp(51.0, 3.0)    # детская 2
 
 ## плоская крыша-заглушка над каждым крылом -- проще ступенчатой из C-версии,
 ## но закрывает вид на небо изнутри дома.
@@ -248,6 +274,15 @@ func _start_denial() -> void:
 	if mother:
 		mother.visible = false
 	subtitle.hide_line()
+
+	# dev-хук: сразу в свободный обход дома (минуя подход и сцену с матерью)
+	# -- удобно тестировать/скриншотить интерьер, пока идёт работа над домом.
+	# Спавн в просторной кухне-гостиной, лицом вдоль комнаты.
+	if OS.get_environment("NIGHTFALL_STORY_ROAM") != "":
+		phase = Phase.AFTERMATH
+		player.global_position = Vector3(24.0, 0.9, 22.0)
+		player.rotation.y = PI * 0.5
+		player.story_speed_mult = 1.0
 
 func _process(delta: float) -> void:
 	if GameState.state != GameState.State.PLAY or GameState.mode != GameState.Mode.STORY:
