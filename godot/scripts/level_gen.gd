@@ -27,7 +27,18 @@ var exit_pos: Vector2 = Vector2.ZERO
 var exit_mesh: MeshInstance3D = null
 var monster: CharacterBody3D = null
 
+var noise_pos: Vector2 = Vector2.ZERO
+var noise_t: float = 0.0
+
 signal hud_changed
+
+## порт make_noise из ai.c: шум, который монстр может пойти расследовать,
+## даже если не увидел/не услышал игрока напрямую -- громче/дольше
+## перекрывает более старый, а не складывается.
+func make_noise(pos: Vector2, ttl: float) -> void:
+	if ttl >= noise_t:
+		noise_pos = pos
+		noise_t = ttl
 
 @onready var wall_map: GridMap = $"../WallGridMap"
 @onready var floor_map: GridMap = $"../FloorGridMap"
@@ -108,9 +119,11 @@ func _spawn_monster() -> void:
 	player.monster = monster
 	player.sanity = 1.0
 
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
 	if GameState.state != GameState.State.PLAY:
 		return
+	if noise_t > 0.0:
+		noise_t -= delta
 	var p := Vector2(player.position.x, player.position.z)
 	for c in chests:
 		if not c.active:

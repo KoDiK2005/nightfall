@@ -73,15 +73,29 @@ func _sense(delta: float) -> void:
 		search_time = 8.0
 		set_target(Vector2i(int(last_known.x), int(last_known.y)))
 	elif state == State.SEARCH:
+		_check_noise()
 		search_time -= delta
 		var here := Vector2i(int(position.x), int(position.z))
 		if here == target_cell or search_time <= 0.0:
 			state = State.WANDER
 			pick_wander()
 	elif state == State.WANDER:
+		_check_noise()
 		var here2 := Vector2i(int(position.x), int(position.z))
 		if here2 == target_cell:
 			pick_wander()
+
+## порт шумовой приманки из ai.c: свежий шум (брошенный камень, зажжённая
+## спичка, беготня) в пределах слышимости уводит его расследовать, даже
+## если оно не видело и не слышало игрока напрямую.
+func _check_noise() -> void:
+	if level_gen.noise_t <= 0.0:
+		return
+	var mypos := Vector2(position.x, position.z)
+	if mypos.distance_to(level_gen.noise_pos) < HEAR_RUN * 1.7:
+		state = State.SEARCH
+		search_time = 5.0
+		set_target(Vector2i(int(level_gen.noise_pos.x), int(level_gen.noise_pos.y)))
 
 ## прямая видимость: луч игрок<->монстр не должен пересекать стены
 ## (см. has_los в gen.c, там -- пошаговая проверка по сетке; тут -- raycast)

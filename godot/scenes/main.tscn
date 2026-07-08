@@ -1,4 +1,4 @@
-[gd_scene load_steps=11 format=3]
+[gd_scene load_steps=12 format=3]
 
 [ext_resource type="Script" path="res://scripts/player.gd" id="1"]
 [ext_resource type="Script" path="res://scripts/level_gen.gd" id="2"]
@@ -6,6 +6,7 @@
 [ext_resource type="PackedScene" path="res://scenes/hud.tscn" id="4"]
 [ext_resource type="PackedScene" path="res://scenes/title.tscn" id="5"]
 [ext_resource type="PackedScene" path="res://scenes/caught.tscn" id="6"]
+[ext_resource type="Script" path="res://scripts/items.gd" id="7"]
 
 [sub_resource type="CapsuleMesh" id="CapsuleMesh_player"]
 radius = 0.35
@@ -69,3 +70,13 @@ shape = SubResource("CapsuleShape3D_player")
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.6, 0)
 current = true
 fov = 75.0
+
+[node name="MatchLight" type="OmniLight3D" parent="Player"]
+position = Vector3(0, 0.4, 0)
+light_color = Color(1, 0.75, 0.45, 1)
+light_energy = 1.8
+omni_range = 8.0
+visible = false
+
+[node name="Items" type="Node" parent="."]
+script = ExtResource("7")
