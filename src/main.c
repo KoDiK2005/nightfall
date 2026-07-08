@@ -776,6 +776,16 @@ static void build_sprites(void) {
 /* --------------------------------------------------------------- floor build */
 static int is_open(int x, int y) { return x >= 0 && x < MW && y >= 0 && y < MH && map[y][x] != '#'; }
 
+/* find which cardinal neighbour of (x,y) is a wall (so a prop/note/locker can
+ * back onto it). Returns 1 and sets *wx,*wy to that direction, else 0. */
+static int wall_dir(int x, int y, int *wx, int *wy) {
+    static const int wdx[4] = {1, -1, 0, 0}, wdy[4] = {0, 0, 1, -1};
+    for (int k = 0; k < 4; k++)
+        if (!is_open(x + wdx[k], y + wdy[k])) { *wx = wdx[k]; *wy = wdy[k]; return 1; }
+    *wx = *wy = 0;
+    return 0;
+}
+
 static void room_center(const Room *r, int *cx, int *cy) { *cx = r->x + r->w / 2; *cy = r->y + r->h / 2; }
 
 static void carve_rect(int x0, int y0, int w, int h) {
@@ -933,7 +943,6 @@ static int reach_ok(void) {
  * each frame) so it survives the door-open mesh rebuild.                     */
 static void generate_props(void) {
     prop_count = 0;
-    int wdx[4] = {1, -1, 0, 0}, wdy[4] = {0, 0, 1, -1};
     for (int i = 0; i < room_count && prop_count < MAX_PROPS; i++) {
         Room *r = &rooms[i];
         if (r->theme == RM_ENTRANCE || r->theme == RM_EXIT) continue;
@@ -950,9 +959,7 @@ static void generate_props(void) {
                 for (int j = 0; j < NUM_NOTES; j++)  if ((int)notes[j].x == xx && (int)notes[j].y == yy) busy = 1;
                 if (busy) continue;
                 if (placed > 0 && (rand() & 3) != 0) continue;      /* spread them out */
-                int wx = 0, wy = 0, wall = 0;
-                for (int k = 0; k < 4; k++)
-                    if (!is_open(xx + wdx[k], yy + wdy[k])) { wx = wdx[k]; wy = wdy[k]; wall = 1; break; }
+                int wx, wy, wall = wall_dir(xx, yy, &wx, &wy);
                 double cx = xx + 0.5, cz = yy + 0.5;
                 if (r->theme == RM_STORAGE && wall) {               /* crates + barrels */
                     double px = cx + wx * 0.18, pz = cz + wy * 0.18, top = 0.28 + frand() * 0.12;
@@ -1066,7 +1073,6 @@ static void reset_level(void) {
     }
 
     /* lockers line the walls of storage rooms (then anywhere, to fill quota) */
-    int wdx[4] = {1, -1, 0, 0}, wdy[4] = {0, 0, 1, -1};
     int li = 0;
     for (int pass = 0; pass < 2 && li < NUM_LOCKERS; pass++)
         for (int i = 0; i < room_count && li < NUM_LOCKERS; i++) {
@@ -1077,10 +1083,8 @@ static void reset_level(void) {
                 for (int xx = r->x; xx < r->x + r->w && li < NUM_LOCKERS; xx++) {
                     if (!is_open(xx, yy) || abs(xx - startX) + abs(yy - startY) < 3) continue;
                     if (abs(xx - (int)exitX) + abs(yy - (int)exitY) < 2) continue;
-                    int wx = 0, wy = 0, found = 0;
-                    for (int k = 0; k < 4; k++)
-                        if (!is_open(xx + wdx[k], yy + wdy[k])) { wx = wdx[k]; wy = wdy[k]; found = 1; break; }
-                    if (!found) continue;
+                    int wx, wy;
+                    if (!wall_dir(xx, yy, &wx, &wy)) continue;
                     int ok = 1;
                     for (int j = 0; j < li; j++)
                         if (fabs(lockers[j].x - (xx + 0.5)) + fabs(lockers[j].y - (yy + 0.5)) < 2) ok = 0;
@@ -1103,10 +1107,8 @@ static void reset_level(void) {
                 for (int xx = r->x; xx < r->x + r->w && ni < NUM_NOTES; xx++) {
                     if (!is_open(xx, yy) || abs(xx - startX) + abs(yy - startY) < 3) continue;
                     if (abs(xx - (int)exitX) + abs(yy - (int)exitY) < 2) continue;
-                    int wx = 0, wy = 0, found = 0;
-                    for (int k = 0; k < 4; k++)
-                        if (!is_open(xx + wdx[k], yy + wdy[k])) { wx = wdx[k]; wy = wdy[k]; found = 1; break; }
-                    if (!found) continue;
+                    int wx, wy;
+                    if (!wall_dir(xx, yy, &wx, &wy)) continue;
                     int ok = 1;
                     for (int j = 0; j < ni; j++)
                         if (fabs(notes[j].x - (xx + 0.5)) + fabs(notes[j].y - (yy + 0.5)) < 2) ok = 0;
@@ -1121,10 +1123,8 @@ static void reset_level(void) {
     while (ni < NUM_NOTES) {                               /* fallback: any wall cell */
         int x = 1 + rand() % (MW - 2), y = 1 + rand() % (MH - 2);
         if (!is_open(x, y)) continue;
-        int wx = 0, wy = 0, found = 0;
-        for (int k = 0; k < 4; k++)
-            if (!is_open(x + wdx[k], y + wdy[k])) { wx = wdx[k]; wy = wdy[k]; found = 1; break; }
-        if (!found) continue;
+        int wx, wy;
+        if (!wall_dir(x, y, &wx, &wy)) continue;
         notes[ni].x = x + 0.5; notes[ni].y = y + 0.5; notes[ni].active = 1;
         noteWX[ni] = wx; noteWY[ni] = wy;
         notes[ni].text = rand() % NOTE_POOL; ni++;
@@ -1508,7 +1508,7 @@ static const char *PFS =
 
 static GLuint prog3d, progOv, progPost;
 static GLint u_ovofs;                                    /* overlay shake offset */
-static GLint up_scr, up_time, up_aber, up_grain, up_shake;
+static GLint up_tex, up_scr, up_time, up_aber, up_grain, up_shake;
 static GLint u_mvp, u_campos, u_camdir, u_amb, u_fogk, u_flick, u_mode;
 static GLint u_ambtint, u_scrsize, u_sprtint;
 static float spr_tint[3] = {1.0f, 1.0f, 1.0f};   /* colour multiply for the next sprite */
@@ -1863,6 +1863,7 @@ static void gl_init(void) {
     progOv = link_prog(OVS, OFS);
     progPost = link_prog(OVS, PFS);
     u_ovofs   = glGetUniformLocation_(progOv, "uOfs");
+    up_tex    = glGetUniformLocation_(progPost, "uTex");
     up_scr    = glGetUniformLocation_(progPost, "uScreenSize");
     up_time   = glGetUniformLocation_(progPost, "uTime");
     up_aber   = glGetUniformLocation_(progPost, "uAber");
@@ -2531,7 +2532,7 @@ static void present_scene(void) {
     glUseProgram_(progPost);
     glActiveTexture_(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, sceneTex);
-    glUniform1i_(glGetUniformLocation_(progPost, "uTex"), 0);
+    glUniform1i_(up_tex, 0);
     glUniform2f_(up_scr, (float)winW, (float)winH);
     glUniform1f_(up_time, (float)state_time);
     glUniform1f_(up_aber, (float)aber);
@@ -2556,7 +2557,9 @@ static void present_overlay(void) {
     glUniform2f_(u_ovofs, ox, oy);
     glActiveTexture_(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, texOverlay);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, SCREEN_W, SCREEN_H, 0, GL_BGRA, GL_UNSIGNED_BYTE, fb);
+    /* storage is allocated once in gl_init; just refresh the pixels each frame
+     * (glTexSubImage2D avoids reallocating the texture every frame). */
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, SCREEN_W, SCREEN_H, GL_BGRA, GL_UNSIGNED_BYTE, fb);
     glBindVertexArray_(ovVAO);
     glDrawArrays(GL_TRIANGLES, 0, 6);
     glDisable(GL_BLEND);
