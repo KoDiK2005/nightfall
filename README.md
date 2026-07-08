@@ -98,26 +98,50 @@ and your mind frays quicker. How deep can you get?
 
 ### Linux (Debian / Ubuntu)
 
-```bash
-sudo apt install -y libsdl2-dev libsdl2-mixer-dev libgl1-mesa-dev build-essential python3
-make            # generates audio + compiles the 3D build
-./nightfall     # or: make run
-
-make run-classic  # GPU-free software raycaster fallback
-```
+1. Install the dependencies:
+   ```bash
+   sudo apt install -y libsdl2-dev libsdl2-mixer-dev libgl1-mesa-dev build-essential python3
+   ```
+2. Build the game:
+   ```bash
+   make
+   ```
+   This generates the audio assets and compiles the 3D build (`nightfall`).
+3. Run it:
+   ```bash
+   ./nightfall
+   ```
+   (or just `make run`, which builds and launches in one step)
 
 ### Windows (MSYS2 / MinGW)
 
-Install [MSYS2](https://www.msys2.org/), then from a **MSYS2 UCRT64** shell:
+1. Install [MSYS2](https://www.msys2.org/).
+2. Open an **MSYS2 UCRT64** shell (look for "MSYS2 UCRT64" in the Start menu —
+   not the plain "MSYS2" shell) and install the dependencies:
+   ```bash
+   pacman -S --needed mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-make \
+     mingw-w64-ucrt-x86_64-pkgconf mingw-w64-ucrt-x86_64-SDL2 \
+     mingw-w64-ucrt-x86_64-SDL2_mixer python
+   ```
+3. Build the game:
+   ```bash
+   mingw32-make
+   ```
+   This generates the audio assets and compiles the 3D build (`nightfall.exe`).
+4. Run it:
+   ```bash
+   ./nightfall.exe
+   ```
+   (or just `mingw32-make run`, which builds and launches in one step)
+
+### Optional: classic software-raycaster fallback
+
+No GPU, or an OpenGL 3.3 driver acting up? There's an older raycasting build
+that needs no GPU at all — same gameplay, a flat 2.5D look instead of real 3D:
 
 ```bash
-pacman -S --needed mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-make \
-  mingw-w64-ucrt-x86_64-pkgconf mingw-w64-ucrt-x86_64-SDL2 \
-  mingw-w64-ucrt-x86_64-SDL2_mixer python
-mingw32-make      # generates audio + compiles the 3D build
-./nightfall.exe   # or: mingw32-make run
-
-mingw32-make run-classic  # GPU-free software raycaster fallback
+make run-classic          # Linux
+mingw32-make run-classic  # Windows (from the same MSYS2 UCRT64 shell)
 ```
 
 Make sure `C:\msys64\ucrt64\bin` is on your `PATH` (or run from the "MSYS2 UCRT64"
