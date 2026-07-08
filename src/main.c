@@ -27,6 +27,8 @@
 double sens_mult = 1.0;          /* mouse-look sensitivity multiplier   */
 int    master_vol = 100;         /* master audio volume 0..128          */
 int    pause_sel = 0;            /* highlighted row in the pause menu    */
+double log_copy_flash = 0.0;     /* >0 while the pause menu shows a copy result */
+int    log_copy_ok = 0;
 
 char   map[MH][MW + 1];
 double posX, posY;               /* position on the floor plane       */
@@ -272,6 +274,7 @@ int main(int argc, char **argv) {
         Uint64 now = SDL_GetPerformanceCounter();
         double dt = (now - prev) / freq; if (dt > 0.05) dt = 0.05; prev = now;
         state_time += dt;
+        if (log_copy_flash > 0) log_copy_flash -= dt;
 
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
@@ -306,6 +309,10 @@ int main(int argc, char **argv) {
                         }
                     }
                     if (k == SDL_SCANCODE_Q) { game_state = ST_TITLE; SDL_SetRelativeMouseMode(SDL_TRUE); }
+                    if (k == SDL_SCANCODE_C) {              /* copy the bug-report log to the clipboard */
+                        log_copy_ok = nf_log_copy_to_clipboard();
+                        log_copy_flash = 2.5;
+                    }
                 }
                 if (k == SDL_SCANCODE_F11) {
                     fullscreen = !fullscreen;

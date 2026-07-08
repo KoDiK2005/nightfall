@@ -46,3 +46,24 @@ void nf_log_close(void) {
     fclose(nf_logfile);
     nf_logfile = NULL;
 }
+
+/* Read the whole log back off disk and hand it to the OS clipboard, so a
+ * player can paste it straight into a GitHub issue -- no file attachment,
+ * no network call, just Ctrl+V. Returns 1 on success, 0 if there's nothing
+ * to copy yet (or the read/clipboard call failed).                        */
+int nf_log_copy_to_clipboard(void) {
+    FILE *f = fopen("nightfall_log.txt", "rb");
+    if (!f) return 0;
+    fseek(f, 0, SEEK_END);
+    long sz = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    if (sz <= 0) { fclose(f); return 0; }
+    char *buf = malloc((size_t)sz + 1);
+    if (!buf) { fclose(f); return 0; }
+    size_t got = fread(buf, 1, (size_t)sz, f);
+    fclose(f);
+    buf[got] = 0;
+    int ok = (SDL_SetClipboardText(buf) == 0);
+    free(buf);
+    return ok;
+}

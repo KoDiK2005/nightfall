@@ -366,7 +366,7 @@ void draw_note(void) {
 /* the pause menu: dim the frozen scene and offer sensitivity + volume sliders */
 void draw_pause(void) {
     for (int i = 0; i < SCREEN_W * SCREEN_H; i++) fb[i] = packa(0, 0, 0, 170);
-    int pw = 540, ph = 300, px = (SCREEN_W - pw) / 2, py = (SCREEN_H - ph) / 2;
+    int pw = 540, ph = 330, px = (SCREEN_W - pw) / 2, py = (SCREEN_H - ph) / 2;
     fill_rect(px, py, pw, ph, packa(20, 20, 26, 235));
     fill_rect(px, py, pw, 4, packa(120, 110, 130, 255));
     fill_rect(px, py + ph - 4, pw, 4, packa(120, 110, 130, 255));
@@ -388,6 +388,15 @@ void draw_pause(void) {
             fill_rect(bx - 4, by + 20, bw + 8, 2, pack(255, 235, 150));
         }
     }
+    /* a way to grab the bug-report log without hunting for the file:
+     * copies nightfall_log.txt straight to the clipboard, ready to paste
+     * into a GitHub issue. Flashes the result for a couple of seconds. */
+    if (log_copy_flash > 0)
+        draw_text_c(py + ph - 64, 2,
+            log_copy_ok ? "СКОПИРОВАНО В БУФЕР ОБМЕНА" : "НЕ УДАЛОСЬ СКОПИРОВАТЬ ЛОГ",
+            log_copy_ok ? pack(140, 220, 150) : pack(220, 130, 110));
+    else
+        draw_text_c(py + ph - 64, 2, "C - СКОПИРОВАТЬ ЛОГ ДЛЯ БАГ-РЕПОРТА", pack(140, 140, 150));
     draw_text_c(py + ph - 40, 2, "W/S - ВЫБОР   A/D - ИЗМЕНИТЬ", pack(140, 140, 150));
     draw_text_c(py + ph - 20, 2, "ESC - ПРОДОЛЖИТЬ   Q - В МЕНЮ", pack(140, 140, 150));
 }

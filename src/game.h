@@ -188,6 +188,9 @@ double   frand(void);
 void nf_log_init(void);
 void nf_log_close(void);
 void nf_log(const char *fmt, ...);
+int  nf_log_copy_to_clipboard(void);   /* 1 on success, 0 if there's nothing to copy */
+extern double log_copy_flash;          /* >0 while the pause menu shows a copy result */
+extern int    log_copy_ok;
 
 /* =========================================================================
  * gen.c — level generation: rooms, biome palette, pathing queries, level

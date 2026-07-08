@@ -159,16 +159,16 @@ shell shortcut) so the built `.exe` can find `SDL2.dll` and friends.
 | `G`            | Throw a rock (a lure, away from you) |
 | `Enter`        | Start         |
 | `R`            | Retry / replay|
-| `Esc`          | Pause / resume (in the pause menu: `W`/`S` pick, `A`/`D` adjust, `Q` to title) |
+| `Esc`          | Pause / resume (in the pause menu: `W`/`S` pick, `A`/`D` adjust, `Q` to title, `C` copies the bug-report log) |
 
 ## Found a bug?
 
 Every run writes `nightfall_log.txt` next to the executable — the seed, which
 floor and chest you were on, and how the run ended (caught, or quit). Nothing
-is ever sent anywhere; it's a local file for you. If something breaks, please
-[open an issue](https://github.com/KoDiK2005/nightfall/issues) and paste in
-the last few lines of that file plus the seed it mentions — that's usually
-enough to reproduce the exact run.
+is ever sent anywhere; it's a local file for you. Press `C` in the pause menu
+to copy it straight to your clipboard, then paste it into a new
+[GitHub issue](https://github.com/KoDiK2005/nightfall/issues) — no need to
+go hunting for the file.
 
 ## How it works
 
