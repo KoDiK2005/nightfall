@@ -269,6 +269,77 @@ go hunting for the file.
 | `assets/visions/`   | Your PNG hallucinations, flashed when sanity is low         |
 | `Makefile`          | `make` builds 3D, `make classic` the fallback, `make audio` |
 
+## Godot port (in progress)
+
+The C engine is being ported to [Godot 4](https://godotengine.org/) in
+parallel, in `godot/` — the C build above keeps working exactly as before
+and isn't going anywhere; the Godot version lives entirely alongside it.
+This section is about *that* port specifically.
+
+### Install Godot 4
+
+Ubuntu's package manager only ships Godot 3, so grab the official Godot 4
+build directly instead:
+
+1. Download the Linux build from the
+   [Godot download page](https://godotengine.org/download/linux/) (look for
+   something like `Godot_v4.x-stable_linux.x86_64.zip`).
+2. Unzip it and make the binary executable:
+   ```bash
+   unzip Godot_v4.*-stable_linux.x86_64.zip
+   chmod +x Godot_v4.*-stable_linux.x86_64
+   ```
+3. Put it somewhere on your `PATH` so you can just type `godot4`, e.g.:
+   ```bash
+   mkdir -p ~/.local/bin
+   mv Godot_v4.*-stable_linux.x86_64 ~/.local/bin/godot4
+   ```
+   Make sure `~/.local/bin` is actually on your `PATH` (check with
+   `echo $PATH` — if it's missing, add
+   `export PATH="$HOME/.local/bin:$PATH"` to `~/.bashrc` and open a new
+   terminal).
+
+### Run it
+
+You need a terminal for this — on most Linux desktops you can open one
+from the applications menu (look for "Terminal", "Konsole", or similar),
+or a keyboard shortcut like `Ctrl+Alt+T`.
+
+```bash
+cd nightfall/godot        # the folder with project.godot in it
+godot4 .                  # opens straight into the game
+```
+
+or, to open it in the editor first (useful if you want to look around
+the scenes/scripts, not just play):
+
+```bash
+godot4 -e .
+```
+
+Then press the ▶ button (top-right) or `F5` to run.
+
+On the title screen: `W`/`S` (or the arrow keys) picks between
+"БЕСКОНЕЧНЫЙ СПУСК" (the endless descent) and "СЮЖЕТ" (story mode),
+`Enter` starts. Controls in-game match the C version: WASD move, mouse
+look, Shift run, `E` interact/hide, `F` match, `G` rock, `Esc` pause/quit.
+
+### Status
+
+Ported so far: player movement/stamina, procedural room+corridor level
+generation (via `GridMap`), torches, keys/chests/exit/floor progression,
+all three horrors' AI (sight, sound, the Watcher's freeze-when-watched),
+lockers, sanity with a screen vignette, ambient/heartbeat/footstep audio,
+matches/rocks, six biome palettes, lore notes, and the endless mode's full
+game-state flow (title → play → caught → retry). Story mode has its first,
+deliberately small slice: a yard, a placeholder house, the mother
+encounter, and the memory subtitles on the approach — not the full
+two-storey house from the C version yet.
+
+Still boxes standing in for real geometry/art in a few places (the lore
+notes, the story mode's house) — that's the next layer of polish once the
+remaining systems are ported.
+
 ## License
 
 MIT — see [LICENSE](LICENSE).
