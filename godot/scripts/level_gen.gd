@@ -8,22 +8,28 @@ const MW := 29
 const MH := 21
 const WALL_ITEM := 0
 const FLOOR_ITEM := 1
+const TORCH_SPACING := 2.6   # совпадает с TORCH_SPACING в render.c
+const TORCH_SCENE := preload("res://scenes/torch.tscn")
 
 var map: Array = []   # map[y][x] == true, если клетка открыта (пол)
 var rooms: Array = [] # Rect2i(x, y, w, h) на каждую комнату
+var torches: Array = []   # Node3D-инстансы факелов этого уровня
 
 @onready var wall_map: GridMap = $"../WallGridMap"
 @onready var floor_map: GridMap = $"../FloorGridMap"
 @onready var player: CharacterBody3D = $"../Player"
+@onready var torch_root: Node3D = $"../Torches"
 
 func _ready() -> void:
 	randomize()
 	_generate()
 	_paint()
+	_place_torches()
 	_spawn_player()
 	if OS.get_environment("NIGHTFALL_GDTRACE") != "":
-		print("GDTRACE rooms=%d player_pos=%s wall_items=%d floor_items=%d" % [
-			rooms.size(), player.position, wall_map.get_used_cells().size(), floor_map.get_used_cells().size()])
+		print("GDTRACE rooms=%d player_pos=%s wall_items=%d floor_items=%d torches=%d" % [
+			rooms.size(), player.position, wall_map.get_used_cells().size(),
+			floor_map.get_used_cells().size(), torches.size()])
 
 func is_open(x: int, y: int) -> bool:
 	if x < 0 or x >= MW or y < 0 or y >= MH:
@@ -108,6 +114,55 @@ func _paint() -> void:
 					or is_open(x, y + 1) or is_open(x, y - 1)
 				if neighbours_open:
 					wall_map.set_cell_item(Vector3i(x, 0, y), WALL_ITEM)
+
+func _place_torches() -> void:
+	for t in torches:
+		t.queue_free()
+	torches.clear()
+
+	# та же идея, что и place_torches в render.c: собрать все клетки пола,
+	# у которых есть соседняя стена, перемешать, и раскладывать факелы по
+	# одному, пропуская кандидатов, что оказались слишком близко к уже
+	# поставленному -- получается неравномерная, но всюду покрывающая сетка.
+	var candidates: Array = []
+	for y in range(1, MH - 1):
+		for x in range(1, MW - 1):
+			if not is_open(x, y):
+				continue
+			if not is_open(x + 1, y) or not is_open(x - 1, y) \
+					or not is_open(x, y + 1) or not is_open(x, y - 1):
+				candidates.append(Vector2i(x, y))
+	candidates.shuffle()
+
+	var placed: Array = []   # Vector3(world_x, world_z, ...) центров факелов
+	for c in candidates:
+		var wall_dir := _wall_dir(c.x, c.y)
+		if wall_dir == Vector2i.ZERO:
+			continue
+		var wx: float = c.x + 0.5 + wall_dir.x * 0.48
+		var wz: float = c.y + 0.5 + wall_dir.y * 0.48
+		var ok := true
+		for p in placed:
+			if Vector2(wx, wz).distance_to(Vector2(p.x, p.y)) < TORCH_SPACING:
+				ok = false
+				break
+		if not ok:
+			continue
+		var torch := TORCH_SCENE.instantiate()
+		torch_root.add_child(torch)
+		torch.position = Vector3(wx, 0, wz)
+		torch.look_at(torch.position + Vector3(wall_dir.x, 0, wall_dir.y), Vector3.UP)
+		torches.append(torch)
+		placed.append(Vector2(wx, wz))
+
+## какая соседняя клетка -- стена (см. wall_dir в gen.c). Возвращает
+## направление к ближайшей стене или Vector2i.ZERO, если такой нет.
+func _wall_dir(x: int, y: int) -> Vector2i:
+	if not is_open(x + 1, y): return Vector2i(1, 0)
+	if not is_open(x - 1, y): return Vector2i(-1, 0)
+	if not is_open(x, y + 1): return Vector2i(0, 1)
+	if not is_open(x, y - 1): return Vector2i(0, -1)
+	return Vector2i.ZERO
 
 func _spawn_player() -> void:
 	if rooms.is_empty() or player == null:
