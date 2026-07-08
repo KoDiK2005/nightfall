@@ -96,18 +96,30 @@ and your mind frays quicker. How deep can you get?
 
 ## Build & run
 
+There's no prebuilt download — you build it yourself from source, which is
+why every step below (including the tools you need to install) is spelled
+out in full.
+
 ### Linux (Debian / Ubuntu)
 
-1. Install the dependencies:
+1. Install everything needed to get the code and build it — `git` to
+   download the source, `make` to run the build, `gcc` to compile it,
+   `python3` for the audio generator, plus the SDL2/OpenGL libraries the
+   game itself links against:
    ```bash
-   sudo apt install -y libsdl2-dev libsdl2-mixer-dev libgl1-mesa-dev build-essential python3
+   sudo apt install -y git make gcc libsdl2-dev libsdl2-mixer-dev libgl1-mesa-dev python3
    ```
-2. Build the game:
+2. Download the source code:
+   ```bash
+   git clone https://github.com/KoDiK2005/nightfall.git
+   cd nightfall
+   ```
+3. Build the game:
    ```bash
    make
    ```
    This generates the audio assets and compiles the 3D build (`nightfall`).
-3. Run it:
+4. Run it:
    ```bash
    ./nightfall
    ```
@@ -115,20 +127,28 @@ and your mind frays quicker. How deep can you get?
 
 ### Windows (MSYS2 / MinGW)
 
-1. Install [MSYS2](https://www.msys2.org/).
+1. Install [MSYS2](https://www.msys2.org/) — this gives you a Linux-like
+   terminal and package manager (`pacman`) on Windows, which is what the
+   next steps use.
 2. Open an **MSYS2 UCRT64** shell (look for "MSYS2 UCRT64" in the Start menu —
-   not the plain "MSYS2" shell) and install the dependencies:
+   not the plain "MSYS2" shell) and install everything needed to get the
+   code and build it:
    ```bash
-   pacman -S --needed mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-make \
+   pacman -S --needed git mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-make \
      mingw-w64-ucrt-x86_64-pkgconf mingw-w64-ucrt-x86_64-SDL2 \
      mingw-w64-ucrt-x86_64-SDL2_mixer python
    ```
-3. Build the game:
+3. Download the source code (still inside that same MSYS2 UCRT64 shell):
+   ```bash
+   git clone https://github.com/KoDiK2005/nightfall.git
+   cd nightfall
+   ```
+4. Build the game:
    ```bash
    mingw32-make
    ```
    This generates the audio assets and compiles the 3D build (`nightfall.exe`).
-4. Run it:
+5. Run it:
    ```bash
    ./nightfall.exe
    ```
