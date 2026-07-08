@@ -117,6 +117,15 @@ static double noteWX[NUM_NOTES], noteWY[NUM_NOTES];   /* dir from cell to backin
 static int    reading_note = 0;         /* which lore note is on screen       */
 static int    near_note = -1;           /* index of a readable note within reach */
 
+/* matches: a scarce light you can strike. It lets you see -- but the glow
+ * gives you away, so the Stalker spots you from much farther. A light-vs-hide
+ * gamble. (The blind Listener doesn't care about light, so it's safe there.) */
+#define MAX_MATCHPICK 4
+#define MATCH_DUR     4.5             /* seconds one struck match burns      */
+static struct { double x, y; int active; } matchpick[MAX_MATCHPICK];
+static int    match_count = 0;          /* matches in your pocket             */
+static double match_burn  = 0.0;        /* seconds the struck match still burns */
+
 static int    depth = 1;                /* current floor (1 = topmost)        */
 static int    best_depth = 1;           /* deepest floor reached this session */
 static double mon_speed = MONSTER_SPD;  /* scales with depth                  */
@@ -153,7 +162,7 @@ static uint32_t fb[SCREEN_W * SCREEN_H];
 static uint32_t tex[3][TEX * TEX];         /* 0 wall, 1 floor, 2 ceiling     */
 static uint32_t lockmetal[TEX * TEX];      /* opaque steel for locker boxes  */
 static uint32_t brackmetal[TEX * TEX];     /* dark iron for torch brackets   */
-static uint32_t spr_rgba[9][TEX * TEX];    /* 0 mon,1 key,2 down,3 loc,4 flame,5 note,6 up,7 chest,8 dust */
+static uint32_t spr_rgba[10][TEX * TEX];   /* 0 mon,1 key,2 down,3 loc,4 flame,5 note,6 up,7 chest,8 dust,9 match */
 
 /* torches fixed to walls: warm point lights that flicker */
 static float  torchX[MAX_TORCHES], torchZ[MAX_TORCHES];   /* flame world pos  */
@@ -591,7 +600,7 @@ static void build_textures(void) {
  *   a = 0   transparent (discarded)
  *   a = 128 shaded by the flashlight
  *   a = 255 self-lit glow                                                    */
-static uint8_t spr_flg[9][TEX * TEX];
+static uint8_t spr_flg[10][TEX * TEX];
 static void put_spr(int t, int x, int y, uint32_t col, uint8_t flg) {
     if (x < 0 || x >= TEX || y < 0 || y >= TEX) return;
     spr_flg[t][y * TEX + x] = flg;
@@ -765,8 +774,25 @@ static void build_sprites(void) {
             int R = (int)(70 * g), G = (int)(52 * g), B = (int)(28 * g);
             put_spr(8, x, y, pack(R, G, B), 2);
         }
+    /* 9: MATCHBOX — a small red box with a pale strike strip and a single
+     * match leaning out, tip up. Self-lit (flag 2) so a dropped one glimmers
+     * enough to spot in the dark, like the keys do. */
+    for (int y = 0; y < TEX; y++)
+        for (int x = 0; x < TEX; x++) {
+            if (x >= 20 && x <= 44 && y >= 30 && y <= 54) {   /* the box body */
+                int edge = (x <= 21 || x >= 43 || y <= 31 || y >= 53);
+                int strip = (y >= 30 && y <= 35);             /* darker strike band */
+                if (strip)     put_spr(9, x, y, pack(120, 30, 24), 2);
+                else if (edge) put_spr(9, x, y, pack(120, 24, 18), 2);
+                else           put_spr(9, x, y, pack(200, 46, 34), 2);
+            }
+            /* a match stick leaning out of the top, red phosphorus tip */
+            int mx = 32 + (54 - y) * 12 / 30;                 /* diagonal lean */
+            if (y >= 12 && y <= 30 && abs(x - mx) <= 1) put_spr(9, x, y, pack(210, 180, 120), 2);
+            if (y >= 12 && y <= 17 && abs(x - mx) <= 2) put_spr(9, x, y, pack(220, 70, 40), 2);
+        }
     /* bake the flag into the alpha byte for the shader */
-    for (int t = 0; t < 9; t++)
+    for (int t = 0; t < 10; t++)
         for (int i = 0; i < TEX * TEX; i++) {
             int a = spr_flg[t][i] == 0 ? 0 : (spr_flg[t][i] == 1 ? 128 : 255);
             spr_rgba[t][i] = (spr_rgba[t][i] & 0x00FFFFFF) | ((uint32_t)a << 24);
@@ -1078,6 +1104,16 @@ static void reset_level(void) {
         pedX[ki] = x + 0.5; pedZ[ki] = y + 0.5; ki++;
     }
 
+    /* a struck match doesn't survive the descent; scatter a few fresh ones */
+    match_burn = 0.0;
+    for (int i = 0; i < MAX_MATCHPICK; i++) matchpick[i].active = 0;
+    int mp = 2 + rand() % 2;                               /* 2-3 per floor */
+    for (int i = 0, tries = 0; i < mp && tries < 400; tries++) {
+        int x = 1 + rand() % (MW - 2), y = 1 + rand() % (MH - 2);
+        if (!is_open(x, y) || (abs(x - startX) + abs(y - startY)) < 4) continue;
+        matchpick[i].x = x + 0.5; matchpick[i].y = y + 0.5; matchpick[i].active = 1; i++;
+    }
+
     /* raise the candidate pillars into columns, skipping any that would block
      * a key, the exit, the spawn, or sever the floor's connectivity.        */
     for (int p = 0; p < pillar_count; p++) {
@@ -1225,6 +1261,7 @@ static void update_ai(double dt, int moving, int sprinting) {
     double hear_walk = HEAR_WALK * (1.0 + dread * 0.6 + dd * 0.03);
     double hear_run  = HEAR_RUN  * (1.0 + dread * 0.4 + dd * 0.02);
     double see_range = SEE_RANGE * (1.0 + dd * 0.02);
+    if (match_burn > 0.0) see_range *= 1.9;                  /* the glow gives you away */
     if (!hidden) {
         if (mon_type == MON_WATCHER) {
             sensed = 1;                                   /* it always knows — it just can't move while watched */
@@ -1325,6 +1362,8 @@ static void update_fear(double dt) {
     double drain = 0.004 + dd * 0.0025 + tension * 0.05 + (mon_state == AI_HUNT ? 0.03 : 0.0) + (mon_sees ? 0.10 : 0.0);
     if (tension < 0.12 && mon_state != AI_HUNT) sanity += dt * 0.02;
     sanity -= dt * drain;
+    /* a lit match is a small comfort against the dark -- it steadies the mind */
+    if (match_burn > 0.0) { match_burn -= dt; sanity += dt * 0.03; }
     if (sanity < 0) sanity = 0;
     if (sanity > 1) sanity = 1;
     double dread = 1.0 - sanity;
@@ -1543,7 +1582,7 @@ static GLuint sceneFBO = 0, sceneTex = 0, sceneDepth = 0;
 static int   fboW = 0, fboH = 0;                 /* current FBO allocation      */
 static int   rndW = SCREEN_W, rndH = SCREEN_H;   /* internal 3D render size     */
 static GLuint worldVAO, worldVBO, sprVAO, sprVBO, ovVAO, ovVBO;
-static GLuint texWall, texFloor, texCeil, texLocker, texBracket, texSpr[9], texOverlay, texMap;
+static GLuint texWall, texFloor, texCeil, texLocker, texBracket, texSpr[10], texOverlay, texMap;
 static int   floorStart, floorCount, ceilStart, ceilCount, wallCount;
 static int   lockStart, lockCount, brkStart, brkCount;
 
@@ -1933,7 +1972,7 @@ static void gl_init(void) {
     texWall = make_texture(tex[0]); texFloor = make_texture(tex[1]); texCeil = make_texture(tex[2]);
     texLocker = make_texture(lockmetal);
     texBracket = make_texture(brackmetal);
-    for (int i = 0; i < 9; i++) texSpr[i] = make_texture(spr_rgba[i]);
+    for (int i = 0; i < 10; i++) texSpr[i] = make_texture(spr_rgba[i]);
     glGenTextures(1, &texMap);                 /* filled per-maze by upload_map */
     glActiveTexture_(GL_TEXTURE1);
     glBindTexture(GL_TEXTURE_2D, texMap);      /* keep the occlusion map on unit 1 */
@@ -2107,6 +2146,14 @@ static void render_3d(void) {
         ti[active] = (float)(f * 1.05 * flicker);            /* softer than a torch */
         active++;
     }
+    /* a struck match is a bright little light right in your hand */
+    if (match_burn > 0.0 && active < MAX_ACTIVE_TORCHES) {
+        double f = 0.85 + 0.12 * sin(state_time * 30.0);         /* nervous flicker */
+        double fade = match_burn < 1.0 ? match_burn : 1.0;       /* gutters out at the end */
+        tp[active * 3] = ex; tp[active * 3 + 1] = ey; tp[active * 3 + 2] = ez;
+        ti[active] = (float)(f * 1.8 * fade * flicker);
+        active++;
+    }
     /* then the nearest wall torches fill whatever slots remain */
     for (int k = 0; k < nc && active < MAX_ACTIVE_TORCHES; k++) {
         int i = ci[k];
@@ -2160,6 +2207,10 @@ static void render_3d(void) {
     /* each key is locked inside a chest squatting on the floor */
     for (int i = 0; i < num_keys; i++)
         if (keys[i].active) draw_billboard(keys[i].x, keys[i].y, 0.44, 0.42, 0.0, 7, mvp);
+    /* scattered matchboxes bob just off the floor */
+    for (int i = 0; i < MAX_MATCHPICK; i++)
+        if (matchpick[i].active)
+            draw_billboard(matchpick[i].x, matchpick[i].y, 0.17, 0.17, 0.04 + 0.02 * sin(state_time * 2.0 + i), 9, mvp);
     for (int i = 0; i < NUM_NOTES; i++)
         if (notes[i].active) {
             /* pinned flat to the wall: sit on the wall face, tangent along it */
@@ -2376,6 +2427,8 @@ static void draw_hud(void) {
     snprintf(buf, sizeof(buf), "КЛЮЧИ %d/%d", num_keys - keys_left, num_keys);
     draw_text(16, 44, 3, buf, pack(230, 210, 120));
     draw_text(16, 72, 2, BIOMES[biome % NBIOMES].name, pack(120, 120, 140));
+    snprintf(buf, sizeof(buf), "СПИЧКИ %d", match_count);
+    draw_text(16, 96, 2, buf, match_burn > 0.0 ? pack(255, 170, 80) : pack(150, 138, 108));
 
     /* contextual stair prompts */
     double ed = fabs(posX - exitX) + fabs(posY - exitY);
@@ -2419,6 +2472,8 @@ static void draw_hud(void) {
         draw_text_c(SCREEN_H - 110, 3, "E - ПРОЧИТАТЬ ЗАПИСКУ", pack(200, 190, 160));
     else if (near_locker >= 0 && !hidden)
         draw_text_c(SCREEN_H - 110, 3, "E - СПРЯТАТЬСЯ", pack(200, 200, 160));
+    else if (match_count > 0 && match_burn <= 0.0 && !hidden)
+        draw_text_c(SCREEN_H - 110, 2, "F - ЗАЖЕЧЬ СПИЧКУ", pack(210, 150, 90));
 
     /* key-sense compass: a golden tick slides along a top strip to point the
      * way to the nearest un-opened chest — brighter the closer you are. Fades
@@ -2632,6 +2687,7 @@ int main(int argc, char **argv) {
     if (getenv("NIGHTFALL_DEPTH")) depth = atoi(getenv("NIGHTFALL_DEPTH"));
     if (getenv("NIGHTFALL_RCAP")) { render_cap_w = atoi(getenv("NIGHTFALL_RCAP")); if (render_cap_w < 320) render_cap_w = 320; }
     new_game();
+    if (getenv("NIGHTFALL_LIGHT")) { match_count = 5; match_burn = MATCH_DUR; }  /* start with a lit match */
     if (getenv("NIGHTFALL_SANITY")) sanity = atof(getenv("NIGHTFALL_SANITY"));
     if (getenv("NIGHTFALL_DUMPMAP")) {
         const char *tn[] = {"entrance","key","storage","library","hall","exit","cells"};
@@ -2697,6 +2753,16 @@ int main(int argc, char **argv) {
                         yaw = atan2(kz - pz, kx - px); pitch = -0.05; }
                 }
             }
+        }
+        if (getenv("NIGHTFALL_SHOWMATCH") && matchpick[0].active) {  /* dev: face a matchbox pickup */
+            double tx = matchpick[0].x, tz = matchpick[0].y;
+            for (double s = 1.6; s >= 1.0; s -= 0.3)
+                for (int d = 0; d < 4; d++) {
+                    double ox = (d==0)-(d==1), oz = (d==2)-(d==3);
+                    double px = tx + ox * s, pz = tz + oz * s;
+                    if (is_open((int)px, (int)pz)) { posX = px; posY = pz;
+                        yaw = atan2(tz - pz, tx - px); pitch = -0.1; }
+                }
         }
         if (getenv("NIGHTFALL_SHOWPROP") && prop_count > 0) {   /* face room clutter */
             int pi = atoi(getenv("NIGHTFALL_SHOWPROP"));
@@ -2770,10 +2836,10 @@ int main(int argc, char **argv) {
                 }
                 if ((k == SDL_SCANCODE_RETURN || k == SDL_SCANCODE_KP_ENTER ||
                      k == SDL_SCANCODE_SPACE) && game_state == ST_TITLE) {
-                    depth = 1; new_game(); game_state = ST_PLAY; state_time = 0;
+                    depth = 1; match_count = 2; new_game(); game_state = ST_PLAY; state_time = 0;
                 }
                 if (k == SDL_SCANCODE_R && (game_state == ST_CAUGHT || game_state == ST_WIN)) {
-                    depth = 1; new_game(); game_state = ST_PLAY; state_time = 0;
+                    depth = 1; match_count = 2; new_game(); game_state = ST_PLAY; state_time = 0;
                 }
                 /* dismiss a note you're reading -- else-if so the same E press
                  * doesn't fall through and immediately re-open it. */
@@ -2790,6 +2856,12 @@ int main(int argc, char **argv) {
                         if (snd_pickup) Mix_PlayChannel(3, snd_pickup, 0);
                     }
                     else if (near_locker >= 0) { hidden = 1; posX = lockers[near_locker].x; posY = lockers[near_locker].y; }
+                }
+                /* strike a match: a few seconds of light, at the cost of being seen */
+                else if (k == SDL_SCANCODE_F && game_state == ST_PLAY && !hidden &&
+                         match_count > 0 && match_burn <= 0.0) {
+                    match_count--; match_burn = MATCH_DUR;
+                    if (snd_step) { Mix_VolumeChunk(snd_step, 90); Mix_PlayChannel(2, snd_step, 0); }
                 }
             }
             if (e.type == SDL_MOUSEMOTION && game_state == ST_PLAY && !hidden) {
@@ -2874,6 +2946,15 @@ int main(int argc, char **argv) {
                 if (notes[i].active) {
                     double nd = (posX - notes[i].x) * (posX - notes[i].x) + (posY - notes[i].y) * (posY - notes[i].y);
                     if (nd < PICKUP_DIST * PICKUP_DIST) near_note = i;
+                }
+            /* walk over a matchbox to pocket it */
+            for (int i = 0; i < MAX_MATCHPICK; i++)
+                if (matchpick[i].active) {
+                    double dx = posX - matchpick[i].x, dy = posY - matchpick[i].y;
+                    if (dx * dx + dy * dy < PICKUP_DIST * PICKUP_DIST) {
+                        matchpick[i].active = 0; match_count++;
+                        if (snd_pickup) Mix_PlayChannel(3, snd_pickup, 0);
+                    }
                 }
             /* step through the open door -> a fade-to-black descent transition */
             if (descend_t > 0.0) {
