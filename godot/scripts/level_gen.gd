@@ -37,6 +37,7 @@ signal hud_changed
 
 func _ready() -> void:
 	randomize()
+	AudioManager.player = player
 	_build_level()
 	GameState.state_changed.connect(_on_state_changed)
 	if OS.get_environment("NIGHTFALL_GDTRACE") != "":
