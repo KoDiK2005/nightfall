@@ -125,7 +125,7 @@ static int    has_up = 0;
 
 /* the floor is built from themed rectangular rooms joined by corridors,
  * instead of a featureless maze. Each room's theme decides what it holds. */
-enum { RM_ENTRANCE, RM_KEY, RM_STORAGE, RM_LIBRARY, RM_HALL, RM_EXIT };
+enum { RM_ENTRANCE, RM_KEY, RM_STORAGE, RM_LIBRARY, RM_HALL, RM_EXIT, RM_CELLS };
 typedef struct { int x, y, w, h, theme; } Room;
 static Room   rooms[MAX_ROOMS];
 static int    room_count = 0;
@@ -849,7 +849,7 @@ static void generate_rooms(void) {
     for (int i = 1; i < room_count; i++) {
         if (rooms[i].theme != RM_HALL) continue;
         if (keyrooms < num_keys) { rooms[i].theme = RM_KEY; keyrooms++; }
-        else rooms[i].theme = (i & 1) ? RM_STORAGE : RM_LIBRARY;
+        else { int p = i % 3; rooms[i].theme = p == 0 ? RM_STORAGE : p == 1 ? RM_LIBRARY : RM_CELLS; }
     }
     /* -------- pillar candidates in the larger halls (columns for cover) ----- */
     pillar_count = 0;
@@ -982,6 +982,25 @@ static void generate_props(void) {
                         props[prop_count++] = (Prop){bx, bz, (wx != 0) ? 0.055 : 0.05, (wx != 0) ? 0.05 : 0.055,
                                                      0.30, 0.30 + bh, sp[0], sp[1], sp[2]};
                     }
+                } else if (r->theme == RM_CELLS && wall) {          /* a barred prison cell */
+                    /* back the cage onto the wall; bars run along it, facing the room */
+                    double bcx = cx - wx * 0.10, bcz = cz - wy * 0.10;
+                    double tanx = (wx != 0) ? 0.0 : 1.0, tanz = (wx != 0) ? 1.0 : 0.0;
+                    for (int bk = -2; bk <= 2 && prop_count < MAX_PROPS; bk++) {   /* vertical iron bars */
+                        double bx = bcx + tanx * bk * 0.15, bz = bcz + tanz * bk * 0.15;
+                        props[prop_count++] = (Prop){bx, bz, 0.028, 0.028, 0.0, 0.92, 0.30f, 0.31f, 0.35f};
+                    }
+                    if (prop_count < MAX_PROPS)                     /* top rail tying the bars */
+                        props[prop_count++] = (Prop){bcx, bcz, (wx != 0) ? 0.03 : 0.33, (wx != 0) ? 0.33 : 0.03,
+                                                     0.84, 0.92, 0.26f, 0.27f, 0.30f};
+                    if (prop_count < MAX_PROPS && frand() < 0.7) {  /* a dark blood pool on the floor */
+                        double px = cx + wx * 0.16, pz = cz + wy * 0.16;
+                        props[prop_count++] = (Prop){px, pz, 0.24 + frand() * 0.08, 0.24 + frand() * 0.08,
+                                                     0.012, 0.03, 0.24f, 0.03f, 0.03f};
+                    }
+                } else if (r->theme == RM_CELLS) {                  /* open floor: just the blood */
+                    props[prop_count++] = (Prop){cx, cz, 0.22 + frand() * 0.08, 0.22 + frand() * 0.08,
+                                                 0.012, 0.03, 0.22f, 0.03f, 0.03f};
                 } else if (r->theme == RM_KEY) {                    /* shrine relics: pale bones */
                     props[prop_count++] = (Prop){cx, cz, 0.17, 0.17, 0.0, 0.12 + frand() * 0.08, 0.82f, 0.80f, 0.70f};
                     if (prop_count < MAX_PROPS && frand() < 0.6)
@@ -1736,6 +1755,7 @@ static void tint_for(int theme) {
         case RM_KEY:      c[0]=1.25f; c[1]=0.92f; c[2]=0.48f; break;  /* gold shrine   */
         case RM_LIBRARY:  c[0]=0.64f; c[1]=0.80f; c[2]=1.12f; break;  /* cold blue     */
         case RM_STORAGE:  c[0]=1.10f; c[1]=0.78f; c[2]=0.55f; break;  /* rust/amber    */
+        case RM_CELLS:    c[0]=1.08f; c[1]=0.62f; c[2]=0.58f; break;  /* bloodied rust */
         case RM_EXIT:     c[0]=0.58f; c[1]=1.18f; c[2]=0.72f; break;  /* sickly green  */
         case RM_ENTRANCE: c[0]=1.00f; c[1]=0.90f; c[2]=0.74f; break;  /* warm hearth   */
         default:          c[0]=0.82f; c[1]=0.84f; c[2]=0.94f; break;  /* corridor grey */
@@ -2614,7 +2634,7 @@ int main(int argc, char **argv) {
     new_game();
     if (getenv("NIGHTFALL_SANITY")) sanity = atof(getenv("NIGHTFALL_SANITY"));
     if (getenv("NIGHTFALL_DUMPMAP")) {
-        const char *tn[] = {"entrance","key","storage","library","hall","exit"};
+        const char *tn[] = {"entrance","key","storage","library","hall","exit","cells"};
         fprintf(stderr, "rooms=%d\n", room_count);
         for (int i = 0; i < room_count; i++)
             fprintf(stderr, "  room %d: %dx%d at (%d,%d) theme=%s\n",
