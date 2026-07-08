@@ -13,17 +13,24 @@ extends CharacterBody3D
 var pitch: float = 0.0
 
 func _ready() -> void:
-	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+	GameState.state_changed.connect(_on_state_changed)
+	_on_state_changed(GameState.state)
+
+func _on_state_changed(new_state: GameState.State) -> void:
+	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED if new_state == GameState.State.PLAY else Input.MOUSE_MODE_VISIBLE
 
 func _unhandled_input(event: InputEvent) -> void:
+	if GameState.state != GameState.State.PLAY:
+		return
 	if event is InputEventMouseMotion:
 		rotate_y(-event.relative.x * mouse_sens)
 		pitch = clamp(pitch - event.relative.y * mouse_sens, -1.45, 1.45)
 		camera.rotation.x = pitch
-	if event is InputEventKey and event.pressed and event.keycode == KEY_ESCAPE:
-		Input.mouse_mode = Input.MOUSE_MODE_VISIBLE if Input.mouse_mode == Input.MOUSE_MODE_CAPTURED else Input.MOUSE_MODE_CAPTURED
 
 func _physics_process(_delta: float) -> void:
+	if GameState.state != GameState.State.PLAY:
+		velocity = Vector3.ZERO
+		return
 	var input_dir := Vector2(
 		Input.get_action_strength("move_right") - Input.get_action_strength("move_left"),
 		Input.get_action_strength("move_back") - Input.get_action_strength("move_forward")

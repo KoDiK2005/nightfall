@@ -27,10 +27,13 @@ func setup(p_level_gen: Node, p_player: CharacterBody3D) -> void:
 	pick_wander()
 
 func _physics_process(delta: float) -> void:
-	if level_gen == null or player == null:
+	if level_gen == null or player == null or GameState.state != GameState.State.PLAY:
 		return
 	_sense(delta)
 	_move(delta)
+	var d: float = Vector2(position.x, position.z).distance_to(Vector2(player.position.x, player.position.z))
+	if d < CATCH_DIST:
+		GameState.go_caught()
 
 func _sense(delta: float) -> void:
 	var mypos := Vector2(position.x, position.z)
@@ -64,9 +67,6 @@ func _sense(delta: float) -> void:
 		var here2 := Vector2i(int(position.x), int(position.z))
 		if here2 == target_cell:
 			pick_wander()
-
-	if not sensed and d < CATCH_DIST:
-		pass   # спрятавшегося (hidden) героя пока не различаем -- добавим с прятками
 
 ## прямая видимость: луч игрок<->монстр не должен пересекать стены
 ## (см. has_los в gen.c, там -- пошаговая проверка по сетке; тут -- raycast)

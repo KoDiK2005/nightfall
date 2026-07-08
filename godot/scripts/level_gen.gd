@@ -37,10 +37,15 @@ signal hud_changed
 func _ready() -> void:
 	randomize()
 	_build_level()
+	GameState.state_changed.connect(_on_state_changed)
 	if OS.get_environment("NIGHTFALL_GDTRACE") != "":
 		print("GDTRACE rooms=%d player_pos=%s wall_items=%d floor_items=%d torches=%d keys=%d" % [
 			rooms.size(), player.position, wall_map.get_used_cells().size(),
 			floor_map.get_used_cells().size(), torches.size(), num_keys])
+
+func _on_state_changed(new_state: GameState.State) -> void:
+	if new_state == GameState.State.PLAY:
+		_build_level()
 
 func _build_level() -> void:
 	_generate()
@@ -100,6 +105,8 @@ func _spawn_monster() -> void:
 	monster.setup(self, player)
 
 func _process(_delta: float) -> void:
+	if GameState.state != GameState.State.PLAY:
+		return
 	var p := Vector2(player.position.x, player.position.z)
 	for c in chests:
 		if not c.active:
