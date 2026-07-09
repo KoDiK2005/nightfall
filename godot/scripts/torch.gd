@@ -18,8 +18,10 @@ static var _iron_tex: ImageTexture = null
 
 var _t: float = randf() * 10.0
 var base_energy: float = 1.4
+var _player: CharacterBody3D = null   # для "факелы чаще гаснут" по рассудку, см. _process
 
 func _ready() -> void:
+	_player = get_tree().get_root().find_child("Player", true, false)
 	if _flame_tex == null:
 		_flame_tex = _build_flame_texture()
 	var mat := StandardMaterial3D.new()
@@ -90,10 +92,15 @@ static func _build_flame_texture() -> ImageTexture:
 func _process(delta: float) -> void:
 	_t += delta
 	# та же идея, что и flicker в render.c: медленный шум плюс редкие
-	# резкие проседания яркости ("power surge").
+	# резкие проседания яркости ("power surge") -- порт "торчи чаще
+	# гаснут" по мере падения рассудка (см. README): раньше шанс скачка
+	# был фиксированным 1%, никак не завязанным на игрока.
 	var n := sin(_t * 9.0) * 0.15 + sin(_t * 2.3) * 0.1
+	var dread: float = 0.0
+	if _player and "sanity" in _player:
+		dread = 1.0 - _player.sanity
 	var surge := 1.0
-	if randf() < 0.01:
-		surge = 0.2 + randf() * 0.3
+	if randf() < 0.01 + dread * 0.05:
+		surge = max(0.2 + randf() * 0.3 - dread * 0.15, 0.05)   # проседает глубже, чем ниже рассудок
 	light.light_energy = base_energy * (0.85 + n) * surge
 	flame.scale = Vector3.ONE * (0.9 + n * 0.6)
