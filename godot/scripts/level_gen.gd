@@ -17,6 +17,57 @@ const MAX_KEYS := 6
 const MONSTER_SCENE := preload("res://scenes/monster.tscn")
 const NUM_LOCKERS := 5
 
+static var _chest_tex: ImageTexture = null
+static var _locker_tex: ImageTexture = null
+
+## Порт спрайта 7 (CHEST) из build_textures/build_sprites (render.c):
+## окованный железом деревянный сундук -- тёплое дерево между холодными
+## обручами. Раньше сундук с ключом был просто золотым кубом.
+static func _chest_texture() -> ImageTexture:
+	if _chest_tex:
+		return _chest_tex
+	const TEX := 64
+	var img := Image.create(TEX, TEX, false, Image.FORMAT_RGB8)
+	for y in range(TEX):
+		for x in range(TEX):
+			var band: bool = (x < 3 or x > 60 or y < 3 or y > 60
+				or absi(x - 32) < 3 or absi(y - 32) < 3)
+			var plank: bool = (x % 7) < 1
+			var wood: float = 0.30
+			var v: float = wood + randf() * 0.03 - (0.09 if plank else 0.0) - (0.16 if band else 0.0)
+			v = max(v, 0.025)
+			var c: Color = Color(v + 0.02, v + 0.017, v + 0.02) if band \
+				else Color(v + 0.12, v * 0.8 + 0.03, v * 0.4)
+			# латунный навесной замок в центре передней грани
+			if absi(x - 32) < 5 and y > 26 and y < 40:
+				c = Color(0.62, 0.5, 0.15)
+			if absi(x - 32) < 3 and y > 20 and y < 27:
+				c = Color(0.5, 0.4, 0.1)
+			img.set_pixel(x, y, c)
+	_chest_tex = ImageTexture.create_from_image(img)
+	return _chest_tex
+
+## Порт спрайта 3 (LOCKER): крашеный металл со швом двери, горизонтальными
+## жалюзи-рёбрами и ручкой -- раньше шкафчик был просто тёмно-серым кубом.
+static func _locker_texture() -> ImageTexture:
+	if _locker_tex:
+		return _locker_tex
+	const TEX := 64
+	var img := Image.create(TEX, TEX, false, Image.FORMAT_RGB8)
+	for y in range(TEX):
+		for x in range(TEX):
+			var body: float = 0.27 + randf() * 0.05
+			var seam: bool = (x % 21) < 2
+			var slat: bool = y > 8 and y < 56 and (y % 6) < 2
+			var handle: bool = x >= 41 and x <= 46 and y >= 30 and y <= 40
+			var v: float = body
+			if seam: v -= 0.09
+			if slat: v -= 0.11
+			var c: Color = Color(0.68, 0.63, 0.44) if handle else Color(v, v + 0.015, v + 0.03)
+			img.set_pixel(x, y, c)
+	_locker_tex = ImageTexture.create_from_image(img)
+	return _locker_tex
+
 var map: Array = []   # map[y][x] == true, если клетка открыта (пол)
 var rooms: Array = [] # Rect2i(x, y, w, h) на каждую комнату
 var torches: Array = []   # Node3D-инстансы факелов этого уровня
@@ -369,10 +420,12 @@ func _place_keys_and_exit() -> void:
 			best_d = d
 			exit_room_idx = i
 
-	var key_gold := StandardMaterial3D.new()
-	key_gold.albedo_color = Color(0.95, 0.8, 0.2)
-	key_gold.emission_enabled = true
-	key_gold.emission = Color(0.6, 0.45, 0.05)
+	var chest_mat := StandardMaterial3D.new()
+	chest_mat.albedo_texture = _chest_texture()
+	chest_mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
+	chest_mat.emission_enabled = true
+	chest_mat.emission = Color(0.5, 0.35, 0.05)
+	chest_mat.emission_energy_multiplier = 0.18   # чуть светится в темноте -- манит подойти
 
 	var placed_keys := 0
 	for i in range(1, rooms.size()):
@@ -385,9 +438,9 @@ func _place_keys_and_exit() -> void:
 		var cy: float = r.position.y + r.size.y / 2.0
 		var mesh := MeshInstance3D.new()
 		mesh.mesh = BoxMesh.new()
-		mesh.mesh.size = Vector3(0.3, 0.3, 0.3)
-		mesh.material_override = key_gold
-		mesh.position = Vector3(cx, 0.4, cy)
+		mesh.mesh.size = Vector3(0.55, 0.34, 0.36)   # приземистый сундук-коффер, не куб
+		mesh.material_override = chest_mat
+		mesh.position = Vector3(cx, 0.22, cy)
 		props_root.add_child(mesh)
 		chests.append({"pos": Vector2(cx, cy), "active": true, "mesh": mesh})
 		placed_keys += 1
@@ -414,7 +467,8 @@ func _place_keys_and_exit() -> void:
 func _place_lockers(exit_room_idx: int) -> void:
 	player.lockers.clear()
 	var locker_mat := StandardMaterial3D.new()
-	locker_mat.albedo_color = Color(0.25, 0.28, 0.3)
+	locker_mat.albedo_texture = _locker_texture()
+	locker_mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
 
 	var candidates: Array = range(1, rooms.size()).filter(func(i): return i != exit_room_idx)
 	candidates.shuffle()
