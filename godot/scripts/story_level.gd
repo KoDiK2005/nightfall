@@ -191,6 +191,8 @@ func _build_house() -> void:
 	_place_ground_floor_furniture()
 	_place_upper_floor_furniture()
 	_place_lamps()
+	_place_gazebo(26.0, 6.0)
+	_place_car_and_clothesline()
 	house_built = true
 
 func _prop(pos: Vector3, size: Vector3, color: Color) -> void:
@@ -245,6 +247,36 @@ func _place_ground_floor_furniture() -> void:
 	_prop(Vector3(26.0, 0.21, 15.5), Vector3(1.7, 0.42, 1.7), Color(0.40, 0.30, 0.22))    # обеденный стол
 	_prop(Vector3(27.0, 0.21, 26.0), Vector3(2.6, 0.42, 1.1), Color(0.30, 0.22, 0.30))    # диван
 	_prop(Vector3(27.0, 0.25, 28.0), Vector3(1.1, 0.5, 0.36), Color(0.18, 0.16, 0.16))    # ТВ-тумба
+
+## беседка на лужайке -- порт place_gazebo (story.c): четыре столба и
+## плоская крыша, чисто декор, без коллизии (как и вся прочая мебель тут).
+func _place_gazebo(cx: float, cz: float) -> void:
+	var half := 1.6
+	var post_color := Color(0.55, 0.42, 0.30)
+	for ox in [-half, half]:
+		for oz in [-half, half]:
+			_prop(Vector3(cx + ox, 0.575, cz + oz), Vector3(0.18, 1.15, 0.18), post_color)
+	_prop(Vector3(cx, 1.125, cz), Vector3((half + 0.25) * 2.0, 0.15, (half + 0.25) * 2.0), post_color * 0.85)
+
+## ржавая развалюха у забора и бельевая верёвка -- порт куска
+## place_yard_clutter (story.c) про машину и верёвку; двор дома, где пьют и
+## срываются на детях, не ухоженная лужайка. Южнее дома, на открытой части
+## общей дворовой плоскости (Yard-плейн покрывает весь двор целиком, так что
+## пределы MW/MH из карты комнат тут ни при чём -- те нужны только стенам).
+func _place_car_and_clothesline() -> void:
+	var cx := 24.0
+	var cz := 33.5
+	_prop(Vector3(cx, 0.275, cz), Vector3(3.0, 0.55, 1.7), Color(0.28, 0.14, 0.10))    # кузов
+	_prop(Vector3(cx, 0.635, cz), Vector3(2.2, 0.17, 1.4), Color(0.24, 0.12, 0.09))    # кабина/крыша
+
+	var clx0 := 17.0
+	var clx1 := 20.0
+	var clz := 33.5
+	var pole_color := Color(0.30, 0.22, 0.16)
+	_prop(Vector3(clx0, 0.5, clz), Vector3(0.1, 1.0, 0.1), pole_color)
+	_prop(Vector3(clx1, 0.5, clz), Vector3(0.1, 1.0, 0.1), pole_color)
+	_prop(Vector3((clx0 + clx1) / 2.0, 0.985, clz), Vector3(clx1 - clx0, 0.03, 0.04), Color(0.55, 0.52, 0.46))   # провисшая верёвка
+	_prop(Vector3(clx0 + 0.6, 0.825, clz), Vector3(0.28, 0.25, 0.06), Color(0.62, 0.60, 0.55))                   # тряпка на ней
 
 ## подмножество place_upper_floor_furniture (story.c).
 func _place_upper_floor_furniture() -> void:
