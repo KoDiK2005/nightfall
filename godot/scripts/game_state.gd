@@ -48,6 +48,11 @@ func advance_floor() -> void:
 func start_new_game(p_mode: Mode = Mode.ENDLESS) -> void:
 	mode = p_mode
 	depth = 1
+	# dev-хук NIGHTFALL_DEPTH: начать с заданного этажа (порт из C-версии) --
+	# удобно смотреть биомы/масштабирование сложности вглубь
+	var d := OS.get_environment("NIGHTFALL_DEPTH")
+	if d != "" and d.is_valid_int():
+		depth = max(1, d.to_int())
 	state = State.PLAY
 	mode_changed.emit(mode)
 	state_changed.emit(state)
