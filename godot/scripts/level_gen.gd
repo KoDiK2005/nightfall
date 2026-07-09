@@ -249,6 +249,35 @@ func make_noise(pos: Vector2, ttl: float) -> void:
 		noise_pos = pos
 		noise_t = ttl
 
+## "props ... had no collision at all -- purely visual, walk-through"
+## (main.c::prop_blocks) -- сундуки/шкафчики/ящики в подземелье были
+## буквально сквозными, только пол под ними не пускал. Заворачивает
+## мебельный меш в StaticBody3D с коробкой-коллизией на СВОЁМ физическом
+## слое (8, не общий со стенами) -- монстр (маска 1, только стены) её
+## по-прежнему не замечает и ходит как раньше по клеточной сетке, блокирует
+## только игрока (см. Player.collision_mask в main.tscn). Возвращает
+## добавленный корневой узел (StaticBody3D либо голый mesh для мелочи вроде
+## костей) -- вызывающий код должен прятать/удалять именно его, не только
+## внутренний mesh, иначе коллизия переживёт исчезновение картинки.
+func _add_prop_collision(mesh: MeshInstance3D, pos: Vector3, size: Vector3) -> Node3D:
+	if size.y < 0.10:
+		mesh.position = pos
+		props_root.add_child(mesh)
+		return mesh
+	var body := StaticBody3D.new()
+	body.position = pos
+	body.collision_layer = 8
+	body.collision_mask = 0
+	var shape := CollisionShape3D.new()
+	var box := BoxShape3D.new()
+	box.size = size
+	shape.shape = box
+	body.add_child(shape)
+	mesh.position = Vector3.ZERO
+	body.add_child(mesh)
+	props_root.add_child(body)
+	return body
+
 @onready var wall_map: GridMap = $"../WallGridMap"
 @onready var floor_map: GridMap = $"../FloorGridMap"
 @onready var player: CharacterBody3D = $"../Player"
@@ -495,6 +524,10 @@ func try_pickup_nearby(p: Vector2) -> bool:
 		if p.distance_to(c.pos) < PICKUP_DIST:
 			c.active = false
 			c.mesh.visible = false
+			# погасить и коллизию, не только визуал -- иначе после открытия
+			# на этом месте остаётся невидимая стена до конца этажа
+			if c.root is StaticBody3D:
+				c.root.collision_layer = 0
 			keys_left -= 1
 			hud_changed.emit()
 			# скрип открывающегося сундука -- ещё один источник шума
@@ -739,8 +772,11 @@ func _wall_dir(x: int, y: int) -> Vector2i:
 ## один за каждые три этажа, максимум MAX_KEYS. Раскладываются по центрам
 ## комнат, кроме стартовой. Выход -- в комнате, самой дальней от старта.
 func _place_keys_and_exit() -> void:
-	for c in chests:
-		c.mesh.queue_free()
+	# меши сундуков/шкафчиков/ящиков теперь могут быть завёрнуты в
+	# StaticBody3D-коллизию (см. _add_prop_collision) -- их всё равно
+	# подчищает общая петля по props_root чуть ниже, отдельно очищать
+	# c.mesh тут больше не нужно (и посвободило бы только визуал, оставив
+	# сиротский коллайдер до конца кадра).
 	chests.clear()
 	matchpicks.clear()   # меши -- дети props_root, чистятся общей петлёй ниже
 	rockpicks.clear()
@@ -787,11 +823,11 @@ func _place_keys_and_exit() -> void:
 		var cy: float = r.position.y + r.size.y / 2.0
 		var mesh := MeshInstance3D.new()
 		mesh.mesh = BoxMesh.new()
-		mesh.mesh.size = Vector3(0.55, 0.34, 0.36)   # приземистый сундук-коффер, не куб
+		var chest_size := Vector3(0.55, 0.34, 0.36)   # приземистый сундук-коффер, не куб
+		mesh.mesh.size = chest_size
 		mesh.material_override = chest_mat
-		mesh.position = Vector3(cx, 0.22, cy)
-		props_root.add_child(mesh)
-		chests.append({"pos": Vector2(cx, cy), "active": true, "mesh": mesh})
+		var chest_root := _add_prop_collision(mesh, Vector3(cx, 0.22, cy), chest_size)
+		chests.append({"pos": Vector2(cx, cy), "active": true, "mesh": mesh, "root": chest_root})
 		placed_keys += 1
 
 	var er: Rect2i = rooms[exit_room_idx]
@@ -1040,11 +1076,17 @@ func _place_lockers(exit_room_idx: int) -> void:
 			var wz: float = c.y + 0.5 + wall_dir.y * 0.22
 			var mesh := MeshInstance3D.new()
 			mesh.mesh = BoxMesh.new()
-			mesh.mesh.size = Vector3(0.5, 1.8, 0.5)
+			var locker_size := Vector3(0.5, 1.8, 0.5)
+			mesh.mesh.size = locker_size
 			mesh.material_override = locker_mat
-			mesh.position = Vector3(wx, 0.9, wz)
-			props_root.add_child(mesh)
-			player.lockers.append(mesh)
+			# как и у сундука -- своя коллизия (см. _add_prop_collision), но
+			# при входе в шкафчик игрок телепортируется ровно на его позицию
+			# (см. player._try_interact): столкновение с СОБСТВЕННЫМ
+			# шкафчиком на время прятки гасится через collision_mask, а не
+			# отключением коллизии тут, иначе игрок застрянет в стене при
+			# выходе из шкафчика раньше, чем коллизия успеет вернуться.
+			var locker_root := _add_prop_collision(mesh, Vector3(wx, 0.9, wz), locker_size)
+			player.lockers.append(locker_root)
 
 ## "a struck match doesn't survive the descent; scatter a few fresh ones" /
 ## "rocks to throw as a lure; a fresh handful each floor" (gen.c) -- этой
@@ -1212,11 +1254,14 @@ func _spawn_rubble(pos: Vector2, mat: StandardMaterial3D) -> void:
 func _spawn_crate(pos: Vector2, mat: StandardMaterial3D) -> void:
 	var mesh := MeshInstance3D.new()
 	mesh.mesh = BoxMesh.new()
-	mesh.mesh.size = Vector3(0.5, 0.5, 0.5)
+	var crate_size := Vector3(0.5, 0.5, 0.5)
+	mesh.mesh.size = crate_size
 	mesh.material_override = mat
-	mesh.position = Vector3(pos.x, 0.25, pos.y)
 	mesh.rotation.y = randf() * TAU
-	props_root.add_child(mesh)
+	# в отличие от щебня/костей рядом -- цельный ящик достаточно крупный,
+	# чтобы об него было странно проходить насквозь; та же коллизия, что и
+	# у сундука/шкафчика (см. _add_prop_collision)
+	_add_prop_collision(mesh, Vector3(pos.x, 0.25, pos.y), crate_size)
 	if randf() < 0.35:
 		var mesh2 := MeshInstance3D.new()
 		mesh2.mesh = BoxMesh.new()

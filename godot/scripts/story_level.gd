@@ -339,6 +339,33 @@ func _build_house() -> void:
 	_place_car_and_clothesline()
 	house_built = true
 
+## "props (furniture, yard clutter, gazebo posts, the car hulk, ...) had no
+## collision at all -- purely visual, walk-through" (main.c комментарий к
+## prop_blocks, который был портирован лишь наполовину: сама мебель
+## вообще без коллизии, до сих пор буквально сквозная). Блокирует всё, что
+## стоит на высоте роста (база ниже 1.6 -- иначе карниз/дымоход перекрыл
+## бы проход под собой) и не тоньше 0.10 (декали/ковры остаются
+## проходимыми, как порог у C-версии). Свой физический слой (8), а не
+## общий со стенами (1) -- монстр по-прежнему ходит по клеточной сетке
+## без понятия о мебели, как и в C-версии; блокирует только игрока.
+func _add_prop_collision(mesh: MeshInstance3D, pos: Vector3, size: Vector3) -> void:
+	if size.y < 0.10 or pos.y - size.y / 2.0 >= 1.6:
+		mesh.position = pos
+		house_props.add_child(mesh)
+		return
+	var body := StaticBody3D.new()
+	body.position = pos
+	body.collision_layer = 8
+	body.collision_mask = 0
+	var shape := CollisionShape3D.new()
+	var box := BoxShape3D.new()
+	box.size = size
+	shape.shape = box
+	body.add_child(shape)
+	mesh.position = Vector3.ZERO
+	body.add_child(mesh)
+	house_props.add_child(body)
+
 func _prop(pos: Vector3, size: Vector3, color: Color) -> void:
 	var mesh := MeshInstance3D.new()
 	mesh.mesh = BoxMesh.new()
@@ -346,8 +373,7 @@ func _prop(pos: Vector3, size: Vector3, color: Color) -> void:
 	var mat := StandardMaterial3D.new()
 	mat.albedo_color = color
 	mesh.material_override = mat
-	mesh.position = pos
-	house_props.add_child(mesh)
+	_add_prop_collision(mesh, pos, size)
 
 ## настенное зеркало -- гладкий металлик без текстуры (слишком мелкая
 ## деталь, чтобы городить под неё отдельную процедурную карту).
@@ -375,8 +401,7 @@ func _prop_tex(pos: Vector3, size: Vector3, tex: ImageTexture, tint: Color) -> v
 	mat.albedo_color = tint
 	mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
 	mesh.material_override = mat
-	mesh.position = pos
-	house_props.add_child(mesh)
+	_add_prop_collision(mesh, pos, size)
 
 static var _gazebo_wood_tex: ImageTexture = null
 static var _car_rust_tex: ImageTexture = null

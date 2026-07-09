@@ -53,6 +53,11 @@ func _on_state_changed(new_state: GameState.State) -> void:
 		stamina = 1.0
 		exhausted = false
 		hidden = false
+		# monster.gd может сбросить hidden напрямую при поимке в шкафчике
+		# (в обход _try_interact, где обычно возвращается маска) -- без
+		# этого сброса игрок после рестарта до конца забега не сталкивался
+		# бы с мебелью на слое 8.
+		set_collision_mask_value(8, true)
 
 ## сбросить вертикальный наклон камеры (level_gen зовёт при спавне, чтобы
 ## новый этаж не унаследовал задранную/опущенную голову с прошлого)
@@ -76,9 +81,15 @@ func _unhandled_input(event: InputEvent) -> void:
 func _try_interact() -> void:
 	if hidden:
 		hidden = false
+		set_collision_mask_value(8, true)   # шкафчики (слой 8) снова блокируют
 		return
 	if near_locker:
 		hidden = true
+		# шкафчики теперь имеют настоящую коллизию (см. level_gen.gd::
+		# _add_prop_collision), а прятка телепортирует игрока ровно на
+		# позицию своего же шкафчика -- без этого игрок застревал бы
+		# внутри собственной солидной мебели. Возвращается выше при выходе.
+		set_collision_mask_value(8, false)
 		global_position = near_locker.global_position
 
 func _physics_process(delta: float) -> void:
