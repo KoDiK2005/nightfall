@@ -34,6 +34,13 @@ const VISION_MAX_COUNT := 24
 var vision_textures: Array = []
 var vision_timer: float = 8.0
 
+## обе вспышки (случайная по низкому рассудку и гарантированная на сундуке)
+## в C-версии сопровождались звуком (Mix_PlayChannel(4, snd_scare, ...) --
+## громче на сундуке, тише на случайной вспышке). В Godot-порте scare.wav
+## был подключён только к экрану поимки (см. caught.gd) -- сами вспышки
+## оставались немыми.
+var scare_player: AudioStreamPlayer = null
+
 ## "screen-shake that spikes on scares... and as a frayed mind bleeds the
 ## colour apart" (render.c) -- порт постобработки финального кадра, которого
 ## в Godot-порте не было вовсе: хроматическая аберрация/зерно/тряска росли с
@@ -74,6 +81,8 @@ func _flash_vision(tex: ImageTexture) -> void:
 	tw.tween_interval(0.12)
 	tw.tween_property(vision_flash, "modulate:a", 0.0, 0.22)
 	_vision_scare_t = VIS_FLASH_DUR
+	scare_player.volume_db = linear_to_db(0.375)   # 48/128 в шкале громкости C-версии
+	scare_player.play()
 
 ## "Every chest you open slams one of your photos edge-to-edge across the
 ## screen -- a guaranteed jump-scare" (старое C-README) -- в отличие от
@@ -97,6 +106,8 @@ func trigger_chest_scare() -> void:
 	tw.tween_property(vision_flash, "modulate:a", 0.0, 0.3)
 	vision_timer = max(vision_timer, 6.0)   # обычная вспышка не наложится следом сразу
 	_screamer_t = SCREAMER_DUR
+	scare_player.volume_db = linear_to_db(0.9375)   # 120/128 -- громче, чем случайная вспышка
+	scare_player.play()
 
 ## "затухающее предупреждение при входе учит правилу каждого" (README) --
 ## текста не было вовсе, игрок сталкивался со Слухачом/Наблюдателем без
@@ -124,6 +135,10 @@ func _ready() -> void:
 	if GameState.pending_warning != -1:
 		_show_warning(GameState.pending_warning)
 		GameState.pending_warning = -1
+
+	scare_player = AudioStreamPlayer.new()
+	scare_player.stream = load("res://assets/scare.wav")
+	add_child(scare_player)
 
 	_load_visions()
 	# dev-хук NIGHTFALL_SHOWVISION=i (порт из C-версии): показать картинку
