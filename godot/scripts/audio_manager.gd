@@ -8,6 +8,7 @@ extends Node
 @onready var heartbeat: AudioStreamPlayer = AudioStreamPlayer.new()
 @onready var footsteps: AudioStreamPlayer = AudioStreamPlayer.new()
 @onready var whisper: AudioStreamPlayer = AudioStreamPlayer.new()
+@onready var voice: AudioStreamPlayer = AudioStreamPlayer.new()
 
 var heart_timer: float = 0.0
 var step_timer: float = 0.0
@@ -20,17 +21,25 @@ func _ready() -> void:
 	add_child(heartbeat)
 	add_child(footsteps)
 	add_child(whisper)
+	add_child(voice)
 	ambient.stream = load("res://assets/ambient.wav")
 	ambient.volume_db = -14.0
 	heartbeat.stream = load("res://assets/heartbeat.wav")
 	footsteps.stream = load("res://assets/step.wav")
 	whisper.stream = load("res://assets/whisper.wav")
+	voice.stream = load("res://assets/damn-why-did-i-come-here.wav")
 	GameState.state_changed.connect(_on_state_changed)
 
 func _on_state_changed(new_state: GameState.State) -> void:
 	if new_state == GameState.State.PLAY:
 		if not ambient.playing:
 			ambient.play()
+		# assets/damn-why-did-i-come-here.wav лежал неиспользованным --
+		# GameState.state только становится PLAY на настоящем старте
+		# нового забега (не на спуске между этажами, см. предыдущий фикс
+		# про рассудок), так что это ровно момент "только что вошёл"
+		if GameState.mode == GameState.Mode.ENDLESS:
+			voice.play()
 	else:
 		ambient.stop()
 
