@@ -408,6 +408,11 @@ func _place_torches() -> void:
 				candidates.append(Vector2i(x, y))
 	candidates.shuffle()
 
+	# "факелы расставлены реже, так что тьма сгущается" (README) -- раньше
+	# TORCH_SPACING был константой, глубина в расстановке не участвовала.
+	var wear: float = clamp(float(GameState.depth - 1) / 12.0, 0.0, 1.0)
+	var spacing: float = TORCH_SPACING * (1.0 + wear * 0.7)
+
 	var placed: Array = []   # Vector3(world_x, world_z, ...) центров факелов
 	for c in candidates:
 		var wall_dir := _wall_dir(c.x, c.y)
@@ -417,7 +422,7 @@ func _place_torches() -> void:
 		var wz: float = c.y + 0.5 + wall_dir.y * 0.48
 		var ok := true
 		for p in placed:
-			if Vector2(wx, wz).distance_to(Vector2(p.x, p.y)) < TORCH_SPACING:
+			if Vector2(wx, wz).distance_to(Vector2(p.x, p.y)) < spacing:
 				ok = false
 				break
 		if not ok:
