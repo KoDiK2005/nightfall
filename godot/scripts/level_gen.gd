@@ -10,6 +10,7 @@ const WALL_ITEM := 0
 const WALL_ITEMS := [0, 2, 3]   # три варианта текстуры стены, см. Biomes.WALL_RESOURCES
 const FLOOR_ITEM := 1
 const FLOOR_ITEMS := [1, 4]     # два варианта текстуры пола, см. Biomes.FLOOR_RESOURCES
+const CEIL_ITEMS := [5, 6]      # два варианта текстуры потолка, см. Biomes.CEIL_RESOURCES
 const WALL_H := 2   # стены в две клетки высотой -- иначе игрок видит поверх них
 const TORCH_SPACING := 2.6   # совпадает с TORCH_SPACING в render.c
 const TORCH_SCENE := preload("res://scenes/torch.tscn")
@@ -23,6 +24,10 @@ static var _chest_tex: ImageTexture = null
 static var _locker_tex: ImageTexture = null
 static var _door_wood_tex: ImageTexture = null
 static var _door_iron_tex: ImageTexture = null
+static var _rubble_tex: ImageTexture = null
+static var _crate_tex: ImageTexture = null
+static var _bone_tex: ImageTexture = null
+static var _web_tex: ImageTexture = null
 
 ## дощатый косяк дверного проёма -- та же идея, что и у мебели в
 ## story_level.gd, но тут своя копия: level_gen.gd не зависит от
@@ -107,6 +112,78 @@ static func _locker_texture() -> ImageTexture:
 			img.set_pixel(x, y, c)
 	_locker_tex = ImageTexture.create_from_image(img)
 	return _locker_tex
+
+## колотый камень для куч щебня -- заваленные комнаты вместо пустых коробок.
+static func _rubble_texture() -> ImageTexture:
+	if _rubble_tex:
+		return _rubble_tex
+	const TEX := 64
+	var img := Image.create(TEX, TEX, false, Image.FORMAT_RGB8)
+	for y in range(TEX):
+		for x in range(TEX):
+			var n: float = sin(x * 0.3 + y * 0.17) * 0.05 + sin(y * 0.41) * 0.04
+			var v: float = 0.28 + n + randf() * 0.04
+			var crack: bool = (x * 5 + y * 7) % 37 < 2
+			if crack:
+				v -= 0.12
+			v = max(v, 0.03)
+			img.set_pixel(x, y, Color(v, v * 0.97, v * 0.93))
+	_rubble_tex = ImageTexture.create_from_image(img)
+	return _rubble_tex
+
+## грубый дощатый ящик -- для куч барахла по комнатам, отличный от косяка
+## двери тёмными металлическими обвязками по краям.
+static func _crate_texture() -> ImageTexture:
+	if _crate_tex:
+		return _crate_tex
+	const TEX := 64
+	var img := Image.create(TEX, TEX, false, Image.FORMAT_RGB8)
+	for y in range(TEX):
+		for x in range(TEX):
+			var plank: bool = (x % 11) < 1
+			var band: bool = y < 6 or y > 57
+			var wood: float = 0.24 + randf() * 0.03 - (0.08 if plank else 0.0)
+			var c: Color = Color(0.15, 0.14, 0.13) if band \
+				else Color(wood + 0.10, wood * 0.75 + 0.02, wood * 0.35)
+			img.set_pixel(x, y, c)
+	_crate_tex = ImageTexture.create_from_image(img)
+	return _crate_tex
+
+## обглоданная кость -- для россыпей по полу тёмных комнат.
+static func _bone_texture() -> ImageTexture:
+	if _bone_tex:
+		return _bone_tex
+	const TEX := 64
+	var img := Image.create(TEX, TEX, false, Image.FORMAT_RGB8)
+	for y in range(TEX):
+		for x in range(TEX):
+			var v: float = 0.60 + randf() * 0.08
+			if randf() < 0.06:
+				v -= 0.22   # грязные пятна
+			img.set_pixel(x, y, Color(v, v * 0.94, v * 0.82))
+	_bone_tex = ImageTexture.create_from_image(img)
+	return _bone_tex
+
+## полупрозрачная паутина -- радиальные нити от угла, гаснущие к краю.
+static func _web_texture() -> ImageTexture:
+	if _web_tex:
+		return _web_tex
+	const TEX := 64
+	var img := Image.create(TEX, TEX, false, Image.FORMAT_RGBA8)
+	for y in range(TEX):
+		for x in range(TEX):
+			var dx: float = x - 2.0
+			var dy: float = y - 2.0
+			var dist: float = sqrt(dx * dx + dy * dy)
+			var ang: float = atan2(dy, dx) + PI
+			var radial: bool = fmod(ang, PI / 8.0) < 0.09
+			var ring: bool = fmod(dist, 7.0) < 0.9
+			var a: float = 0.0
+			if (radial or ring) and dist < 60.0:
+				a = clamp(0.55 - dist / 90.0, 0.0, 0.55)
+			img.set_pixel(x, y, Color(0.85, 0.85, 0.82, a))
+	_web_tex = ImageTexture.create_from_image(img)
+	return _web_tex
 
 var map: Array = []   # map[y][x] == true, если клетка открыта (пол)
 var rooms: Array = [] # Rect2i(x, y, w, h) на каждую комнату
@@ -489,10 +566,12 @@ func _paint() -> void:
 			if is_open(x, y):
 				floor_map.set_cell_item(Vector3i(x, 0, y), FLOOR_ITEMS[randi() % FLOOR_ITEMS.size()])
 				# потолок над каждой открытой клеткой -- замыкает пространство
-				# сверху, чтобы небо не проглядывало (тот же плоский тайл пола,
-				# поднятый на высоту стен); собственный случайный вариант,
-				# независимый от пола под ногами -- ещё меньше похоже на штамп
-				floor_map.set_cell_item(Vector3i(x, WALL_H, y), FLOOR_ITEMS[randi() % FLOOR_ITEMS.size()])
+				# сверху, чтобы небо не проглядывало. Раньше это был тот же
+				# самый пол, просто поднятый на высоту стен -- смотрящий вверх
+				# видел ровно те же половицы, что и под ногами. Свой набор
+				# item'ов (балки+копоть, см. Biomes) -- потолок больше не
+				# зеркалит пол.
+				floor_map.set_cell_item(Vector3i(x, WALL_H, y), CEIL_ITEMS[randi() % CEIL_ITEMS.size()])
 			else:
 				# стена рисуется, только если рядом есть открытая клетка --
 				# как в build_world_mesh (render.c): по одной грани на
@@ -627,6 +706,7 @@ func _place_keys_and_exit() -> void:
 
 	_place_lockers(exit_room_idx)
 	_place_doors()
+	_place_room_dressing()
 
 ## Дверь выхода -- прежде была просто цветной коробкой посреди комнаты.
 ## Теперь это свободностоящая рама (железные столбы + притолока), а плита
@@ -832,6 +912,125 @@ func _place_lockers(exit_room_idx: int) -> void:
 		mesh.position = Vector3(cx, 0.9, cy)
 		props_root.add_child(mesh)
 		player.lockers.append(mesh)
+
+## "качественное наполнение комнат" -- раньше кроме сундука/шкафчиков
+## комнаты были пустыми коробками, разве что стены и пол. Раскидывает по
+## каждой комнате 2-5 куч щебня/ящиков/костей на свободных местах, плюс
+## паутину по углам у потолка -- декоративно, без коллизии (как и у
+## сундуков/шкафчиков выше), монстр по-прежнему ходит по клеточной сетке.
+func _place_room_dressing() -> void:
+	var rubble_mat := StandardMaterial3D.new()
+	rubble_mat.albedo_texture = _rubble_texture()
+	rubble_mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
+	var crate_mat := StandardMaterial3D.new()
+	crate_mat.albedo_texture = _crate_texture()
+	crate_mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
+	var bone_mat := StandardMaterial3D.new()
+	bone_mat.albedo_texture = _bone_texture()
+	bone_mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
+	var web_mat := StandardMaterial3D.new()
+	web_mat.albedo_texture = _web_texture()
+	web_mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
+	web_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	web_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	web_mat.billboard_mode = BaseMaterial3D.BILLBOARD_ENABLED
+	web_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+
+	# уже занятые места -- сундуки, шкафчики, дверь выхода -- клатер их
+	# не перекрывает
+	var occupied: Array = []
+	for c in chests:
+		occupied.append(c.pos)
+	for l in player.lockers:
+		occupied.append(Vector2(l.position.x, l.position.z))
+	occupied.append(exit_pos)
+
+	for r in rooms:
+		var n: int = 2 + randi() % 4
+		var placed := 0
+		var tries := 0
+		while placed < n and tries < n * 6:
+			tries += 1
+			var cx: float = r.position.x + 0.7 + randf() * max(r.size.x - 1.4, 0.1)
+			var cy: float = r.position.y + 0.7 + randf() * max(r.size.y - 1.4, 0.1)
+			var pos := Vector2(cx, cy)
+			var clash := false
+			for o in occupied:
+				if pos.distance_to(o) < 0.9:
+					clash = true
+					break
+			if clash:
+				continue
+			occupied.append(pos)
+			placed += 1
+			var roll := randf()
+			if roll < 0.4:
+				_spawn_rubble(pos, rubble_mat)
+			elif roll < 0.7:
+				_spawn_crate(pos, crate_mat)
+			else:
+				_spawn_bones(pos, bone_mat)
+		# паутина в углу у потолка -- туда взгляд заходит редко, самое
+		# место для детали, которая читается только если приглядеться
+		if randf() < 0.6:
+			var corners := [
+				Vector2(r.position.x + 0.35, r.position.y + 0.35),
+				Vector2(r.position.x + r.size.x - 0.35, r.position.y + 0.35),
+				Vector2(r.position.x + 0.35, r.position.y + r.size.y - 0.35),
+				Vector2(r.position.x + r.size.x - 0.35, r.position.y + r.size.y - 0.35),
+			]
+			var corner: Vector2 = corners[randi() % corners.size()]
+			_spawn_cobweb(corner.x, corner.y, web_mat)
+
+func _spawn_rubble(pos: Vector2, mat: StandardMaterial3D) -> void:
+	var n := 2 + randi() % 2
+	for _i in range(n):
+		var mesh := MeshInstance3D.new()
+		mesh.mesh = BoxMesh.new()
+		var s := Vector3(0.18 + randf() * 0.22, 0.12 + randf() * 0.18, 0.18 + randf() * 0.22)
+		mesh.mesh.size = s
+		mesh.material_override = mat
+		var off := Vector2(randf_range(-0.22, 0.22), randf_range(-0.22, 0.22))
+		mesh.position = Vector3(pos.x + off.x, s.y / 2.0, pos.y + off.y)
+		mesh.rotation.y = randf() * TAU
+		props_root.add_child(mesh)
+
+func _spawn_crate(pos: Vector2, mat: StandardMaterial3D) -> void:
+	var mesh := MeshInstance3D.new()
+	mesh.mesh = BoxMesh.new()
+	mesh.mesh.size = Vector3(0.5, 0.5, 0.5)
+	mesh.material_override = mat
+	mesh.position = Vector3(pos.x, 0.25, pos.y)
+	mesh.rotation.y = randf() * TAU
+	props_root.add_child(mesh)
+	if randf() < 0.35:
+		var mesh2 := MeshInstance3D.new()
+		mesh2.mesh = BoxMesh.new()
+		mesh2.mesh.size = Vector3(0.38, 0.38, 0.38)
+		mesh2.material_override = mat
+		mesh2.position = Vector3(pos.x + randf_range(-0.06, 0.06), 0.5 + 0.19, pos.y + randf_range(-0.06, 0.06))
+		mesh2.rotation.y = randf() * TAU
+		props_root.add_child(mesh2)
+
+func _spawn_bones(pos: Vector2, mat: StandardMaterial3D) -> void:
+	var n := 3 + randi() % 3
+	for _i in range(n):
+		var mesh := MeshInstance3D.new()
+		mesh.mesh = BoxMesh.new()
+		mesh.mesh.size = Vector3(0.32 + randf() * 0.14, 0.045, 0.06)
+		mesh.material_override = mat
+		var off := Vector2(randf_range(-0.28, 0.28), randf_range(-0.28, 0.28))
+		mesh.position = Vector3(pos.x + off.x, 0.025, pos.y + off.y)
+		mesh.rotation.y = randf() * TAU
+		props_root.add_child(mesh)
+
+func _spawn_cobweb(cx: float, cy: float, mat: StandardMaterial3D) -> void:
+	var mesh := MeshInstance3D.new()
+	mesh.mesh = QuadMesh.new()
+	mesh.mesh.size = Vector2(0.55, 0.55)
+	mesh.material_override = mat
+	mesh.position = Vector3(cx, float(WALL_H) - 0.32, cy)
+	props_root.add_child(mesh)
 
 func _spawn_player() -> void:
 	if rooms.is_empty() or player == null:

@@ -1,10 +1,12 @@
-[gd_resource type="MeshLibrary" load_steps=10 format=3]
+[gd_resource type="MeshLibrary" load_steps=12 format=3]
 
 [ext_resource type="Material" path="res://resources/wall_material.tres" id="1"]
 [ext_resource type="Material" path="res://resources/floor_material.tres" id="2"]
 [ext_resource type="Material" path="res://resources/wall_material_2.tres" id="3"]
 [ext_resource type="Material" path="res://resources/wall_material_3.tres" id="4"]
 [ext_resource type="Material" path="res://resources/floor_material_2.tres" id="5"]
+[ext_resource type="Material" path="res://resources/ceiling_material.tres" id="6"]
+[ext_resource type="Material" path="res://resources/ceiling_material_2.tres" id="7"]
 
 [sub_resource type="BoxMesh" id="BoxMesh_wall"]
 material = ExtResource("1")
@@ -29,6 +31,14 @@ size = Vector3(1, 1, 1)
 material = ExtResource("5")
 size = Vector3(1, 0.1, 1)
 
+[sub_resource type="BoxMesh" id="BoxMesh_ceiling"]
+material = ExtResource("6")
+size = Vector3(1, 0.1, 1)
+
+[sub_resource type="BoxMesh" id="BoxMesh_ceiling_2"]
+material = ExtResource("7")
+size = Vector3(1, 0.1, 1)
+
 [resource]
 item/0/name = "wall"
 item/0/mesh = SubResource("BoxMesh_wall")
@@ -50,3 +60,11 @@ item/4/name = "floor_2"
 item/4/mesh = SubResource("BoxMesh_floor_2")
 item/4/mesh_transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.05, 0)
 item/4/shapes = []
+item/5/name = "ceiling"
+item/5/mesh = SubResource("BoxMesh_ceiling")
+item/5/mesh_transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.45, 0)
+item/5/shapes = []
+item/6/name = "ceiling_2"
+item/6/mesh = SubResource("BoxMesh_ceiling_2")
+item/6/mesh_transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.45, 0)
+item/6/shapes = []
