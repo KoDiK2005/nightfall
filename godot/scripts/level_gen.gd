@@ -117,6 +117,8 @@ var keys_left: int = 3
 var chests: Array = []       # [{pos: Vector2, active: bool, mesh: MeshInstance3D}]
 var exit_pos: Vector2 = Vector2.ZERO
 var exit_mesh: MeshInstance3D = null
+var exit_door_pivot: Node3D = null
+var exit_door_open: bool = false
 var monster: CharacterBody3D = null
 
 var noise_pos: Vector2 = Vector2.ZERO
@@ -274,7 +276,7 @@ func try_pickup_nearby(p: Vector2) -> bool:
 			# (см. README), которого раньше тут не было вовсе
 			make_noise(c.pos, 6.0)
 			if keys_left == 0:
-				exit_mesh.get_active_material(0).albedo_color = Color(0.3, 1.0, 0.5)
+				_open_exit_door()
 			return true
 	return false
 
@@ -450,8 +452,9 @@ func _place_keys_and_exit() -> void:
 	for c in chests:
 		c.mesh.queue_free()
 	chests.clear()
-	if exit_mesh:
-		exit_mesh.queue_free()
+	if exit_door_pivot:
+		exit_door_pivot.queue_free()   # тащит exit_mesh за собой -- он теперь его ребёнок
+		exit_door_pivot = null
 		exit_mesh = null
 	for child in props_root.get_children():
 		child.queue_free()
@@ -502,7 +505,7 @@ func _place_keys_and_exit() -> void:
 	exit_pos = Vector2(er.position.x + er.size.x / 2.0, er.position.y + er.size.y / 2.0)
 	_place_exit_door(exit_pos)
 	if keys_left == 0:
-		exit_mesh.get_active_material(0).albedo_color = Color(0.3, 1.0, 0.5)
+		_open_exit_door()
 
 	_place_lockers(exit_room_idx)
 	_place_doors()
@@ -510,7 +513,7 @@ func _place_keys_and_exit() -> void:
 ## Дверь выхода -- прежде была просто цветной коробкой посреди комнаты.
 ## Теперь это свободностоящая рама (железные столбы + притолока), а плита
 ## (та же exit_mesh, что и раньше -- по ней переключается цвет замка/выхода)
-## вставлена в неё, а не просто болтается сама по себе.
+## навешена на левый столб как на петлю, чтобы её можно было распахнуть.
 func _place_exit_door(pos: Vector2) -> void:
 	var iron_mat := StandardMaterial3D.new()
 	iron_mat.albedo_texture = _door_iron_texture()
@@ -541,8 +544,34 @@ func _place_exit_door(pos: Vector2) -> void:
 	exit_mesh.mesh = BoxMesh.new()
 	exit_mesh.mesh.size = Vector3(0.9, 1.8, 0.08)
 	exit_mesh.material_override = exit_red
-	exit_mesh.position = Vector3(pos.x, 0.9, pos.y)
-	props_root.add_child(exit_mesh)
+	# пивот-петля стоит у левого столба; плита -- его ребёнок, смещённая
+	# так, что её левый край совпадает с петлёй -- поворот пивота по Y
+	# распахивает её, как настоящую дверь, а не просто телепортирует цвет.
+	exit_door_pivot = Node3D.new()
+	exit_door_pivot.position = Vector3(pos.x - half + 0.06, 0.0, pos.y)
+	props_root.add_child(exit_door_pivot)
+	exit_mesh.position = Vector3(0.45, 0.9, 0.0)
+	exit_door_pivot.add_child(exit_mesh)
+	exit_door_open = false
+
+## Распахнуть дверь выхода -- вызывается один раз, как только собран
+## последний ключ (а не мгновенная смена цвета плиты, как было раньше).
+## Скрип двери -- assets/creak.wav, до этого лежавший неиспользованным
+## (портирован из C, но никогда не подключался к Godot-порту).
+func _open_exit_door() -> void:
+	if exit_door_open or exit_door_pivot == null:
+		return
+	exit_door_open = true
+	exit_mesh.get_active_material(0).albedo_color = Color(0.3, 1.0, 0.5)
+	var creak := AudioStreamPlayer3D.new()
+	creak.stream = load("res://assets/creak.wav")
+	creak.unit_size = 4.0
+	creak.max_distance = 14.0
+	exit_door_pivot.add_child(creak)
+	creak.play()
+	var tw := create_tween()
+	tw.tween_property(exit_door_pivot, "rotation:y", -deg_to_rad(100.0), 1.1) \
+		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
 
 ## Дверные проёмы там, где коридор входит в комнату -- порт того, что в
 ## подземелье раньше вообще не было дверей: комнаты просто перетекали в
@@ -644,6 +673,16 @@ func _spawn_player() -> void:
 	player.position = Vector3(cx, 0.9, cy)
 	player.rotation.y = _spawn_facing(int(cx), int(cy))
 	player.reset_look()
+
+	# dev-хук NIGHTFALL_SHOWEXIT: сразу перед дверью выхода со всеми
+	# собранными ключами -- удобно смотреть/скриншотить открытие двери,
+	# не проходя весь этаж.
+	if OS.get_environment("NIGHTFALL_SHOWEXIT") != "":
+		keys_left = 0
+		player.position = Vector3(exit_pos.x, 0.9, exit_pos.y - 2.5)
+		player.look_at(Vector3(exit_pos.x, 0.9, exit_pos.y), Vector3.UP)
+		hud_changed.emit()
+		_open_exit_door()
 
 ## сориентировать игрока в самую открытую из четырёх сторон -- считаем,
 ## сколько клеток пола подряд тянется от спавна, и смотрим туда (иначе

@@ -73,6 +73,10 @@ func _run() -> void:
 			picked += 1
 	check(picked == expected_keys, "подобраны все ключи (%d/%d)" % [picked, expected_keys])
 	check(lg.keys_left == 0, "keys_left обнулился после сбора всех ключей")
+	check(lg.exit_door_open, "дверь выхода открылась после последнего ключа")
+	for _i in range(20):
+		await process_frame
+	check(abs(lg.exit_door_pivot.rotation.y) > 0.1, "дверь выхода реально повернулась (анимация идёт)")
 
 	# 3) спуск: на выходе с нулём ключей глубина растёт и строится новый уровень
 	var depth_before: int = gs.depth
