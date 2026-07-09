@@ -52,12 +52,21 @@ func _pick_type() -> MonType:
 			options.append(MonType.WATCHER)
 		return options[randi() % options.size()]
 
+var _aitrace_t: float = 0.0
+
 func _physics_process(delta: float) -> void:
 	if level_gen == null or player == null or GameState.state != GameState.State.PLAY:
 		return
 	_sense(delta)
 	_move(delta)
 	_face_player()
+
+	if OS.get_environment("NIGHTFALL_AITRACE") != "":
+		_aitrace_t -= delta
+		if _aitrace_t <= 0.0:
+			_aitrace_t = 1.0
+			print("AITRACE type=%d state=%d pos=%s target=%s vel=%s frozen=%s" % [
+				mon_type, state, position, target_cell, velocity, frozen])
 
 	if player.hidden:
 		# спрятался -- поймать может, только если оно рядом ищет/охотится
@@ -150,6 +159,12 @@ func _has_los(ppos: Vector2) -> bool:
 	var to := Vector3(ppos.x, 0.5, ppos.y)
 	var query := PhysicsRayQueryParameters3D.create(from, to)
 	query.collision_mask = 1   # стены (см. wall_map collision layer)
+	# игрок и сам монстр -- на том же физическом слое, что и стены; без
+	# исключения луч, нацеленный прямо в игрока, всегда попадал бы в его же
+	# капсулу тела и засчитывался как "загорожено", так что Сталкер вообще
+	# никогда не видел игрока по LOS (см. баг -- монстр только бродит,
+	# никогда не переходит в HUNT, даже стоя вплотную).
+	query.exclude = [self.get_rid(), player.get_rid()]
 	var hit := space.intersect_ray(query)
 	return hit.is_empty()
 
