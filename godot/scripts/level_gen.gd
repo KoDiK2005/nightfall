@@ -889,6 +889,7 @@ func _place_keys_and_exit() -> void:
 	_place_doors()
 	_place_room_dressing()
 	_place_pickups(start.position + Vector2i(start.size.x / 2, start.size.y / 2))
+	_place_room_theme_lights(exit_room_idx, start)
 
 ## Дверь выхода -- прежде была просто цветной коробкой посреди комнаты.
 ## Теперь это свободностоящая рама (железные столбы + притолока), а плита
@@ -1354,6 +1355,32 @@ func _place_room_dressing() -> void:
 			]
 			var corner: Vector2 = corners[randi() % corners.size()]
 			_spawn_cobweb(corner.x, corner.y, web_mat)
+
+## Порт tint_for из render.c: каждая тема комнаты (вход/выход/сокровищница)
+## красит стены в свой оттенок поверх общей палитры биома -- вход тёплый
+## "очаг", комната сундука золотисто-"алтарная", выход в нездоровый
+## зеленоватый. В Godot-порте этого не было вовсе: все комнаты одного этажа
+## делили ровно один и тот же материал стен/пола, ни одна не выделялась.
+## GridMap не тонируется по клеткам так дёшево, как в C (там это простая
+## вершинная покраска), поэтому вместо перекраски геометрии кладём мягкий
+## цветной свет поверх комнаты -- тот же эффект "эта комната другая на
+## вид", другим механизмом.
+func _place_room_theme_lights(exit_room_idx: int, start: Rect2i) -> void:
+	var start_pos := Vector2(start.position.x + start.size.x / 2.0, start.position.y + start.size.y / 2.0)
+	_add_theme_light(start_pos, Color(1.0, 0.9, 0.74), max(start.size.x, start.size.y) * 0.9, 0.18)
+	var er: Rect2i = rooms[exit_room_idx]
+	_add_theme_light(exit_pos, Color(0.55, 1.15, 0.68), max(er.size.x, er.size.y) * 0.95, 0.22)
+	for c in chests:
+		_add_theme_light(c.pos, Color(1.25, 0.92, 0.48), 2.4, 0.14)
+
+func _add_theme_light(pos: Vector2, color: Color, rng: float, energy: float) -> void:
+	var light := OmniLight3D.new()
+	light.position = Vector3(pos.x, 1.3, pos.y)
+	light.light_color = color
+	light.light_energy = energy
+	light.omni_range = rng
+	light.shadow_enabled = false
+	props_root.add_child(light)
 
 func _spawn_rubble(pos: Vector2, mat: StandardMaterial3D) -> void:
 	var n := 2 + randi() % 2
