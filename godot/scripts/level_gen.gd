@@ -269,6 +269,68 @@ func _process(delta: float) -> void:
 	if keys_left == 0 and p.distance_to(exit_pos) < EXIT_DIST:
 		descend()
 	_update_shrine_hum(delta, p)
+	_update_phantom(delta)
+
+## "hallucinated phantom Stalker... flickers in down the corridor you face
+## when dread>0.35 & not hunting (visual only, no catch)" -- часть системы
+## галлюцинаций из C-версии, отдельная от PNG-вспышек (см. hud.gd): не
+## фотография, а призрачный силуэт самого Сталкера, которого на самом деле
+## тут нет. Переиспользует ту же жуткую текстуру, что и настоящий монстр --
+## не setup() (никакого ИИ, никакой коллизии с реальной поимкой), просто
+## билборд, что постоит и растворится.
+var _phantom: CharacterBody3D = null
+var _phantom_mat: StandardMaterial3D = null
+var _phantom_t: float = 0.0
+var _phantom_timer: float = 14.0
+func _update_phantom(delta: float) -> void:
+	if _phantom:
+		_phantom_t += delta
+		var fade: float = 1.0
+		if _phantom_t < 0.3:
+			fade = _phantom_t / 0.3
+		elif _phantom_t > 1.2:
+			fade = clamp(1.0 - (_phantom_t - 1.2) / 0.5, 0.0, 1.0)
+		# MeshInstance3D -- не CanvasItem, у него нет modulate; гасим через
+		# альфу материала (он уже TRANSPARENCY_ALPHA в _build_body_material)
+		var a: float = fade * (0.7 + 0.3 * sin(_phantom_t * 23.0))
+		_phantom_mat.albedo_color.a = a
+		_phantom_mat.emission_energy_multiplier = 4.0 * a
+		if _phantom_t > 1.7:
+			_phantom.queue_free()
+			_phantom = null
+			_phantom_timer = 16.0 + randf() * 14.0
+		return
+	if monster == null or monster.state == monster.State.HUNT:
+		_phantom_timer = max(_phantom_timer, 6.0)
+		return
+	var dread: float = 1.0 - player.sanity
+	if dread < 0.35 or dread > 0.8:
+		_phantom_timer = max(_phantom_timer, 6.0)
+		return
+	_phantom_timer -= delta
+	if _phantom_timer > 0.0:
+		return
+	_spawn_phantom()
+
+func _spawn_phantom() -> void:
+	var fwd := -player.transform.basis.z
+	var dist := 5.0 + randf() * 3.0
+	var pos: Vector3 = player.position + fwd * dist
+	var space := player.get_world_3d().direct_space_state
+	var query := PhysicsRayQueryParameters3D.create(player.position, pos)
+	query.collision_mask = 1
+	if not space.intersect_ray(query).is_empty():
+		_phantom_timer = 5.0   # стена на пути -- попробуем ещё раз чуть позже
+		return
+	_phantom = MONSTER_SCENE.instantiate()
+	add_child(_phantom)
+	_phantom.position = Vector3(pos.x, 0.1, pos.z)
+	_phantom.mon_type = _phantom.MonType.STALKER
+	_phantom_mat = _phantom._build_body_material()
+	_phantom.body.material_override = _phantom_mat
+	_phantom.collision_layer = 0
+	_phantom.collision_mask = 0
+	_phantom_t = 0.0
 
 ## "золотой компас-чутьё на ключи" из README -- звуковая половина: тихий
 ## гул у ближайшего непройденного сундука (порт play_positional(CH_SHRINE,
