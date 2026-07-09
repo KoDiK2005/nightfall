@@ -22,6 +22,7 @@ var hidden: bool = false
 var near_locker: Node3D = null
 var lockers: Array = []   # заполняется level_gen'ом после генерации уровня
 var sanity: float = 1.0
+var tension: float = 0.0   # см. _update_sanity -- непрерывная тревога по дистанции до монстра
 var monster: CharacterBody3D = null   # level_gen проставляет после спавна
 var level_gen: Node = null            # level_gen проставляет после спавна
 var story_speed_mult: float = 1.0     # сюжетный режим -- медленный подход, заморозка на месте
@@ -155,8 +156,14 @@ func _update_head_bob(delta: float, moving: bool) -> void:
 
 ## Порт update_fear из ai.c: рассудок тает быстрее, когда монстр охотится
 ## (и особенно, когда оно тебя видит), медленнее восстанавливается в тишине.
-## "tension" в C-версии приходит из мерцания факелов -- тут грубо
-## приближаем его состоянием монстра, пока не перенесли ту систему целиком.
+## "tension" -- один общий глобал в C-версии (объявлен в main.c, считается в
+## audio.c::update_audio: непрерывная величина по дистанции до монстра,
+## 1 вплотную и 0 дальше 9 клеток, экспоненциально сглаженная), который
+## питает и тряску рассудка (ai.c), и громкость эмбиента (audio.c), и шанс
+## скачка мерцания факела (main.c). Раньше здесь была грубая state-based
+## заглушка (HUNT=1.0/SEARCH=0.4/иначе 0) -- три ступеньки вместо плавной
+## кривой, и AudioManager вообще не знал о тревоге, эмбиент играл на
+## фиксированной громкости независимо от того, насколько близко монстр.
 func _update_sanity(delta: float) -> void:
 	if monster == null:
 		return
@@ -166,9 +173,11 @@ func _update_sanity(delta: float) -> void:
 	# ещё где-то рыщет рядом в поиске: опасность конкретно для тебя сейчас
 	# приостановлена.
 	var hunting: bool = not hidden and monster.state == monster.State.HUNT
-	var tension: float = 0.0
+	var target: float = 0.0
 	if not hidden:
-		tension = 1.0 if hunting else (0.4 if monster.state == monster.State.SEARCH else 0.0)
+		var d: float = global_position.distance_to(monster.global_position)
+		target = clamp(1.0 - d / 9.0, 0.0, 1.0)
+	tension = lerp(tension, target, clamp(delta * 3.0, 0.0, 1.0))
 	var drain: float = 0.004 + dd * 0.0025 + tension * 0.05 + (0.03 if hunting else 0.0) + (0.10 if hunting else 0.0)
 	if tension < 0.12 and not hunting:
 		sanity += delta * 0.02

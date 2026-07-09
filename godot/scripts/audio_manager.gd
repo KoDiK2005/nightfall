@@ -47,6 +47,13 @@ func _process(delta: float) -> void:
 	if GameState.state != GameState.State.PLAY or player == null:
 		return
 
+	# гул эмбиента набухает по мере приближения монстра -- порт
+	# Mix_Volume(0, 50+60*tension) из audio.c, которого не было вовсе:
+	# фон играл на неизменной громкости независимо от того, рядом монстр
+	# или на другом краю этажа.
+	if player.monster != null:
+		ambient.volume_db = -14.0 + player.tension * 6.0
+
 	# сердцебиение -- только когда на уровне есть монстр (в сюжетном
 	# "Отрицании" его нет), чаще и громче по мере его приближения/тревоги
 	if player.monster != null:
