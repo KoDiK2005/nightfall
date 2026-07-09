@@ -14,6 +14,26 @@ var mode: Mode = Mode.ENDLESS
 var depth: int = 1
 var best_depth: int = 1
 
+## какие виды ужаса игрок уже встречал в этом забеге -- "затухающее
+## предупреждение при входе учит правилу каждого" (README) читало эту
+## переменную нигде, потому что её не существовало: игрок сталкивался со
+## Слухачом/Наблюдателем без единого объяснения их правила.
+##
+## pending_warning, а не только сигнал: LevelGen идёт в дереве раньше HUD
+## (main.tscn), а LevelGen._ready() строит первый этаж и спавнит монстра
+## синхронно -- сигнал первой встречи успевал бы выстрелить и потеряться
+## ДО того, как HUD._ready() вообще на него подпишется. HUD вместо этого
+## опрашивает pending_warning каждый кадр и сам сбрасывает его.
+signal first_encounter(mon_type: int)
+var seen_types: Dictionary = {}
+var pending_warning: int = -1
+func note_encounter(mon_type: int) -> void:
+	if seen_types.has(mon_type):
+		return
+	seen_types[mon_type] = true
+	pending_warning = mon_type
+	first_encounter.emit(mon_type)
+
 func _ready() -> void:
 	if OS.get_environment("NIGHTFALL_STORY") != "":
 		# ставим mode сразу (синхронно), чтобы LevelGen._ready() (запускается
@@ -48,6 +68,7 @@ func advance_floor() -> void:
 func start_new_game(p_mode: Mode = Mode.ENDLESS) -> void:
 	mode = p_mode
 	depth = 1
+	seen_types.clear()
 	# dev-хук NIGHTFALL_DEPTH: начать с заданного этажа (порт из C-версии) --
 	# удобно смотреть биомы/масштабирование сложности вглубь
 	var d := OS.get_environment("NIGHTFALL_DEPTH")

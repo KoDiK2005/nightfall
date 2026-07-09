@@ -12,11 +12,21 @@ extends CanvasLayer
 @onready var sanity_bar: ProgressBar = $SanityBar
 @onready var vignette: ColorRect = $Vignette
 @onready var compass: Label = $Compass
+@onready var warning_label: Label = $WarningLabel
 
 var level_gen: Node = null
 var player: CharacterBody3D = null
 var items: Node = null
 var _dungeon_hud: bool = false   # compass.visible сам гасится/зажигается по сундукам, этим не проверить режим
+
+## "затухающее предупреждение при входе учит правилу каждого" (README) --
+## текста не было вовсе, игрок сталкивался со Слухачом/Наблюдателем без
+## единого объяснения их правила.
+const MONSTER_WARNINGS := {
+	0: "ОНО ОХОТИТСЯ ПО ВЗГЛЯДУ И ЗВУКУ. НЕ ПОПАДАЙТЕСЬ ЕМУ НА ГЛАЗА, НЕ ШУМИТЕ.",
+	1: "ОНО СЛЕПО, НО СЛЫШИТ КАЖДЫЙ ШАГ. ЗАМРИТЕ, КОГДА ОНО РЯДОМ.",
+	2: "ОНО НЕ ДВИЖЕТСЯ, ПОКА ВЫ НА НЕГО СМОТРИТЕ. ОТВЕДЁТЕ ВЗГЛЯД -- РВАНЁТ.",
+}
 
 func _ready() -> void:
 	level_gen = get_tree().get_root().find_child("LevelGen", true, false)
@@ -27,6 +37,23 @@ func _ready() -> void:
 		_on_hud_changed()
 	GameState.mode_changed.connect(_on_mode_changed)
 	_on_mode_changed(GameState.mode)
+	# GameState.pending_warning уже мог быть выставлен ДО того, как этот
+	# _ready() успел выполниться (LevelGen -- более ранний сосед в
+	# main.tscn и строит первый этаж синхронно в своём _ready()) -- поэтому
+	# не полагаемся на one-shot сигнал first_encounter, а опрашиваем ниже.
+	if GameState.pending_warning != -1:
+		_show_warning(GameState.pending_warning)
+		GameState.pending_warning = -1
+
+func _show_warning(mon_type: int) -> void:
+	if not MONSTER_WARNINGS.has(mon_type):
+		return
+	warning_label.text = MONSTER_WARNINGS[mon_type]
+	warning_label.modulate.a = 0.0
+	var tw := create_tween()
+	tw.tween_property(warning_label, "modulate:a", 1.0, 0.6)
+	tw.tween_interval(3.5)
+	tw.tween_property(warning_label, "modulate:a", 0.0, 1.2)
 
 func _on_mode_changed(new_mode: GameState.Mode) -> void:
 	# этаж/ключи/биом относятся только к бесконечному спуску -- в сюжетке
@@ -57,6 +84,9 @@ func _process(_delta: float) -> void:
 		items_label.text = "СПИЧКИ %d   КАМНИ %d" % [items.match_count, items.rock_count]
 	if _dungeon_hud and level_gen:
 		_update_compass(dread)
+	if GameState.pending_warning != -1:
+		_show_warning(GameState.pending_warning)
+		GameState.pending_warning = -1
 
 ## "золотой компас-чутьё на ключи... указывает на ближайший сундук, ярче
 ## чем ближе вы к нему и тусклее по мере помутнения рассудка" -- эта

@@ -209,6 +209,7 @@ func setup(p_level_gen: Node, p_player: CharacterBody3D) -> void:
 	pick_wander()
 	_setup_voice()
 	body.material_override = _build_body_material()
+	GameState.note_encounter(mon_type)
 
 func _setup_voice() -> void:
 	roar_player = AudioStreamPlayer3D.new()
