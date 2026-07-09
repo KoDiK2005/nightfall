@@ -829,6 +829,7 @@ func _place_keys_and_exit() -> void:
 		var chest_size := Vector3(0.55, 0.34, 0.36)   # приземистый сундук-коффер, не куб
 		mesh.mesh.size = chest_size
 		mesh.material_override = chest_mat
+		_add_beacon(mesh, Color(1.0, 0.75, 0.35), 0.55, 2.4, 0.3)
 		var chest_root := _add_prop_collision(mesh, Vector3(cx, 0.22, cy), chest_size)
 		chests.append({"pos": Vector2(cx, cy), "active": true, "mesh": mesh, "root": chest_root})
 		placed_keys += 1
@@ -933,8 +934,8 @@ func _place_doors() -> void:
 ## открывает дверь при приближении игрока и закрывает за спиной, с
 ## гистерезисом между порогами (иначе дверь дребезжала бы туда-сюда прямо
 ## на границе одного расстояния).
-const DOOR_OPEN_DIST := 2.2
-const DOOR_CLOSE_DIST := 3.5
+const DOOR_OPEN_DIST := 1.3   # была 2.2 -- открывалась на подходе издалека, до жалобы "далеко открывается"
+const DOOR_CLOSE_DIST := 2.4
 func _update_doors(p: Vector2) -> void:
 	for d in doors:
 		var dist: float = p.distance_to(d.pos)
@@ -1132,6 +1133,7 @@ func _place_pickups(start_cell: Vector2i) -> void:
 		mesh.material_override = match_mat
 		mesh.position = Vector3(pos.x, 0.06, pos.y)
 		mesh.rotation.y = randf() * TAU
+		_add_beacon(mesh, Color(1.0, 0.35, 0.15), 0.4, 1.8, 0.12)
 		props_root.add_child(mesh)
 		matchpicks.append({"pos": pos, "active": true, "mesh": mesh})
 
@@ -1150,6 +1152,7 @@ func _place_pickups(start_cell: Vector2i) -> void:
 		mesh.material_override = rock_mat
 		mesh.position = Vector3(pos.x, 0.085, pos.y)
 		mesh.rotation.y = randf() * TAU
+		_add_beacon(mesh, Color(0.8, 0.8, 0.9), 0.35, 1.8, 0.15)
 		props_root.add_child(mesh)
 		rockpicks.append({"pos": pos, "active": true, "mesh": mesh})
 
@@ -1172,6 +1175,23 @@ func _collect_pickups(p: Vector2) -> void:
 			r.mesh.visible = false
 			items.rock_count += 1
 			_play_pickup_sound(r.pos)
+
+## "маячок" на подбираемых предметах -- этаж намеренно почти чёрный всюду,
+## кроме пятен света у факелов (см. _setup_dungeon_env), и одной лишь
+## подсветки материала эмиссией (см. rock_mat/match_mat/chest_mat выше)
+## оказалось мало: "камней не видно, ключей нет" -- жалоба на то, что сами
+## предметы физически неразличимы в темноте между факелами, не просто
+## тусклые. Даёт маленький источник света, который виден издалека, как и
+## сами факелы -- вешается на mesh (а не на обёртку с коллизией), чтобы
+## гаснуть вместе с ним при mesh.visible=false на подборе/открытии.
+func _add_beacon(mesh: Node3D, color: Color, energy: float, beacon_range: float, y_off: float) -> void:
+	var light := OmniLight3D.new()
+	light.light_color = color
+	light.light_energy = energy
+	light.omni_range = beacon_range
+	light.shadow_enabled = false
+	light.position = Vector3(0, y_off, 0)
+	mesh.add_child(light)
 
 func _play_pickup_sound(pos: Vector2) -> void:
 	var snd := AudioStreamPlayer3D.new()
@@ -1206,13 +1226,18 @@ func _place_room_dressing() -> void:
 	web_mat.billboard_mode = BaseMaterial3D.BILLBOARD_ENABLED
 	web_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
 
-	# уже занятые места -- сундуки, шкафчики, дверь выхода -- клатер их
-	# не перекрывает
+	# уже занятые места -- сундуки, шкафчики, дверь выхода, дверные проёмы
+	# коридоров -- клатер их не перекрывает. Раньше дверные проёмы вообще
+	# не учитывались: ящик мог встать прямо у прохода, физически (после
+	# того как мебель получила коллизию) перегораживая единственный путь
+	# в дверь -- жалоба "коробки мешают пройти в дверь".
 	var occupied: Array = []
 	for c in chests:
 		occupied.append(c.pos)
 	for l in player.lockers:
 		occupied.append(Vector2(l.position.x, l.position.z))
+	for d in doors:
+		occupied.append(d.pos)
 	occupied.append(exit_pos)
 
 	for r in rooms:
@@ -1226,7 +1251,7 @@ func _place_room_dressing() -> void:
 			var pos := Vector2(cx, cy)
 			var clash := false
 			for o in occupied:
-				if pos.distance_to(o) < 0.9:
+				if pos.distance_to(o) < 1.3:
 					clash = true
 					break
 			if clash:
