@@ -30,11 +30,45 @@ var level_gen: Node = null
 var player: CharacterBody3D = null
 var frozen: bool = false   # dev-хук NIGHTFALL_SHOWMON: стоит на месте для скриншота
 
+## Рёв при входе в погоню и рваное рычание, пока она длится -- порт
+## соответствующего куска update_ai (ai.c). До этого фикса звуки лежали в
+## assets/ неиспользованными: монстр был совершенно немым даже во время
+## погони, отсюда и жалоба "не страшно, не интересно" -- его не слышно.
+## Позиционный AudioStreamPlayer3D сам даёт затухание по расстоянию вместо
+## ручной формулы громкости из C.
+const GROWL_MIN := 1.8
+const GROWL_MAX := 4.2
+const ROAR_BREATHE_MIN := 5.5
+const ROAR_BREATHE_MAX := 7.5
+var growl_timer: float = 0.0
+var roar_player: AudioStreamPlayer3D = null
+var growl_player: AudioStreamPlayer3D = null
+
+## точная мировая точка, куда идти внутри клетки-цели, а не только сама
+## клетка -- см. _move(): без этого монстр останавливался в центре клетки,
+## как только заходил в ту же клетку, что и игрок, даже если реальное
+## расстояние до игрока ещё больше CATCH_DIST -- зависал вплотную, так и не
+## доводя поимку до конца (та самая жалоба "не нападает").
+var aim_point: Vector2 = Vector2.ZERO
+
 func setup(p_level_gen: Node, p_player: CharacterBody3D) -> void:
 	level_gen = p_level_gen
 	player = p_player
 	mon_type = _pick_type()
 	pick_wander()
+	_setup_voice()
+
+func _setup_voice() -> void:
+	roar_player = AudioStreamPlayer3D.new()
+	roar_player.stream = load("res://assets/roar.wav")
+	roar_player.unit_size = 4.0
+	roar_player.max_distance = 16.0
+	add_child(roar_player)
+	growl_player = AudioStreamPlayer3D.new()
+	growl_player.stream = load("res://assets/growl.wav")
+	growl_player.unit_size = 4.0
+	growl_player.max_distance = 16.0
+	add_child(growl_player)
 
 ## Порт выбора ужаса по глубине из gen.c: первая встреча со Слухачом на
 ## 4 этаже, с Наблюдателем -- на 7, дальше вразнобой из уже открытых типов.
@@ -119,9 +153,19 @@ func _sense(delta: float) -> void:
 				sensed = true
 
 	if sensed:
+		if state != State.HUNT and mon_type != MonType.WATCHER:
+			# только что взяло след -- долгий рёв, потом пауза, чтобы он отыграл
+			roar_player.play()
+			growl_timer = ROAR_BREATHE_MIN + randf() * (ROAR_BREATHE_MAX - ROAR_BREATHE_MIN)
 		state = State.HUNT
 		last_known = ppos
 		set_target(Vector2i(int(ppos.x), int(ppos.y)))
+		aim_point = ppos   # внутри клетки-цели идти точно на игрока, не в её центр
+		if mon_type != MonType.WATCHER:
+			growl_timer -= delta
+			if growl_timer <= 0.0:
+				growl_player.play()
+				growl_timer = GROWL_MIN + randf() * (GROWL_MAX - GROWL_MIN)
 	elif state == State.HUNT:
 		state = State.SEARCH
 		search_time = 8.0
@@ -171,6 +215,7 @@ func _has_los(ppos: Vector2) -> bool:
 func set_target(cell: Vector2i) -> void:
 	target_cell = cell
 	dist_grid = level_gen.flood_from(cell)
+	aim_point = Vector2(cell.x + 0.5, cell.y + 0.5)
 
 ## Как pick_wander в gen.c: иногда мимо ещё не открытого сундука, иначе
 ## просто случайная открытая клетка.
@@ -229,7 +274,13 @@ func _move(delta: float) -> void:
 				and dist_grid[nz][nx] < best:
 			best = dist_grid[nz][nx]
 			best_cell = Vector2i(nx, nz)
-	var target_pos := Vector3(best_cell.x + 0.5, position.y, best_cell.y + 0.5)
+	var target_pos: Vector3
+	if best_cell == Vector2i(cx, cz):
+		# в клетке-цели нет соседа с меньшей дистанцией -- мы дошли по сетке;
+		# добираем последний отрезок точно до aim_point, а не до центра клетки
+		target_pos = Vector3(aim_point.x, position.y, aim_point.y)
+	else:
+		target_pos = Vector3(best_cell.x + 0.5, position.y, best_cell.y + 0.5)
 	var dir := (target_pos - position)
 	dir.y = 0
 	if dir.length() > 0.05:
