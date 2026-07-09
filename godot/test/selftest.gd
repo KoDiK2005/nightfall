@@ -80,11 +80,13 @@ func _run() -> void:
 
 	# 3) спуск: на выходе с нулём ключей глубина растёт и строится новый уровень
 	var depth_before: int = gs.depth
+	player.sanity = 0.42   # накопленный страх не должен стираться спуском на новый этаж
 	lg.descend()
 	for _i in range(5):
 		await process_frame
 	check(gs.depth == depth_before + 1, "глубина выросла после спуска")
 	check(lg.keys_left == lg.num_keys, "новый этаж выдал свежий набор ключей")
+	check(player.sanity < 0.9, "рассудок не сбрасывается спуском на новый этаж (%.3f)" % player.sanity)
 
 	# 4) поимка: ставим игрока вплотную к монстру -- физика должна поймать
 	var mon: Node = player.monster

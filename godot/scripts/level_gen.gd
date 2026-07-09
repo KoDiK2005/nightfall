@@ -157,6 +157,14 @@ func _ready() -> void:
 
 func _on_state_changed(new_state: GameState.State) -> void:
 	if new_state == GameState.State.PLAY and GameState.mode == GameState.Mode.ENDLESS:
+		# рассудок сбрасывается только на настоящем старте нового забега --
+		# _build_level() вызывается и здесь, и из descend() на каждом этаже,
+		# а sanity раньше сбрасывался в _spawn_monster() безусловно на обоих
+		# путях. С глубиной трата рассудка ускоряется (см. player.gd), но
+		# смысла в этом почти не было: любой накопленный страх стирался в
+		# ноль на первой же лестнице вниз -- "мой рассудок трещит по швам
+		# глубже" (README) не успевал накопиться дальше одного этажа.
+		player.sanity = 1.0
 		_build_level()
 		_play_descend_fade()   # проявление из черноты и при старте новой игры
 
@@ -248,7 +256,6 @@ func _spawn_monster() -> void:
 	monster.setup(self, player)
 	player.monster = monster
 	player.level_gen = self
-	player.sanity = 1.0
 
 func _process(delta: float) -> void:
 	if GameState.state != GameState.State.PLAY or GameState.mode != GameState.Mode.ENDLESS:
