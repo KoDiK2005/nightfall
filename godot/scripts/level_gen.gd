@@ -119,6 +119,7 @@ var exit_pos: Vector2 = Vector2.ZERO
 var exit_mesh: MeshInstance3D = null
 var exit_door_pivot: Node3D = null
 var exit_door_open: bool = false
+var doors: Array = []   # {pivot: Node3D, pos: Vector2, is_open: bool} -- дверные проёмы коридоров
 var monster: CharacterBody3D = null
 
 var noise_pos: Vector2 = Vector2.ZERO
@@ -270,6 +271,7 @@ func _process(delta: float) -> void:
 		descend()
 	_update_shrine_hum(delta, p)
 	_update_phantom(delta)
+	_update_doors(p)
 
 ## "hallucinated phantom Stalker... flickers in down the corridor you face
 ## when dread>0.35 & not hunting (visual only, no catch)" -- часть системы
@@ -693,9 +695,11 @@ func _open_exit_door() -> void:
 ## подземелье раньше вообще не было дверей: комнаты просто перетекали в
 ## коридор голым разрывом стены. Ищем клетки пола сразу за границей каждой
 ## комнаты (там, где коридор её касается) и ставим раму: деревянный косяк
-## по бокам прохода + притолока сверху. Чисто декор, без коллизии -- проход
-## остаётся свободным, как и был.
+## по бокам прохода + притолока сверху, и саму панель -- она распахивается
+## при приближении игрока и закрывается за спиной (см. _update_doors),
+## чисто визуально, без коллизии -- проход остаётся свободным, как и был.
 func _place_doors() -> void:
+	doors.clear()
 	var wood_mat := StandardMaterial3D.new()
 	wood_mat.albedo_texture = _door_wood_texture()
 	wood_mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
@@ -709,6 +713,25 @@ func _place_doors() -> void:
 				continue
 			seen[key] = true
 			_build_door_frame(entry.pos, entry.dir, wood_mat)
+
+## открывает дверь при приближении игрока и закрывает за спиной, с
+## гистерезисом между порогами (иначе дверь дребезжала бы туда-сюда прямо
+## на границе одного расстояния).
+const DOOR_OPEN_DIST := 2.2
+const DOOR_CLOSE_DIST := 3.5
+func _update_doors(p: Vector2) -> void:
+	for d in doors:
+		var dist: float = p.distance_to(d.pos)
+		if dist < DOOR_OPEN_DIST and not d.is_open:
+			d.is_open = true
+			var tw := create_tween()
+			tw.tween_property(d.pivot, "rotation:y", -deg_to_rad(95.0), 0.4) \
+				.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+		elif dist > DOOR_CLOSE_DIST and d.is_open:
+			d.is_open = false
+			var tw2 := create_tween()
+			tw2.tween_property(d.pivot, "rotation:y", 0.0, 0.5) \
+				.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN)
 
 ## клетки пола сразу за одной из четырёх границ комнаты, где начинается
 ## коридор -- направление (dir) смотрит НАРУЖУ из комнаты, вдоль коридора.
@@ -752,6 +775,22 @@ func _build_door_frame(cell: Vector2i, dir: Vector2i, wood_mat: StandardMaterial
 	lintel.material_override = wood_mat
 	lintel.position = Vector3(cx, float(WALL_H) - 0.15, cz)
 	props_root.add_child(lintel)
+
+	# сама панель -- навешена на "минус"-столб как на петлю (тот же приём,
+	# что и у двери выхода): пивот стоит у петли, панель -- его ребёнок,
+	# смещённая так, что её край совпадает с петлёй.
+	var leaf_h: float = float(WALL_H) - 0.32
+	var leaf := MeshInstance3D.new()
+	leaf.mesh = BoxMesh.new()
+	var leaf_span: float = half * 2.0 - 0.05
+	leaf.mesh.size = Vector3(0.05, leaf_h, leaf_span) if dir.x != 0 else Vector3(leaf_span, leaf_h, 0.05)
+	leaf.material_override = wood_mat
+	var pivot := Node3D.new()
+	pivot.position = Vector3(cx - perp.x * half, 0.0, cz - perp.y * half)
+	props_root.add_child(pivot)
+	leaf.position = Vector3(perp.x * half, leaf_h / 2.0 + 0.06, perp.y * half)
+	pivot.add_child(leaf)
+	doors.append({"pivot": pivot, "pos": Vector2(cx, cz), "is_open": false})
 
 ## шкафчики, где можно спрятаться -- порт locker-плейсмента из reset_level
 ## (gen.c): по одному на комнату, не в стартовой/финальной.
