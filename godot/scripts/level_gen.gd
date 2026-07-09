@@ -231,6 +231,9 @@ var exit_door_open: bool = false
 var doors: Array = []   # {pivot: Node3D, pos: Vector2, is_open: bool} -- дверные проёмы коридоров
 var monster: CharacterBody3D = null
 
+var patrol_order: Array = []   # индексы rooms (кроме старта) в перемешанном порядке -- маршрут патруля
+var patrol_pos: int = 0
+
 var noise_pos: Vector2 = Vector2.ZERO
 var noise_t: float = 0.0
 var biome_name: String = ""
@@ -287,6 +290,7 @@ func _build_level() -> void:
 	_setup_dungeon_env()
 	biome_name = Biomes.apply(GameState.depth)
 	_generate()
+	_build_patrol_route()
 	_place_pillars()
 	_paint()
 	_place_torches()
@@ -595,6 +599,20 @@ func _generate() -> void:
 		else:
 			_carve_v(ay, by, ax)
 			_carve_h(ax, bx, by)
+
+## "shuffle every non-entrance room into a beat the monster loops while
+## wandering, so idle movement reads as a patrol through the halls rather
+## than picking a fresh random cell each time" (gen.c) -- этой структуры не
+## было в Godot-порте вовсе: monster.pick_wander() просто кидал монстра в
+## случайную открытую клетку карты (плюс отдельный 50%-шанс зайти к
+## сундуку) -- блуждание читалось как дрожащий случайный телепорт по этажу,
+## а не обход по своему маршруту. Перемешивается один раз на этаж.
+func _build_patrol_route() -> void:
+	patrol_order.clear()
+	for i in range(1, rooms.size()):
+		patrol_order.append(i)
+	patrol_order.shuffle()
+	patrol_pos = (randi() % patrol_order.size()) if patrol_order.size() > 0 else 0
 
 ## "pillar candidates in the larger halls (columns for cover)" (gen.c) --
 ## этой части не было в Godot-порте вовсе: большие залы стояли совершенно

@@ -405,15 +405,37 @@ func set_target(cell: Vector2i) -> void:
 	dist_grid = level_gen.flood_from(cell)
 	aim_point = Vector2(cell.x + 0.5, cell.y + 0.5)
 
-## Как pick_wander в gen.c: иногда мимо ещё не открытого сундука, иначе
-## просто случайная открытая клетка.
+## Порт pick_wander из gen.c: чаще всего -- следующая остановка на
+## перемешанном маршруте патруля (level_gen.patrol_order), а не случайная
+## клетка карты; изредка -- детур мимо ещё не открытого сундука (20%) или
+## задержка у двери выхода (ещё 10%), чтобы блуждание временами задевало и
+## цели игрока, а не только собственный обход. Раньше был только
+## 50%-шанс на сундук поверх чистого случайного блуждания -- никакого
+## маршрута, идущего по комнатам, не было вовсе.
 func pick_wander() -> void:
-	if level_gen.chests.size() > 0 and randf() < 0.5:
+	var roll := randf()
+	if roll < 0.20 and level_gen.chests.size() > 0:
 		var active_chests: Array = level_gen.chests.filter(func(c): return c.active)
 		if not active_chests.is_empty():
 			var c = active_chests[randi() % active_chests.size()]
 			set_target(Vector2i(int(c.pos.x), int(c.pos.y)))
 			return
+	elif roll < 0.30:
+		set_target(Vector2i(int(level_gen.exit_pos.x), int(level_gen.exit_pos.y)))
+		return
+
+	if level_gen.patrol_order.size() > 0:
+		level_gen.patrol_pos = (level_gen.patrol_pos + 1) % level_gen.patrol_order.size()
+		var ri: int = level_gen.patrol_order[level_gen.patrol_pos]
+		var pr: Rect2i = level_gen.rooms[ri]
+		var cx: int = pr.position.x + pr.size.x / 2
+		var cy: int = pr.position.y + pr.size.y / 2
+		if level_gen.is_open(cx, cy):
+			set_target(Vector2i(cx, cy))
+			return
+
+	# резервный вариант -- как и раньше, случайная открытая клетка (если
+	# маршрут почему-то не задан, напр. на этаже с одной комнатой)
 	var mw: int = level_gen.MW
 	var mh: int = level_gen.MH
 	for _i in range(64):
