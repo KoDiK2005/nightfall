@@ -395,26 +395,87 @@ func _process_aftermath(delta: float) -> void:
 		player.global_position = STAIRS_DN_TO
 		stairs_cooldown = STAIRS_COOLDOWN
 
+const MOTHER_TEX := 64
+static var _mother_tex: ImageTexture = null
+
+## Порт спрайта 6 (MOTHER) из build_sprites (render.c): платье, несвежий
+## фартук, скрещённые на груди руки, растрёпанные волосы -- и гладкое
+## бледное пятно вместо лица (ей никогда не до вас, лицо ей просто ни к
+## чему). Раньше это были голая капсула тела и сфера-голова без единой
+## детали. Billboard-плоскость, как и у монстра -- всегда лицом к камере.
+static func _build_mother_texture() -> ImageTexture:
+	var img := Image.create(MOTHER_TEX, MOTHER_TEX, false, Image.FORMAT_RGBA8)
+	for y in range(MOTHER_TEX):
+		for x in range(MOTHER_TEX):
+			var nx: float = x - 32.0
+			var part := 0   # 1 платье, 2 лицо, 3 волосы, 4 кисти, 5 фартук, 6 туфли
+			var hhy: float = y - 9.0
+			var hhe: float = (nx * nx) / (8.6 * 8.6) + (hhy * hhy) / (10.0 * 10.0)
+			var frayed: int = int(abs(sin(nx * 1.3 + y * 0.7)) * 3.0)
+			if hhe < 1.0 and y < 15 + frayed:
+				part = 3
+			var hy: float = y - 10.0
+			var he: float = (nx * nx) / (7.0 * 7.0) + (hy * hy) / (8.5 * 8.5)
+			if he < 1.0:
+				part = 2
+			if y >= 17 and y <= 19 and abs(nx) < 3.0 and part == 0:
+				part = 1
+			if y >= 19 and y <= 60:
+				var tt: float = (y - 19) / 41.0
+				var hw: float = 8.0 + tt * 13.0
+				if abs(nx) < hw and part == 0:
+					part = 1
+			if y >= 60 and y <= 63 and abs(nx) < 9.0:
+				part = 6
+			var arm_band: bool = y >= 26 and y <= 32 and abs(nx) < 11.0
+			if y >= 22 and y <= 46 and abs(nx) < 7.5 and not arm_band:
+				part = 5
+			if arm_band:
+				part = 1
+			if y >= 27 and y <= 31 and abs(abs(nx) - 10.0) < 2.2:
+				part = 4
+			var c: Color
+			match part:
+				1:
+					var fold: float = 6.0 / 255.0 if (int(nx + 40) % 4) == 0 else 0.0
+					var v: float = max((16.0 + randf() * 5.0) / 255.0 - fold, 4.0 / 255.0)
+					c = Color(v, v * 0.85, v * 0.95, 1.0)
+				2:
+					var v: float = (150.0 + randf() * 12.0) / 255.0
+					c = Color(v, v * 0.94, v * 0.90, 1.0)
+				3:
+					var v: float = (6.0 + randf() * 6.0) / 255.0
+					c = Color(v, v * 0.92, v * 0.88, 1.0)
+				4:
+					var v: float = (130.0 + randf() * 14.0) / 255.0
+					c = Color(v, v * 0.90, v * 0.84, 1.0)
+				5:
+					var v: float = (22.0 + randf() * 4.0) / 255.0
+					if randf() < 0.10:
+						v -= 9.0 / 255.0
+					v = max(v, 6.0 / 255.0)
+					c = Color(v, v * 0.92, v * 0.70, 1.0)
+				6:
+					c = Color(10 / 255.0, 9 / 255.0, 9 / 255.0, 1.0)
+				_:
+					continue
+			img.set_pixel(x, y, c)
+	return ImageTexture.create_from_image(img)
+
 func _make_mother() -> Node3D:
-	var body := CharacterBody3D.new()
-	var mesh := MeshInstance3D.new()
-	var capsule := CapsuleMesh.new()
-	capsule.radius = 0.3
-	capsule.height = 1.8
+	var body := Node3D.new()
+	if _mother_tex == null:
+		_mother_tex = _build_mother_texture()
 	var mat := StandardMaterial3D.new()
-	mat.albedo_color = Color(0.12, 0.1, 0.12)
-	mesh.mesh = capsule
+	mat.albedo_texture = _mother_tex
+	mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	mat.billboard_mode = BaseMaterial3D.BILLBOARD_ENABLED
+	var mesh := MeshInstance3D.new()
+	mesh.mesh = QuadMesh.new()
+	mesh.mesh.size = Vector2(1.0, 1.9)
 	mesh.material_override = mat
-	mesh.position = Vector3(0, 0.9, 0)
+	mesh.position = Vector3(0, 0.95, 0)
 	body.add_child(mesh)
-	var head := MeshInstance3D.new()
-	var head_mesh := SphereMesh.new()
-	head_mesh.radius = 0.16
-	head_mesh.height = 0.32
-	var head_mat := StandardMaterial3D.new()
-	head_mat.albedo_color = Color(0.75, 0.72, 0.68)
-	head.mesh = head_mesh
-	head.material_override = head_mat
-	head.position = Vector3(0, 1.75, 0)
-	body.add_child(head)
 	return body
