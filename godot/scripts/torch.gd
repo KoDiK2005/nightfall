@@ -10,6 +10,7 @@ const TEX := 64
 static var _flame_tex: ImageTexture = null
 static var _wood_tex: ImageTexture = null
 static var _iron_tex: ImageTexture = null
+static var _dust_tex: ImageTexture = null
 
 @onready var light: OmniLight3D = $OmniLight3D
 @onready var flame: MeshInstance3D = $Flame
@@ -58,6 +59,58 @@ func _ready() -> void:
 	iron_mat.metallic = 0.3
 	iron_mat.roughness = 0.6
 	bracket.material_override = iron_mat
+
+	_setup_dust()
+
+## "drifting dust motes near torches... procedural, batched into one extra
+## additive draw" -- было в C-версии, в Godot-порте не было вовсе. Горстка
+## частиц на факел (дёшево -- десятки факелов на этаж, см. память про
+## перф на слабом Intel UHD 620), поднимаются и гаснут, тёплым аддитивным
+## пятнышком, как тлеющий пепел у огня.
+func _setup_dust() -> void:
+	if _dust_tex == null:
+		_dust_tex = _build_dust_texture()
+	var mat := StandardMaterial3D.new()
+	mat.albedo_texture = _dust_tex
+	mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.billboard_mode = BaseMaterial3D.BILLBOARD_ENABLED
+	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+
+	var dust := CPUParticles3D.new()
+	dust.mesh = QuadMesh.new()
+	dust.mesh.size = Vector2(0.06, 0.06)
+	dust.material_override = mat
+	dust.amount = 4
+	dust.lifetime = 3.5
+	dust.position = Vector3(0, 1.3, 0.15)
+	dust.emission_shape = CPUParticles3D.EMISSION_SHAPE_SPHERE
+	dust.emission_sphere_radius = 0.18
+	dust.direction = Vector3(0, 1, 0)
+	dust.spread = 30.0
+	dust.gravity = Vector3(0, 0.10, 0)   # тлеющий пепел всплывает, не падает
+	dust.initial_velocity_min = 0.03
+	dust.initial_velocity_max = 0.10
+	dust.scale_amount_min = 0.6
+	dust.scale_amount_max = 1.3
+	add_child(dust)
+
+## тёплая тлеющая пылинка -- мягкий диск с гауссовым спадом к краю (порт
+## спрайта 8 DUST MOTE из build_sprites: "rgb IS the faint light it adds").
+static func _build_dust_texture() -> ImageTexture:
+	var img := Image.create(TEX, TEX, false, Image.FORMAT_RGBA8)
+	for y in range(TEX):
+		for x in range(TEX):
+			var dx: float = x - 32.0
+			var dy: float = y - 32.0
+			var r2: float = dx * dx + dy * dy
+			if r2 > 100.0:
+				continue
+			var g: float = exp(-r2 / 36.0)
+			img.set_pixel(x, y, Color(0.9 * g, 0.65 * g, 0.28 * g, g))
+	return ImageTexture.create_from_image(img)
 
 ## общая заготовка волокна/зерна под данный базовый цвет -- переиспользуется
 ## и для дерева рукояти, и для железа крепления, только тон разный.
