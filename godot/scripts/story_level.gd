@@ -67,6 +67,40 @@ static func _house_floor_texture() -> ImageTexture:
 	_house_floor_tex = ImageTexture.create_from_image(img)
 	return _house_floor_tex
 
+## обивка дивана -- мелкое перекрёстное плетение вместо гладкой заливки.
+static func _fabric_texture() -> ImageTexture:
+	if _fabric_tex:
+		return _fabric_tex
+	var img := Image.create(HOUSE_TEX, HOUSE_TEX, false, Image.FORMAT_RGB8)
+	for y in range(HOUSE_TEX):
+		for x in range(HOUSE_TEX):
+			var weave: bool = ((x + y) % 4) < 1 or ((x - y) % 4) < 1
+			var base: float = 0.42 + randf() * 0.04
+			if weave:
+				base -= 0.07
+			img.set_pixel(x, y, Color(base, base * 0.94, base * 0.98))
+	_fabric_tex = ImageTexture.create_from_image(img)
+	return _fabric_tex
+
+## керамика санузла -- почти гладкая, но с редкими известковыми
+## разводами и потемнением у основания вместо чистой заливки.
+static func _ceramic_texture() -> ImageTexture:
+	if _ceramic_tex:
+		return _ceramic_tex
+	var img := Image.create(HOUSE_TEX, HOUSE_TEX, false, Image.FORMAT_RGB8)
+	for y in range(HOUSE_TEX):
+		for x in range(HOUSE_TEX):
+			var base: float = 0.80 + randf() * 0.03
+			var grime: float = sin(x * 0.3 + 2.0 * sin(y * 0.2)) * 0.5 + 0.5
+			if grime > 0.85:
+				base -= 0.12
+			if y > 50:
+				base -= (y - 50) / 14.0 * 0.10   # темнее у основания
+			base = max(base, 0.35)
+			img.set_pixel(x, y, Color(base, base * 0.99, base * 0.95))
+	_ceramic_tex = ImageTexture.create_from_image(img)
+	return _ceramic_tex
+
 const DOOR_POS := Vector3(14.5, 0, 13.5)
 const MOTHER_POS := Vector3(14.5, 0, 14.6)
 const SPAWN_POS := Vector3(14.5, 0.1, 2.5)
@@ -283,6 +317,8 @@ func _prop_tex(pos: Vector3, size: Vector3, tex: ImageTexture, tint: Color) -> v
 
 static var _gazebo_wood_tex: ImageTexture = null
 static var _car_rust_tex: ImageTexture = null
+static var _fabric_tex: ImageTexture = null
+static var _ceramic_tex: ImageTexture = null
 
 ## столбы/крыша беседки -- вертикальное дощатое волокно, посветлее и
 ## поновее, чем у машины.
@@ -355,17 +391,21 @@ func _place_roof() -> void:
 ## подмножество place_ground_floor_furniture (story.c) -- по предмету на
 ## комнату вместо полного списка, для узнаваемости планировки.
 func _place_ground_floor_furniture() -> void:
-	_prop(Vector3(15.3, 0.65, 13.6), Vector3(1.0, 1.3, 0.36), Color(0.32, 0.22, 0.16))    # шкаф в тамбуре
-	_prop(Vector3(18.4, 0.55, 14.4), Vector3(0.6, 1.1, 0.6), Color(0.42, 0.42, 0.44))     # котёл
+	var wood := _gazebo_wood_texture()
+	var rust := _car_rust_texture()
+	var fabric := _fabric_texture()
+	var ceramic := _ceramic_texture()
+	_prop_tex(Vector3(15.3, 0.65, 13.6), Vector3(1.0, 1.3, 0.36), wood, Color(0.85, 0.7, 0.55))     # шкаф в тамбуре
+	_prop_tex(Vector3(18.4, 0.55, 14.4), Vector3(0.6, 1.1, 0.6), rust, Color(1.1, 1.1, 1.1))         # котёл
 	for i in range(6):   # лестница наверх -- растущие ступени
-		_prop(Vector3(15.3, (0.14 + i * 0.16) * 0.5, 18.4 + i * 0.35), Vector3(0.9, 0.14 + i * 0.16, 0.32), Color(0.36, 0.28, 0.20))
-	_prop(Vector3(9.3, 0.19, 18.3), Vector3(0.36, 0.38, 0.4), Color(0.75, 0.75, 0.75))    # унитаз
-	_prop(Vector3(9.6, 0.13, 25.3), Vector3(2.0, 0.26, 1.1), Color(0.42, 0.36, 0.28))     # кровать гостевой
-	_prop(Vector3(12.7, 0.23, 22.6), Vector3(0.84, 0.46, 0.64), Color(0.36, 0.26, 0.18))  # стол
-	_prop(Vector3(20.0, 0.25, 15.6), Vector3(1.8, 0.5, 1.1), Color(0.42, 0.30, 0.22))     # кухонный остров
-	_prop(Vector3(26.0, 0.21, 15.5), Vector3(1.7, 0.42, 1.7), Color(0.40, 0.30, 0.22))    # обеденный стол
-	_prop(Vector3(27.0, 0.21, 26.0), Vector3(2.6, 0.42, 1.1), Color(0.30, 0.22, 0.30))    # диван
-	_prop(Vector3(27.0, 0.25, 28.0), Vector3(1.1, 0.5, 0.36), Color(0.18, 0.16, 0.16))    # ТВ-тумба
+		_prop_tex(Vector3(15.3, (0.14 + i * 0.16) * 0.5, 18.4 + i * 0.35), Vector3(0.9, 0.14 + i * 0.16, 0.32), wood, Color(0.9, 0.75, 0.6))
+	_prop_tex(Vector3(9.3, 0.19, 18.3), Vector3(0.36, 0.38, 0.4), ceramic, Color(1.0, 1.0, 1.0))     # унитаз
+	_prop_tex(Vector3(9.6, 0.13, 25.3), Vector3(2.0, 0.26, 1.1), wood, Color(0.9, 0.75, 0.6))        # кровать гостевой
+	_prop_tex(Vector3(12.7, 0.23, 22.6), Vector3(0.84, 0.46, 0.64), wood, Color(0.75, 0.6, 0.45))    # стол
+	_prop_tex(Vector3(20.0, 0.25, 15.6), Vector3(1.8, 0.5, 1.1), wood, Color(0.9, 0.75, 0.6))        # кухонный остров
+	_prop_tex(Vector3(26.0, 0.21, 15.5), Vector3(1.7, 0.42, 1.7), wood, Color(0.85, 0.7, 0.55))      # обеденный стол
+	_prop_tex(Vector3(27.0, 0.21, 26.0), Vector3(2.6, 0.42, 1.1), fabric, Color(0.85, 0.65, 0.9))    # диван
+	_prop_tex(Vector3(27.0, 0.25, 28.0), Vector3(1.1, 0.5, 0.36), wood, Color(0.45, 0.4, 0.4))       # ТВ-тумба
 
 ## беседка на лужайке -- порт place_gazebo (story.c): четыре столба и
 ## плоская крыша, чисто декор, без коллизии (как и вся прочая мебель тут).
@@ -400,14 +440,17 @@ func _place_car_and_clothesline() -> void:
 
 ## подмножество place_upper_floor_furniture (story.c).
 func _place_upper_floor_furniture() -> void:
-	_prop(Vector3(38.0, 0.14, 3.4), Vector3(2.4, 0.28, 1.2), Color(0.40, 0.30, 0.30))     # кровать мастер-спальни
-	_prop(Vector3(41.3, 0.65, 2.4), Vector3(0.6, 1.3, 0.7), Color(0.30, 0.22, 0.18))       # гардероб
-	_prop(Vector3(KID1_POS.x, 0.13, KID1_POS.z + 0.5), Vector3(1.7, 0.26, 0.9), Color(0.40, 0.34, 0.26))  # кровать детская 1
-	_prop(Vector3(46.6, 0.23, 2.3), Vector3(0.56, 0.46, 0.56), Color(0.42, 0.30, 0.20))    # стол детская 1
-	_prop(Vector3(51.0, 0.13, 3.5), Vector3(1.7, 0.26, 0.9), Color(0.38, 0.30, 0.30))      # кровать детская 2
-	_prop(Vector3(50.4, 0.23, 2.3), Vector3(0.56, 0.46, 0.56), Color(0.40, 0.28, 0.20))    # стол детская 2
-	_prop(Vector3(39.0, 0.19, 8.4), Vector3(0.36, 0.38, 0.4), Color(0.75, 0.75, 0.75))     # унитаз санузла
-	_prop(Vector3(36.6, 0.3, 10.3), Vector3(0.56, 0.6, 0.56), Color(0.68, 0.68, 0.70))     # стиральная машина
+	var wood := _gazebo_wood_texture()
+	var rust := _car_rust_texture()
+	var ceramic := _ceramic_texture()
+	_prop_tex(Vector3(38.0, 0.14, 3.4), Vector3(2.4, 0.28, 1.2), wood, Color(0.95, 0.65, 0.65))       # кровать мастер-спальни
+	_prop_tex(Vector3(41.3, 0.65, 2.4), Vector3(0.6, 1.3, 0.7), wood, Color(0.7, 0.55, 0.45))         # гардероб
+	_prop_tex(Vector3(KID1_POS.x, 0.13, KID1_POS.z + 0.5), Vector3(1.7, 0.26, 0.9), wood, Color(0.95, 0.75, 0.55))  # кровать детская 1
+	_prop_tex(Vector3(46.6, 0.23, 2.3), Vector3(0.56, 0.46, 0.56), wood, Color(0.9, 0.65, 0.45))      # стол детская 1
+	_prop_tex(Vector3(51.0, 0.13, 3.5), Vector3(1.7, 0.26, 0.9), wood, Color(0.9, 0.65, 0.65))        # кровать детская 2
+	_prop_tex(Vector3(50.4, 0.23, 2.3), Vector3(0.56, 0.46, 0.56), wood, Color(0.9, 0.6, 0.45))       # стол детская 2
+	_prop_tex(Vector3(39.0, 0.19, 8.4), Vector3(0.36, 0.38, 0.4), ceramic, Color(1.0, 1.0, 1.0))      # унитаз санузла
+	_prop_tex(Vector3(36.6, 0.3, 10.3), Vector3(0.56, 0.6, 0.56), rust, Color(1.3, 1.3, 1.3))         # стиральная машина
 
 ## -------------------------------------------------------------- сценарий
 
@@ -440,7 +483,6 @@ func _start_denial() -> void:
 		phase = Phase.AFTERMATH
 		player.global_position = Vector3(24.0, 0.9, 22.0)
 		player.rotation.y = PI * 0.5
-		player.story_speed_mult = 1.0
 		player.story_speed_mult = 1.0
 
 func _process(delta: float) -> void:
