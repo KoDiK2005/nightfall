@@ -126,6 +126,7 @@ var noise_t: float = 0.0
 var biome_name: String = ""
 
 signal hud_changed
+signal chest_opened
 
 ## порт make_noise из ai.c: шум, который монстр может пойти расследовать,
 ## даже если не увидел/не услышал игрока напрямую -- громче/дольше
@@ -326,6 +327,7 @@ func try_pickup_nearby(p: Vector2) -> bool:
 			props_root.add_child(pickup_snd)
 			pickup_snd.play()
 			pickup_snd.finished.connect(pickup_snd.queue_free)
+			chest_opened.emit()
 			if keys_left == 0:
 				_open_exit_door()
 			return true

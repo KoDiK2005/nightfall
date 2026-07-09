@@ -62,6 +62,28 @@ func _flash_vision(tex: ImageTexture) -> void:
 	tw.tween_interval(0.12)
 	tw.tween_property(vision_flash, "modulate:a", 0.0, 0.22)
 
+## "Every chest you open slams one of your photos edge-to-edge across the
+## screen -- a guaranteed jump-scare" (старое C-README) -- в отличие от
+## случайных вспышек по низкому рассудку выше, это не портировалось вовсе:
+## открытие сундука в Godot до сих пор было только шумом. Сильнее и дольше
+## обычной вспышки, плюс дребезг позиции -- "слэм", а не мерцание.
+func trigger_chest_scare() -> void:
+	if vision_textures.is_empty():
+		return
+	var tex = vision_textures[randi() % vision_textures.size()]
+	vision_flash.texture = tex
+	vision_flash.modulate.a = 0.0
+	vision_flash.position = Vector2.ZERO
+	var tw := create_tween()
+	tw.tween_property(vision_flash, "modulate:a", 1.0, 0.03)
+	for i in range(4):
+		var mag: float = 16.0 * (1.0 - float(i) / 4.0)
+		tw.tween_property(vision_flash, "position", Vector2(randf_range(-mag, mag), randf_range(-mag, mag)), 0.05)
+	tw.tween_property(vision_flash, "position", Vector2.ZERO, 0.05)
+	tw.tween_interval(0.2)
+	tw.tween_property(vision_flash, "modulate:a", 0.0, 0.3)
+	vision_timer = max(vision_timer, 6.0)   # обычная вспышка не наложится следом сразу
+
 ## "затухающее предупреждение при входе учит правилу каждого" (README) --
 ## текста не было вовсе, игрок сталкивался со Слухачом/Наблюдателем без
 ## единого объяснения их правила.
@@ -77,6 +99,7 @@ func _ready() -> void:
 	items = get_tree().get_root().find_child("Items", true, false)
 	if level_gen:
 		level_gen.hud_changed.connect(_on_hud_changed)
+		level_gen.chest_opened.connect(trigger_chest_scare)
 		_on_hud_changed()
 	GameState.mode_changed.connect(_on_mode_changed)
 	_on_mode_changed(GameState.mode)
