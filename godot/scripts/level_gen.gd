@@ -275,6 +275,16 @@ func try_pickup_nearby(p: Vector2) -> bool:
 			# скрип открывающегося сундука -- ещё один источник шума
 			# (см. README), которого раньше тут не было вовсе
 			make_noise(c.pos, 6.0)
+			# assets/pickup.wav лежал неиспользованным -- подбор ключа был
+			# совершенно беззвучным
+			var pickup_snd := AudioStreamPlayer3D.new()
+			pickup_snd.stream = load("res://assets/pickup.wav")
+			pickup_snd.unit_size = 3.0
+			pickup_snd.max_distance = 12.0
+			pickup_snd.position = Vector3(c.pos.x, 0.5, c.pos.y)
+			props_root.add_child(pickup_snd)
+			pickup_snd.play()
+			pickup_snd.finished.connect(pickup_snd.queue_free)
 			if keys_left == 0:
 				_open_exit_door()
 			return true

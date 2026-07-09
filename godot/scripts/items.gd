@@ -69,6 +69,18 @@ func _throw_rock() -> void:
 	# удар о камень слышен через мгновение -- пока упрощаем до "сразу"
 	await player.get_tree().create_timer(ROCK_FLY_DUR).timeout
 	level_gen.make_noise(landing, ROCK_NOISE_TTL)
+	# thud.wav из C-сборки (gen_audio.py make_thud) ещё не был скопирован в
+	# Godot -- бросок камня был совсем беззвучным для самого игрока.
+	# AudioStreamPlayer3D сам даёт затухание по расстоянию (see_range/hear в
+	# ai.c делали это вручную).
+	var thud := AudioStreamPlayer3D.new()
+	thud.stream = load("res://assets/thud.wav")
+	thud.unit_size = 3.0
+	thud.max_distance = 16.0
+	thud.position = Vector3(landing.x, 0.3, landing.y)
+	level_gen.props_root.add_child(thud)
+	thud.play()
+	thud.finished.connect(thud.queue_free)
 
 func _process(delta: float) -> void:
 	if match_burn > 0.0:
