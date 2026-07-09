@@ -154,6 +154,10 @@ func _setup_house_look() -> void:
 	var floor_mat: StandardMaterial3D = load("res://resources/floor_material.tres")
 	wall_mat.albedo_color = Color(0.52, 0.44, 0.34)
 	floor_mat.albedo_color = Color(0.34, 0.26, 0.19)
+	# материалы общие с подземельем -- без сброса дом унаследовал бы
+	# каменную кладку с трещинами, если до этого уже играли endless
+	wall_mat.albedo_texture = null
+	floor_mat.albedo_texture = null
 	if dir_light:
 		dir_light.visible = true
 	if world_env and world_env.environment:

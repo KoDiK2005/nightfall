@@ -13,10 +13,65 @@ const BIOMES := [
 	{ "name": "БЕЗДНА", "wall": Color(0.36, 0.30, 0.44), "floor": Color(0.18, 0.15, 0.24) },
 ]
 
+const TEX := 64
+
 static func apply(depth: int) -> String:
 	var b: Dictionary = BIOMES[(depth - 1) % BIOMES.size()]
 	var wall_mat: StandardMaterial3D = load("res://resources/wall_material.tres")
 	var floor_mat: StandardMaterial3D = load("res://resources/floor_material.tres")
 	wall_mat.albedo_color = b.wall
 	floor_mat.albedo_color = b.floor
+	# порт build_textures (render.c): кладка с мортаром + трещины/пятна,
+	# усиливающиеся с глубиной -- раньше это были голые залитые цветом
+	# коробки без всякой текстуры. albedo_texture умножается на albedo_color
+	# выше, так что раскраска по биому остаётся той же системой, что и была.
+	var wear: float = clamp(float(depth - 1) / 12.0, 0.0, 1.0)
+	wall_mat.albedo_texture = _build_wall_texture(wear)
+	wall_mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
+	floor_mat.albedo_texture = _build_floor_texture(wear)
+	floor_mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
 	return b.name
+
+static func _build_wall_texture(wear: float) -> ImageTexture:
+	var img := Image.create(TEX, TEX, false, Image.FORMAT_RGB8)
+	var brick_h := 16
+	var brick_w := 32
+	for y in range(TEX):
+		var row := y / brick_h
+		var ox := (brick_w / 2) if (row % 2 == 1) else 0
+		for x in range(TEX):
+			var mortar: bool = ((x + ox) % brick_w) < 2 or (y % brick_h) < 2
+			var base: float = 0.20 + randf() * 0.07
+			var c: Color
+			if mortar:
+				c = Color(base * 0.30, base * 0.32, base * 0.36)
+			else:
+				var r: float = base * 0.92
+				var g: float = base * 0.86
+				var bl: float = base * 0.80
+				if randf() < 0.05 + 0.22 * wear:
+					r -= 0.06; g -= 0.06; bl -= 0.055   # тёмные пятна, хуже глубже
+				# ветвящиеся трещины по камню, гуще с глубиной
+				var ridge: float = abs(sin(x * 0.20 + 2.4 * sin(y * 0.11)))
+				if ridge < 0.05 + 0.05 * wear:
+					var d: float = 0.11 * (0.4 + wear)
+					r -= d; g -= d; bl -= d
+				# глубокие этажи "плачут" ржаво-кровавым по камню
+				if wear > 0.35 and randf() < 0.05 * wear:
+					r += 0.09 * wear; g -= 0.05; bl -= 0.03
+				c = Color(max(r, 0.015), max(g, 0.012), max(bl, 0.012))
+			img.set_pixel(x, y, c)
+	return ImageTexture.create_from_image(img)
+
+static func _build_floor_texture(wear: float) -> ImageTexture:
+	var img := Image.create(TEX, TEX, false, Image.FORMAT_RGB8)
+	for y in range(TEX):
+		for x in range(TEX):
+			var f: float = 0.12 + randf() * 0.055
+			if randf() < 0.12 * wear:
+				f -= 0.05   # копится грязь на глубоких этажах
+			f = max(f, 0.025)
+			var crack: bool = (x * 7 + y * 3) % 29 < 2
+			var c: Color = Color(f * 0.35, f * 0.38, f * 0.42) if crack else Color(f, f, f * 1.08)
+			img.set_pixel(x, y, c)
+	return ImageTexture.create_from_image(img)
