@@ -266,6 +266,64 @@ func _prop(pos: Vector3, size: Vector3, color: Color) -> void:
 	mesh.position = pos
 	house_props.add_child(mesh)
 
+## тот же _prop, но с процедурной текстурой вместо плоской заливки --
+## для беседки/машины во дворе, чтобы двор не оставался единственным
+## нетекстурированным местом после дома/подземелья.
+func _prop_tex(pos: Vector3, size: Vector3, tex: ImageTexture, tint: Color) -> void:
+	var mesh := MeshInstance3D.new()
+	mesh.mesh = BoxMesh.new()
+	mesh.mesh.size = size
+	var mat := StandardMaterial3D.new()
+	mat.albedo_texture = tex
+	mat.albedo_color = tint
+	mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
+	mesh.material_override = mat
+	mesh.position = pos
+	house_props.add_child(mesh)
+
+static var _gazebo_wood_tex: ImageTexture = null
+static var _car_rust_tex: ImageTexture = null
+
+## столбы/крыша беседки -- вертикальное дощатое волокно, посветлее и
+## поновее, чем у машины.
+static func _gazebo_wood_texture() -> ImageTexture:
+	if _gazebo_wood_tex:
+		return _gazebo_wood_tex
+	var img := Image.create(HOUSE_TEX, HOUSE_TEX, false, Image.FORMAT_RGB8)
+	for y in range(HOUSE_TEX):
+		for x in range(HOUSE_TEX):
+			var grain: float = sin(y * 0.35 + x * 1.7) * 0.05 + sin(y * 0.9) * 0.03
+			var seam: bool = (x % 16) < 1
+			var base: float = 0.42 + grain
+			if seam:
+				base -= 0.08
+			base = max(base, 0.05)
+			img.set_pixel(x, y, Color(base, base * 0.72, base * 0.44))
+	_gazebo_wood_tex = ImageTexture.create_from_image(img)
+	return _gazebo_wood_tex
+
+## ржавая обшивка машины -- тёмный мятый металл в рыжих пятнах коррозии.
+static func _car_rust_texture() -> ImageTexture:
+	if _car_rust_tex:
+		return _car_rust_tex
+	var img := Image.create(HOUSE_TEX, HOUSE_TEX, false, Image.FORMAT_RGB8)
+	for y in range(HOUSE_TEX):
+		for x in range(HOUSE_TEX):
+			var base: float = 0.16 + randf() * 0.04
+			var dent: float = sin(x * 0.4 + y * 0.15) * 0.02
+			var rust_blot: float = sin(x * 0.22 + 4.0 * sin(y * 0.13)) * 0.5 + 0.5
+			var rusted: bool = rust_blot > 0.78
+			var c: Color
+			if rusted:
+				var r: float = 0.32 + randf() * 0.08
+				c = Color(r, r * 0.5, r * 0.18)
+			else:
+				var v: float = base + dent
+				c = Color(v, v * 0.95, v * 0.92)
+			img.set_pixel(x, y, c)
+	_car_rust_tex = ImageTexture.create_from_image(img)
+	return _car_rust_tex
+
 ## тёплая потолочная лампа: ровный ambient делает комнаты плоскими, поэтому
 ## добавляем по мягкому точечному свету в основные помещения -- появляется
 ## объём и градиент к углам, без теней (дёшево для Intel UHD 620).
@@ -313,11 +371,11 @@ func _place_ground_floor_furniture() -> void:
 ## плоская крыша, чисто декор, без коллизии (как и вся прочая мебель тут).
 func _place_gazebo(cx: float, cz: float) -> void:
 	var half := 1.6
-	var post_color := Color(0.55, 0.42, 0.30)
+	var wood := _gazebo_wood_texture()
 	for ox in [-half, half]:
 		for oz in [-half, half]:
-			_prop(Vector3(cx + ox, 0.575, cz + oz), Vector3(0.18, 1.15, 0.18), post_color)
-	_prop(Vector3(cx, 1.125, cz), Vector3((half + 0.25) * 2.0, 0.15, (half + 0.25) * 2.0), post_color * 0.85)
+			_prop_tex(Vector3(cx + ox, 0.575, cz + oz), Vector3(0.18, 1.15, 0.18), wood, Color(1.0, 1.0, 1.0))
+	_prop_tex(Vector3(cx, 1.125, cz), Vector3((half + 0.25) * 2.0, 0.15, (half + 0.25) * 2.0), wood, Color(0.85, 0.85, 0.85))
 
 ## ржавая развалюха у забора и бельевая верёвка -- порт куска
 ## place_yard_clutter (story.c) про машину и верёвку; двор дома, где пьют и
@@ -327,8 +385,9 @@ func _place_gazebo(cx: float, cz: float) -> void:
 func _place_car_and_clothesline() -> void:
 	var cx := 24.0
 	var cz := 33.5
-	_prop(Vector3(cx, 0.275, cz), Vector3(3.0, 0.55, 1.7), Color(0.28, 0.14, 0.10))    # кузов
-	_prop(Vector3(cx, 0.635, cz), Vector3(2.2, 0.17, 1.4), Color(0.24, 0.12, 0.09))    # кабина/крыша
+	var rust := _car_rust_texture()
+	_prop_tex(Vector3(cx, 0.275, cz), Vector3(3.0, 0.55, 1.7), rust, Color(1.0, 1.0, 1.0))     # кузов
+	_prop_tex(Vector3(cx, 0.635, cz), Vector3(2.2, 0.17, 1.4), rust, Color(0.85, 0.85, 0.85))  # кабина/крыша
 
 	var clx0 := 17.0
 	var clx1 := 20.0
@@ -381,6 +440,7 @@ func _start_denial() -> void:
 		phase = Phase.AFTERMATH
 		player.global_position = Vector3(24.0, 0.9, 22.0)
 		player.rotation.y = PI * 0.5
+		player.story_speed_mult = 1.0
 		player.story_speed_mult = 1.0
 
 func _process(delta: float) -> void:
