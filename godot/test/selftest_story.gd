@@ -37,10 +37,12 @@ func _run() -> void:
 	var wall_map: GridMap = main.get_node("WallGridMap")
 	var floor_map: GridMap = main.get_node("FloorGridMap")
 
-	print("[house] walls=%d floor=%d phase=%d" % [
-		wall_map.get_used_cells().size(), floor_map.get_used_cells().size(), story.phase])
+	print("[house] walls=%d floor=%d phase=%d props=%d" % [
+		wall_map.get_used_cells().size(), floor_map.get_used_cells().size(), story.phase,
+		story.house_props.get_child_count()])
 	check(wall_map.get_used_cells().size() > 100, "стены дома выставлены в GridMap")
 	check(floor_map.get_used_cells().size() > 100, "пол дома выставлен в GridMap")
+	check(story.house_props.get_child_count() > 25, "дом заполнен мебелью, не единичными предметами")
 	check(story.phase == PHASE_APPROACH, "старт в фазе подхода")
 	# по XZ, а не по всей точке: коллизия двора поднимает капсулу на "рост"
 	# (пол-плоскость двора под ногами), так что Y после кадра физики уходит

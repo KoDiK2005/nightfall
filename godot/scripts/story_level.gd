@@ -300,6 +300,20 @@ func _prop(pos: Vector3, size: Vector3, color: Color) -> void:
 	mesh.position = pos
 	house_props.add_child(mesh)
 
+## настенное зеркало -- гладкий металлик без текстуры (слишком мелкая
+## деталь, чтобы городить под неё отдельную процедурную карту).
+func _mirror(pos: Vector3, size: Vector3) -> void:
+	var mesh := MeshInstance3D.new()
+	mesh.mesh = BoxMesh.new()
+	mesh.mesh.size = size
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = Color(0.72, 0.78, 0.82)
+	mat.metallic = 0.85
+	mat.roughness = 0.15
+	mesh.material_override = mat
+	mesh.position = pos
+	house_props.add_child(mesh)
+
 ## тот же _prop, но с процедурной текстурой вместо плоской заливки --
 ## для беседки/машины во дворе, чтобы двор не оставался единственным
 ## нетекстурированным местом после дома/подземелья.
@@ -407,6 +421,18 @@ func _place_ground_floor_furniture() -> void:
 	_prop_tex(Vector3(27.0, 0.21, 26.0), Vector3(2.6, 0.42, 1.1), fabric, Color(0.85, 0.65, 0.9))    # диван
 	_prop_tex(Vector3(27.0, 0.25, 28.0), Vector3(1.1, 0.5, 0.36), wood, Color(0.45, 0.4, 0.4))       # ТВ-тумба
 
+	# дальше -- наполнение комнат сверх одного предмета на комнату: дом
+	# должен читаться как жилой, а не как выставочный зал с одним экспонатом.
+	_prop_tex(Vector3(10.5, 0.4, 17.8), Vector3(0.5, 0.16, 0.4), ceramic, Color(1.0, 1.0, 1.0))     # раковина санузла
+	_mirror(Vector3(8.06, 1.5, 18.5), Vector3(0.02, 0.6, 0.4))                                       # зеркало над раковиной
+	_prop_tex(Vector3(11.2, 0.35, 25.3), Vector3(0.5, 0.5, 0.5), wood, Color(0.85, 0.7, 0.55))       # тумбочка у кровати
+	_prop_tex(Vector3(11.0, 0.02, 24.0), Vector3(3.0, 0.04, 3.5), fabric, Color(0.55, 0.35, 0.3))    # ковёр гостевой
+	_prop_tex(Vector3(14.0, 0.02, 19.0), Vector3(2.0, 0.04, 3.0), fabric, Color(0.35, 0.3, 0.5))     # ковёр в холле
+	_prop_tex(Vector3(17.0, 0.6, 17.3), Vector3(0.9, 1.6, 0.8), rust, Color(1.25, 1.25, 1.3))        # холодильник
+	_prop_tex(Vector3(26.0, 0.2, 24.0), Vector3(1.0, 0.36, 0.6), wood, Color(0.8, 0.65, 0.5))        # журнальный столик
+	_prop_tex(Vector3(26.5, 0.02, 27.0), Vector3(4.0, 0.04, 3.0), fabric, Color(0.4, 0.28, 0.42))    # ковёр у дивана
+	_prop_tex(Vector3(30.5, 0.55, 18.0), Vector3(0.4, 1.6, 1.8), wood, Color(0.6, 0.48, 0.36))       # книжный стеллаж
+
 ## беседка на лужайке -- порт place_gazebo (story.c): четыре столба и
 ## плоская крыша, чисто декор, без коллизии (как и вся прочая мебель тут).
 func _place_gazebo(cx: float, cz: float) -> void:
@@ -443,6 +469,7 @@ func _place_upper_floor_furniture() -> void:
 	var wood := _gazebo_wood_texture()
 	var rust := _car_rust_texture()
 	var ceramic := _ceramic_texture()
+	var fabric := _fabric_texture()
 	_prop_tex(Vector3(38.0, 0.14, 3.4), Vector3(2.4, 0.28, 1.2), wood, Color(0.95, 0.65, 0.65))       # кровать мастер-спальни
 	_prop_tex(Vector3(41.3, 0.65, 2.4), Vector3(0.6, 1.3, 0.7), wood, Color(0.7, 0.55, 0.45))         # гардероб
 	_prop_tex(Vector3(KID1_POS.x, 0.13, KID1_POS.z + 0.5), Vector3(1.7, 0.26, 0.9), wood, Color(0.95, 0.75, 0.55))  # кровать детская 1
@@ -451,6 +478,14 @@ func _place_upper_floor_furniture() -> void:
 	_prop_tex(Vector3(50.4, 0.23, 2.3), Vector3(0.56, 0.46, 0.56), wood, Color(0.9, 0.6, 0.45))       # стол детская 2
 	_prop_tex(Vector3(39.0, 0.19, 8.4), Vector3(0.36, 0.38, 0.4), ceramic, Color(1.0, 1.0, 1.0))      # унитаз санузла
 	_prop_tex(Vector3(36.6, 0.3, 10.3), Vector3(0.56, 0.6, 0.56), rust, Color(1.3, 1.3, 1.3))         # стиральная машина
+
+	# наполнение сверх одного предмета на комнату, как и на первом этаже
+	_prop_tex(Vector3(36.2, 0.35, 3.4), Vector3(0.5, 0.5, 0.5), wood, Color(0.85, 0.7, 0.55))         # тумбочка мастер-спальни
+	_prop_tex(Vector3(39.0, 0.02, 3.5), Vector3(3.0, 0.04, 2.5), fabric, Color(0.5, 0.32, 0.3))       # ковёр мастер-спальни
+	_prop_tex(Vector3(44.6, 0.25, 4.3), Vector3(0.9, 0.5, 0.5), wood, Color(0.7, 0.5, 0.35))          # сундук с игрушками, детская 1
+	_prop_tex(Vector3(52.5, 0.5, 4.3), Vector3(0.5, 1.0, 0.3), wood, Color(0.7, 0.5, 0.35))           # полка с игрушками, детская 2
+	_prop_tex(Vector3(38.0, 0.45, 10.0), Vector3(0.5, 0.16, 0.4), ceramic, Color(1.0, 1.0, 1.0))      # раковина санузла
+	_mirror(Vector3(35.06, 1.5, 9.0), Vector3(0.02, 0.6, 0.4))                                         # зеркало над раковиной
 
 ## -------------------------------------------------------------- сценарий
 
