@@ -287,6 +287,7 @@ func _build_level() -> void:
 	_setup_dungeon_env()
 	biome_name = Biomes.apply(GameState.depth)
 	_generate()
+	_place_pillars()
 	_paint()
 	_place_torches()
 	_place_keys_and_exit()
@@ -594,6 +595,44 @@ func _generate() -> void:
 		else:
 			_carve_v(ay, by, ax)
 			_carve_h(ax, bx, by)
+
+## "pillar candidates in the larger halls (columns for cover)" (gen.c) --
+## этой части не было в Godot-порте вовсе: большие залы стояли совершенно
+## пустыми открытыми коробками, без единого укрытия во время погони.
+## Закрываем одну-две клетки на кандидата (не в самом центре комнаты, где
+## позже встанет сундук/выход, а у боковых стен на полувысоте -- как в
+## C) как обычную стену: остальная отрисовка (_paint) уже рисует
+## свободностоящую стеновую колонну сама, раз у клетки все соседи открыты,
+## коллизия и текстура те же, что у обычной стены. Откатываем закрытие,
+## если оно разрывает связность этажа (тот же reach_ok из C).
+func _place_pillars() -> void:
+	if rooms.is_empty():
+		return
+	var start: Rect2i = rooms[0]
+	var start_cell := Vector2i(start.position.x + start.size.x / 2, start.position.y + start.size.y / 2)
+	for i in range(1, rooms.size()):
+		var r: Rect2i = rooms[i]
+		if r.size.x < 6 or r.size.y < 5:
+			continue
+		var py: int = r.position.y + r.size.y / 2
+		var candidates: Array = [Vector2i(r.position.x + 1, py), Vector2i(r.position.x + r.size.x - 2, py)]
+		for c in candidates:
+			if not is_open(c.x, c.y):
+				continue
+			map[c.y][c.x] = false
+			if not _reach_ok(start_cell):
+				map[c.y][c.x] = true
+
+## связность этажа целиком: все ещё открытые клетки должны быть достижимы
+## от start_cell -- порт reach_ok из gen.c, используется, чтобы откатить
+## клетку-кандидат под колонну, если её закрытие отрезало часть уровня.
+func _reach_ok(start_cell: Vector2i) -> bool:
+	var dist: Array = flood_from(start_cell)
+	for y in range(MH):
+		for x in range(MW):
+			if map[y][x] and dist[y][x] >= (1 << 20):
+				return false
+	return true
 
 func _paint() -> void:
 	wall_map.clear()
@@ -931,11 +970,26 @@ func _build_door_frame(cell: Vector2i, dir: Vector2i, wood_mat: StandardMaterial
 
 ## шкафчики, где можно спрятаться -- порт locker-плейсмента из reset_level
 ## (gen.c): по одному на комнату, не в стартовой/финальной.
+## "lockers line the walls of storage rooms" (gen.c) -- раньше шкафчик
+## вставал в случайную клетку ИНТЕРЬЕРА комнаты, вообще без привязки к
+## стене: плавающий в воздухе посреди пола ящик, который к тому же теперь
+## неотличим от щебня/ящиков нового наполнения комнат (_place_room_dressing)
+## -- отсюда и жалоба "не нашёл ни одного шкафа". Теперь шкафчик всегда
+## стоит впритык к стене (тот же _wall_dir, что и у факелов), как настоящая
+## мебель, а не абстрактный куб посреди пустоты.
 func _place_lockers(exit_room_idx: int) -> void:
 	player.lockers.clear()
 	var locker_mat := StandardMaterial3D.new()
 	locker_mat.albedo_texture = _locker_texture()
 	locker_mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
+	# металл ловит блики факелов -- раньше шкафчик был совершенно матовым
+	# и в темноте (почти весь этаж, кроме пятен света у факелов) сливался
+	# со стеной в один и тот же тёмно-серый силуэт без единого блика.
+	locker_mat.metallic = 0.45
+	locker_mat.roughness = 0.4
+
+	var start: Rect2i = rooms[0]
+	var start_center := Vector2i(start.position.x + start.size.x / 2, start.position.y + start.size.y / 2)
 
 	var candidates: Array = range(1, rooms.size()).filter(func(i): return i != exit_room_idx)
 	candidates.shuffle()
@@ -943,15 +997,36 @@ func _place_lockers(exit_room_idx: int) -> void:
 		if player.lockers.size() >= NUM_LOCKERS:
 			break
 		var r: Rect2i = rooms[i]
-		var cx: float = r.position.x + 0.5 + randi() % max(r.size.x - 1, 1)
-		var cy: float = r.position.y + 0.5 + randi() % max(r.size.y - 1, 1)
-		var mesh := MeshInstance3D.new()
-		mesh.mesh = BoxMesh.new()
-		mesh.mesh.size = Vector3(0.5, 1.8, 0.5)
-		mesh.material_override = locker_mat
-		mesh.position = Vector3(cx, 0.9, cy)
-		props_root.add_child(mesh)
-		player.lockers.append(mesh)
+		var cells: Array = []
+		for y in range(r.position.y, r.position.y + r.size.y):
+			for x in range(r.position.x, r.position.x + r.size.x):
+				cells.append(Vector2i(x, y))
+		cells.shuffle()
+		for c in cells:
+			if player.lockers.size() >= NUM_LOCKERS:
+				break
+			if absi(c.x - start_center.x) + absi(c.y - start_center.y) < 3:
+				continue
+			var wall_dir := _wall_dir(c.x, c.y)
+			if wall_dir == Vector2i.ZERO:
+				continue
+			var too_close := false
+			var cand_pos := Vector2(c.x + 0.5, c.y + 0.5)
+			for l in player.lockers:
+				if cand_pos.distance_to(Vector2(l.position.x, l.position.z)) < 2.0:
+					too_close = true
+					break
+			if too_close:
+				continue
+			var wx: float = c.x + 0.5 + wall_dir.x * 0.22
+			var wz: float = c.y + 0.5 + wall_dir.y * 0.22
+			var mesh := MeshInstance3D.new()
+			mesh.mesh = BoxMesh.new()
+			mesh.mesh.size = Vector3(0.5, 1.8, 0.5)
+			mesh.material_override = locker_mat
+			mesh.position = Vector3(wx, 0.9, wz)
+			props_root.add_child(mesh)
+			player.lockers.append(mesh)
 
 ## "a struck match doesn't survive the descent; scatter a few fresh ones" /
 ## "rocks to throw as a lure; a fresh handful each floor" (gen.c) -- этой
