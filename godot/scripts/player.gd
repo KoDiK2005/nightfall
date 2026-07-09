@@ -75,7 +75,12 @@ func _physics_process(delta: float) -> void:
 				break
 
 	if hidden:
+		# раньше ранний return тут обрывал кадр ДО _update_sanity() ниже --
+		# рассудок в шкафчике не тает, но и не восстанавливается, просто
+		# замирает. А ведь "улучите тихий момент" (см. README) -- прятки
+		# должны быть именно таким моментом.
 		velocity = Vector3.ZERO
+		_update_sanity(delta)
 		return
 
 	var want_run := Input.is_action_pressed("run") and not exhausted and stamina > 0.05
@@ -114,8 +119,14 @@ func _update_sanity(delta: float) -> void:
 	if monster == null:
 		return
 	var dd: float = min(GameState.depth - 1, 12)
-	var hunting: bool = monster.state == monster.State.HUNT
-	var tension: float = 1.0 if hunting else (0.4 if monster.state == monster.State.SEARCH else 0.0)
+	# спрятался -- монстр тебя не видит и не может поймать (см. go_caught в
+	# monster.gd), так что для рассудка это тихий момент, даже если оно всё
+	# ещё где-то рыщет рядом в поиске: опасность конкретно для тебя сейчас
+	# приостановлена.
+	var hunting: bool = not hidden and monster.state == monster.State.HUNT
+	var tension: float = 0.0
+	if not hidden:
+		tension = 1.0 if hunting else (0.4 if monster.state == monster.State.SEARCH else 0.0)
 	var drain: float = 0.004 + dd * 0.0025 + tension * 0.05 + (0.03 if hunting else 0.0) + (0.10 if hunting else 0.0)
 	if tension < 0.12 and not hunting:
 		sanity += delta * 0.02
