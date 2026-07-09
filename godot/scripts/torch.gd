@@ -24,8 +24,13 @@ func _ready() -> void:
 	_player = get_tree().get_root().find_child("Player", true, false)
 	if _flame_tex == null:
 		_flame_tex = _build_flame_texture()
+	# биом красит не только камень, но и сам огонь -- "сбрасывает... тон
+	# факелов" из README раньше не подключался вовсе, свет и пламя везде
+	# были одним и тем же тёплым оранжевым.
+	var tint: Color = Biomes.current_torch_tint
 	var mat := StandardMaterial3D.new()
 	mat.albedo_texture = _flame_tex
+	mat.albedo_color = tint
 	mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
 	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	mat.blend_mode = BaseMaterial3D.BLEND_MODE_ADD   # горит, а не просто просвечивает
@@ -33,6 +38,7 @@ func _ready() -> void:
 	mat.billboard_mode = BaseMaterial3D.BILLBOARD_ENABLED
 	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
 	flame.material_override = mat
+	light.light_color = tint
 
 	# рукоять и крепление раньше были залиты плоским цветом -- последнее,
 	# что осталось нетекстурированным в самом частом объекте подземелья
