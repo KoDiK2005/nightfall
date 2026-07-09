@@ -13,6 +13,60 @@ const WALL_ITEM := 0
 const FLOOR_ITEM := 1
 const WALL_LAYERS := 2   # двухэтажная высота стен -- две клетки GridMap друг на друге
 
+const HOUSE_TEX := 64
+static var _house_wall_tex: ImageTexture = null
+static var _house_floor_tex: ImageTexture = null
+
+## Обшарпанные обои -- тонкая штриховка полосок и разводы бурых
+## водяных пятен по потолку/углам, как в доме, где никто давно не
+## ремонтировал. Раньше стены дома были заливкой в один сплошной цвет.
+static func _house_wall_texture() -> ImageTexture:
+	if _house_wall_tex:
+		return _house_wall_tex
+	var img := Image.create(HOUSE_TEX, HOUSE_TEX, false, Image.FORMAT_RGB8)
+	for y in range(HOUSE_TEX):
+		for x in range(HOUSE_TEX):
+			var stripe: bool = (x % 8) < 1
+			var base: float = 0.58 + randf() * 0.05
+			if stripe:
+				base -= 0.06
+			# затёкшие бурые пятна -- псевдошум через пару наложенных синусов
+			var blot: float = sin(x * 0.15 + 3.1 * sin(y * 0.09)) * 0.5 + 0.5
+			var stained: bool = blot > 0.82
+			var c: Color
+			if stained:
+				var s: float = base * 0.75
+				c = Color(s * 1.05, s * 0.85, s * 0.55)
+			else:
+				c = Color(base, base * 0.93, base * 0.82)
+			img.set_pixel(x, y, c)
+	_house_wall_tex = ImageTexture.create_from_image(img)
+	return _house_wall_tex
+
+## Дощатый пол -- доски разной длины/оттенка со швами и продольным
+## волокном, вместо одной сплошной заливки.
+static func _house_floor_texture() -> ImageTexture:
+	if _house_floor_tex:
+		return _house_floor_tex
+	var img := Image.create(HOUSE_TEX, HOUSE_TEX, false, Image.FORMAT_RGB8)
+	var plank_w := 10
+	var plank_shades: Array = []
+	for i in range(HOUSE_TEX / plank_w + 2):
+		plank_shades.append(0.85 + randf() * 0.3)
+	for y in range(HOUSE_TEX):
+		for x in range(HOUSE_TEX):
+			var plank_id: int = x / plank_w
+			var seam: bool = (x % plank_w) < 1
+			var shade: float = plank_shades[plank_id]
+			var grain: float = sin(y * 0.5 + plank_id * 11.0) * 0.05
+			var base: float = 0.30 * shade + grain
+			if seam:
+				base -= 0.10
+			base = max(base, 0.03)
+			img.set_pixel(x, y, Color(base * 1.15, base * 0.85, base * 0.55))
+	_house_floor_tex = ImageTexture.create_from_image(img)
+	return _house_floor_tex
+
 const DOOR_POS := Vector3(14.5, 0, 13.5)
 const MOTHER_POS := Vector3(14.5, 0, 14.6)
 const SPAWN_POS := Vector3(14.5, 0.1, 2.5)
@@ -154,10 +208,13 @@ func _setup_house_look() -> void:
 	var floor_mat: StandardMaterial3D = load("res://resources/floor_material.tres")
 	wall_mat.albedo_color = Color(0.52, 0.44, 0.34)
 	floor_mat.albedo_color = Color(0.34, 0.26, 0.19)
-	# материалы общие с подземельем -- без сброса дом унаследовал бы
-	# каменную кладку с трещинами, если до этого уже играли endless
-	wall_mat.albedo_texture = null
-	floor_mat.albedo_texture = null
+	# материалы общие с подземельем -- дом больше не голый цвет и не
+	# наследует каменную кладку подземелья, если до этого играли endless:
+	# у него своя обшарпанная обойная стена и дощатый пол.
+	wall_mat.albedo_texture = _house_wall_texture()
+	wall_mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
+	floor_mat.albedo_texture = _house_floor_texture()
+	floor_mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
 	if dir_light:
 		dir_light.visible = true
 	if world_env and world_env.environment:
