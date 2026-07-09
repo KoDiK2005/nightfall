@@ -19,6 +19,44 @@ const NUM_LOCKERS := 5
 
 static var _chest_tex: ImageTexture = null
 static var _locker_tex: ImageTexture = null
+static var _door_wood_tex: ImageTexture = null
+static var _door_iron_tex: ImageTexture = null
+
+## дощатый косяк дверного проёма -- та же идея, что и у мебели в
+## story_level.gd, но тут своя копия: level_gen.gd не зависит от
+## story-скрипта и наоборот, у каждого файла свой набор текстур.
+static func _door_wood_texture() -> ImageTexture:
+	if _door_wood_tex:
+		return _door_wood_tex
+	const TEX := 64
+	var img := Image.create(TEX, TEX, false, Image.FORMAT_RGB8)
+	for y in range(TEX):
+		for x in range(TEX):
+			var grain: float = sin(y * 0.35 + x * 1.7) * 0.05 + sin(y * 0.9) * 0.03
+			var seam: bool = (x % 16) < 1
+			var base: float = 0.24 + grain
+			if seam:
+				base -= 0.07
+			base = max(base, 0.03)
+			img.set_pixel(x, y, Color(base * 1.3, base * 0.9, base * 0.55))
+	_door_wood_tex = ImageTexture.create_from_image(img)
+	return _door_wood_tex
+
+## мятое кованое железо для рамы двери выхода -- вместо гладкой заливки.
+static func _door_iron_texture() -> ImageTexture:
+	if _door_iron_tex:
+		return _door_iron_tex
+	const TEX := 64
+	var img := Image.create(TEX, TEX, false, Image.FORMAT_RGB8)
+	for y in range(TEX):
+		for x in range(TEX):
+			var base: float = 0.13 + randf() * 0.03
+			var scratch: bool = ((x * 3 + y * 5) % 23) < 1
+			if scratch:
+				base += 0.05
+			img.set_pixel(x, y, Color(base, base * 1.02, base * 1.05))
+	_door_iron_tex = ImageTexture.create_from_image(img)
+	return _door_iron_tex
 
 ## Порт спрайта 7 (CHEST) из build_textures/build_sprites (render.c):
 ## окованный железом деревянный сундук -- тёплое дерево между холодными
@@ -460,7 +498,8 @@ func _place_keys_and_exit() -> void:
 ## вставлена в неё, а не просто болтается сама по себе.
 func _place_exit_door(pos: Vector2) -> void:
 	var iron_mat := StandardMaterial3D.new()
-	iron_mat.albedo_color = Color(0.15, 0.14, 0.14)
+	iron_mat.albedo_texture = _door_iron_texture()
+	iron_mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
 	iron_mat.metallic = 0.4
 	iron_mat.roughness = 0.5
 
@@ -498,7 +537,8 @@ func _place_exit_door(pos: Vector2) -> void:
 ## остаётся свободным, как и был.
 func _place_doors() -> void:
 	var wood_mat := StandardMaterial3D.new()
-	wood_mat.albedo_color = Color(0.22, 0.15, 0.09)
+	wood_mat.albedo_texture = _door_wood_texture()
+	wood_mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
 	wood_mat.roughness = 1.0
 
 	var seen: Dictionary = {}

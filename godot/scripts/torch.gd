@@ -8,9 +8,13 @@ extends Node3D
 
 const TEX := 64
 static var _flame_tex: ImageTexture = null
+static var _wood_tex: ImageTexture = null
+static var _iron_tex: ImageTexture = null
 
 @onready var light: OmniLight3D = $OmniLight3D
 @onready var flame: MeshInstance3D = $Flame
+@onready var handle: MeshInstance3D = $Handle
+@onready var bracket: MeshInstance3D = $Bracket
 
 var _t: float = randf() * 10.0
 var base_energy: float = 1.4
@@ -27,6 +31,36 @@ func _ready() -> void:
 	mat.billboard_mode = BaseMaterial3D.BILLBOARD_ENABLED
 	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
 	flame.material_override = mat
+
+	# рукоять и крепление раньше были залиты плоским цветом -- последнее,
+	# что осталось нетекстурированным в самом частом объекте подземелья
+	# (десятки факелов на этаж).
+	if _wood_tex == null:
+		_wood_tex = _build_grain_texture(0.22, 0.14, 0.08)
+	if _iron_tex == null:
+		_iron_tex = _build_grain_texture(0.14, 0.13, 0.13)
+	var wood_mat := StandardMaterial3D.new()
+	wood_mat.albedo_texture = _wood_tex
+	wood_mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
+	wood_mat.roughness = 1.0
+	handle.material_override = wood_mat
+	var iron_mat := StandardMaterial3D.new()
+	iron_mat.albedo_texture = _iron_tex
+	iron_mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
+	iron_mat.metallic = 0.3
+	iron_mat.roughness = 0.6
+	bracket.material_override = iron_mat
+
+## общая заготовка волокна/зерна под данный базовый цвет -- переиспользуется
+## и для дерева рукояти, и для железа крепления, только тон разный.
+static func _build_grain_texture(r: float, g: float, b: float) -> ImageTexture:
+	var img := Image.create(TEX, TEX, false, Image.FORMAT_RGB8)
+	for y in range(TEX):
+		for x in range(TEX):
+			var grain: float = sin(y * 0.35 + x * 1.7) * 0.06 + sin(y * 0.9) * 0.04
+			var mul: float = 1.0 + grain
+			img.set_pixel(x, y, Color(clamp(r * mul, 0.0, 1.0), clamp(g * mul, 0.0, 1.0), clamp(b * mul, 0.0, 1.0)))
+	return ImageTexture.create_from_image(img)
 
 ## Порт пикселя-в-пиксель сприта 4 (render.c): тёплое ядро у основания,
 ## сужение к острию через жёлтый/оранжевый к тусклому красному на кончиках,
