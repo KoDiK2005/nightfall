@@ -14,6 +14,7 @@ extends CanvasLayer
 @onready var compass: Label = $Compass
 @onready var warning_label: Label = $WarningLabel
 @onready var vision_flash: TextureRect = $VisionFlash
+@onready var postfx: ColorRect = $PostFX
 
 var level_gen: Node = null
 var player: CharacterBody3D = null
@@ -32,6 +33,17 @@ const VISION_MAX_SIDE := 900
 const VISION_MAX_COUNT := 24
 var vision_textures: Array = []
 var vision_timer: float = 8.0
+
+## "screen-shake that spikes on scares... and as a frayed mind bleeds the
+## colour apart" (render.c) -- порт постобработки финального кадра, которого
+## в Godot-порте не было вовсе: хроматическая аберрация/зерно/тряска росли с
+## dread и испугом только в C-версии, тут кадр шёл необработанным. Таймеры
+## ниже -- Godot-эквивалент C-шных screamer_t/vision_t, приводящих scare
+## к 0..1 в шейдере (см. shaders/postfx.gdshader).
+const SCREAMER_DUR := 0.9
+const VIS_FLASH_DUR := 0.4
+var _screamer_t: float = 0.0
+var _vision_scare_t: float = 0.0
 
 func _load_visions() -> void:
 	var dir := DirAccess.open(VISIONS_DIR)
@@ -61,6 +73,7 @@ func _flash_vision(tex: ImageTexture) -> void:
 	tw.tween_property(vision_flash, "modulate:a", 0.85, 0.06)
 	tw.tween_interval(0.12)
 	tw.tween_property(vision_flash, "modulate:a", 0.0, 0.22)
+	_vision_scare_t = VIS_FLASH_DUR
 
 ## "Every chest you open slams one of your photos edge-to-edge across the
 ## screen -- a guaranteed jump-scare" (старое C-README) -- в отличие от
@@ -83,6 +96,7 @@ func trigger_chest_scare() -> void:
 	tw.tween_interval(0.2)
 	tw.tween_property(vision_flash, "modulate:a", 0.0, 0.3)
 	vision_timer = max(vision_timer, 6.0)   # обычная вспышка не наложится следом сразу
+	_screamer_t = SCREAMER_DUR
 
 ## "затухающее предупреждение при входе учит правилу каждого" (README) --
 ## текста не было вовсе, игрок сталкивался со Слухачом/Наблюдателем без
@@ -157,6 +171,11 @@ func _process(delta: float) -> void:
 	sanity_bar.value = player.sanity * 100.0
 	var dread: float = 1.0 - player.sanity
 	vignette.color.a = clamp(dread * 0.5, 0.0, 0.6)
+	_screamer_t = max(_screamer_t - delta, 0.0)
+	_vision_scare_t = max(_vision_scare_t - delta, 0.0)
+	var scare: float = max(_screamer_t / SCREAMER_DUR, 0.6 * _vision_scare_t / VIS_FLASH_DUR)
+	postfx.material.set_shader_parameter("dread", dread)
+	postfx.material.set_shader_parameter("scare", scare)
 	if items_label.visible and items:
 		items_label.text = "СПИЧКИ %d   КАМНИ %d" % [items.match_count, items.rock_count]
 	if _dungeon_hud and level_gen:
