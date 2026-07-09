@@ -84,26 +84,34 @@ static func _build_stalker_textures() -> Array:
 				var hw: float = 9.5 - tt * 6.0
 				if abs(nx) < hw and part == 0:
 					part = 1
-			if y >= 20 and y <= 55:
-				var ax: float = 8.0 + (y - 20) * 0.16
+			if y >= 20 and y <= 60:
+				# руки длиннее и тянутся ниже колен -- пропорции чуть "неправильные",
+				# читается тревожнее правдоподобно-человеческих рук
+				var ax: float = 8.0 + (y - 20) * 0.22
 				if abs(abs(nx) - ax) < 2.1 and part == 0:
 					part = 1
-				if y >= 50 and abs(nx) - ax > -1.5 and abs(nx) - ax < 4.5 and (x % 2 == 0) and part == 0:
-					part = 1
+				if y >= 50 and abs(nx) - ax > -1.5 and abs(nx) - ax < 5.5 and (x % 2 == 0) and part == 0:
+					part = 1   # растопыренные когтистые пальцы, ещё длиннее
 			if y >= 46 and y <= 63 and abs(abs(nx) - 3.5) < 2.0 and part == 0:
 				part = 1
 			if part == 1:
 				var v: float = (6.0 + randf() * 7.0) / 255.0
 				if randf() < 0.04:
 					v += 22.0 / 255.0
-				albedo.set_pixel(x, y, Color(v, v, v + 2.0 / 255.0, 1.0))
+				var c1 := Color(v, v, v + 2.0 / 255.0, 1.0)
+				# рёбра/кости, проступающие через рваную плоть на торсе --
+				# бледные горизонтальные полосы редкими рядами
+				if y >= 22 and y <= 42 and (int(y) % 5) < 1 and abs(nx) < 7.0 and randf() < 0.55:
+					var bone: float = (110.0 + randf() * 20.0) / 255.0
+					c1 = Color(bone, bone * 0.95, bone * 0.88, 1.0)
+				albedo.set_pixel(x, y, c1)
 			elif part == 2:
 				var edge: float = abs(nx) / 5.5
 				var v2: float = (64.0 - edge * 42.0) / 255.0 + randf() * 6.0 / 255.0
 				albedo.set_pixel(x, y, Color(v2, v2 * 0.92, v2 * 0.86, 1.0))
 	# впалые глазницы, горящие глаза и клыкастая пасть -- второй проход
 	# поверх тела, только в верхней полосе (лицо)
-	for y in range(4, 27):
+	for y in range(4, 46):
 		for x in range(TEX):
 			var lex: float = x - 27.5
 			var ley: float = y - 10.0
@@ -120,15 +128,19 @@ static func _build_stalker_textures() -> Array:
 				emission.set_pixel(x, y, Color(120 / 255.0, 12 / 255.0, 8 / 255.0, 1.0))
 			elif le < 40.0 or re < 40.0:
 				albedo.set_pixel(x, y, Color(4 / 255.0, 2 / 255.0, 2 / 255.0, 1.0))
-			if (x == 27 or x == 37) and y > 12 and y < 24 and ((y + x) % 3) != 0:
+			# кровавые дорожки из глаз тянутся дальше вниз по телу, не
+			# обрываются сразу под подбородком -- читается свежее и хуже
+			if (x == 27 or x == 37) and y > 12 and y < 45 and ((y + x) % 3) != 0:
 				albedo.set_pixel(x, y, Color(70 / 255.0, 6 / 255.0, 6 / 255.0, 1.0))
-			var m: float = (x - 32.0) * (x - 32.0) / 12.0 + (y - 19.0) * (y - 19.0) / 6.0
+			# пасть шире и глубже прежней -- неестественно растянутый
+			# оскал, а не аккуратный человеческий рот
+			var m: float = (x - 32.0) * (x - 32.0) / 9.0 + (y - 19.0) * (y - 19.0) / 7.5
 			if m < 1.0:
 				var fang: bool
 				if y < 19:
-					fang = ((x * 7) % 5) < 2 and y > 16
+					fang = ((x * 5) % 4) < 2 and y > 15
 				else:
-					fang = ((x * 7 + 3) % 5) < 2 and y < 21
+					fang = ((x * 5 + 2) % 4) < 2 and y < 23
 				if fang:
 					var fc := Color(205 / 255.0, 195 / 255.0, 175 / 255.0, 1.0)
 					albedo.set_pixel(x, y, fc)
@@ -195,6 +207,19 @@ func _pick_type() -> MonType:
 		return options[randi() % options.size()]
 
 var _aitrace_t: float = 0.0
+
+var _twitch_t: float = randf() * 10.0
+
+## лёгкая нервная дрожь силуэта -- даже стоя на месте (WANDER, ждёт своего
+## хода) он не читается как застывший кадр. Резче и чаще во время охоты,
+## как будто на грани того, чтобы сорваться.
+func _process(delta: float) -> void:
+	_twitch_t += delta
+	var jitter_speed: float = 14.0 if state == State.HUNT else 6.0
+	var jitter_amp: float = 0.035 if state == State.HUNT else 0.015
+	var jx: float = sin(_twitch_t * jitter_speed) * jitter_amp
+	var jy: float = sin(_twitch_t * jitter_speed * 1.7 + 1.3) * jitter_amp * 0.6
+	body.scale = Vector3(1.0 + jx, 1.0 + jy, 1.0)
 
 func _physics_process(delta: float) -> void:
 	if level_gen == null or player == null or GameState.state != GameState.State.PLAY:
