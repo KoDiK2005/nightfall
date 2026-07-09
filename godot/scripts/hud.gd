@@ -15,6 +15,8 @@ extends CanvasLayer
 @onready var warning_label: Label = $WarningLabel
 @onready var vision_flash: TextureRect = $VisionFlash
 @onready var postfx: ColorRect = $PostFX
+@onready var hidden_overlay: ColorRect = $HiddenOverlay
+@onready var hidden_label: Label = $HiddenLabel
 
 var level_gen: Node = null
 var player: CharacterBody3D = null
@@ -182,6 +184,12 @@ func _on_hud_changed() -> void:
 func _process(delta: float) -> void:
 	if player == null:
 		return
+	# "look out through a locker's horizontal vents" (draw_hidden_overlay в
+	# hud.c) -- раньше прятка не давала вообще никакой обратной связи на
+	# экране: ни намёка, что вы спрятались, ни как выйти. Экран просто
+	# замирал на виде из шкафчика, неотличимом от обычного зависания игры.
+	hidden_overlay.visible = player.hidden
+	hidden_label.visible = player.hidden
 	stamina_bar.value = player.stamina * 100.0
 	sanity_bar.value = player.sanity * 100.0
 	var dread: float = 1.0 - player.sanity
