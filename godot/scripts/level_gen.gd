@@ -203,7 +203,10 @@ static func _matchbox_texture() -> ImageTexture:
 	_matchbox_tex = ImageTexture.create_from_image(img)
 	return _matchbox_tex
 
-## подобранный камень для броска -- та же заготовка щебня, но однотонней.
+## подобранный камень для броска -- та же заготовка щебня, но однотонней и
+## заметно светлее: щебень-декор рядом (_rubble_texture, ~0.28-0.34) и
+## камень-подбор были почти одного тона на почти чёрном полу -- на практике
+## не видно вовсе, приходилось спотыкаться, чтобы найти.
 static func _rockpick_texture() -> ImageTexture:
 	if _rockpick_tex:
 		return _rockpick_tex
@@ -212,8 +215,8 @@ static func _rockpick_texture() -> ImageTexture:
 	for y in range(TEX):
 		for x in range(TEX):
 			var n: float = sin(x * 0.4 + y * 0.23) * 0.04
-			var v: float = 0.34 + n + randf() * 0.03
-			img.set_pixel(x, y, Color(v, v * 0.98, v * 0.94))
+			var v: float = 0.58 + n + randf() * 0.05
+			img.set_pixel(x, y, Color(v, v * 0.97, v * 0.92))
 	_rockpick_tex = ImageTexture.create_from_image(img)
 	return _rockpick_tex
 
@@ -1096,12 +1099,23 @@ func _place_lockers(exit_room_idx: int) -> void:
 ## разу не клал predметы на пол. 2-3 спички и 2-3 камня на этаж, не ближе
 ## 4 клеток (по Манхэттену) от старта -- как в C.
 func _place_pickups(start_cell: Vector2i) -> void:
+	# оба -- подбираемые предметы, а не декор (щебень/кости рядом), поэтому
+	# оба чуть светятся, как и сундук -- иначе на почти чёрном полу вдали
+	# от факелов их физически невозможно заметить, только споткнуться.
 	var match_mat := StandardMaterial3D.new()
 	match_mat.albedo_texture = _matchbox_texture()
 	match_mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
+	match_mat.emission_enabled = true
+	match_mat.emission = Color(0.5, 0.16, 0.08)
+	match_mat.emission_energy_multiplier = 0.22
 	var rock_mat := StandardMaterial3D.new()
 	rock_mat.albedo_texture = _rockpick_texture()
 	rock_mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
+	rock_mat.metallic = 0.15
+	rock_mat.roughness = 0.55
+	rock_mat.emission_enabled = true
+	rock_mat.emission = Color(0.45, 0.45, 0.48)
+	rock_mat.emission_energy_multiplier = 0.12
 
 	var mp: int = 2 + randi() % 2
 	var tries := 0
@@ -1132,9 +1146,9 @@ func _place_pickups(start_cell: Vector2i) -> void:
 		var pos := Vector2(x + 0.5, y + 0.5)
 		var mesh := MeshInstance3D.new()
 		mesh.mesh = BoxMesh.new()
-		mesh.mesh.size = Vector3(0.14, 0.12, 0.14)
+		mesh.mesh.size = Vector3(0.20, 0.17, 0.20)   # чуть крупнее -- раньше терялся на полу
 		mesh.material_override = rock_mat
-		mesh.position = Vector3(pos.x, 0.06, pos.y)
+		mesh.position = Vector3(pos.x, 0.085, pos.y)
 		mesh.rotation.y = randf() * TAU
 		props_root.add_child(mesh)
 		rockpicks.append({"pos": pos, "active": true, "mesh": mesh})
