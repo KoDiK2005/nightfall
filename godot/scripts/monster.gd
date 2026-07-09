@@ -94,6 +94,10 @@ static func _build_stalker_textures() -> Array:
 					part = 1   # растопыренные когтистые пальцы, ещё длиннее
 			if y >= 46 and y <= 63 and abs(abs(nx) - 3.5) < 2.0 and part == 0:
 				part = 1
+			# рваная тряпка на бёдрах -- всё, что осталось от одежды
+			var rag: bool = y >= 44 and y <= 50 and abs(nx) < 8.5 and part == 0
+			if rag:
+				part = 1
 			if part == 1:
 				var v: float = (6.0 + randf() * 7.0) / 255.0
 				if randf() < 0.04:
@@ -104,6 +108,17 @@ static func _build_stalker_textures() -> Array:
 				if y >= 22 and y <= 42 and (int(y) % 5) < 1 and abs(nx) < 7.0 and randf() < 0.55:
 					var bone: float = (110.0 + randf() * 20.0) / 255.0
 					c1 = Color(bone, bone * 0.95, bone * 0.88, 1.0)
+				# синюшные кровоподтёки/язвы, разбросанные по коже -- реже,
+				# чем кость, тёмное бурое пятно с нечётким краем
+				var sore: float = sin(x * 0.9 + 7.0 * sin(y * 0.5)) * 0.5 + 0.5
+				if sore > 0.93:
+					c1 = Color(32 / 255.0, 8 / 255.0, 14 / 255.0, 1.0)
+				if rag:
+					# сама тряпка -- пыльно-серая мешковина, а не плоть
+					var rv: float = (30.0 + randf() * 10.0) / 255.0
+					if (int(x + y) % 5) < 1:
+						rv -= 10.0 / 255.0   # складки/дыры на ткани
+					c1 = Color(rv * 1.1, rv, rv * 0.85, 1.0)
 				albedo.set_pixel(x, y, c1)
 			elif part == 2:
 				var edge: float = abs(nx) / 5.5
@@ -117,7 +132,9 @@ static func _build_stalker_textures() -> Array:
 			var ley: float = y - 10.0
 			var le: float = lex * lex + ley * ley
 			var rex: float = x - 36.5
-			var re: float = rex * rex + ley * ley
+			# правый глаз заметно мельче левого -- несимметричное лицо
+			# тревожит сильнее, чем зеркально одинаковое
+			var re: float = (rex * rex + ley * ley) * 1.6
 			if le < 10.0 or re < 10.0:
 				var q: float = (min(le, re)) / 10.0
 				var c := Color(1.0, (90.0 - q * 60.0) / 255.0, (30.0 - q * 22.0) / 255.0, 1.0)
@@ -132,6 +149,13 @@ static func _build_stalker_textures() -> Array:
 			# обрываются сразу под подбородком -- читается свежее и хуже
 			if (x == 27 or x == 37) and y > 12 and y < 45 and ((y + x) % 3) != 0:
 				albedo.set_pixel(x, y, Color(70 / 255.0, 6 / 255.0, 6 / 255.0, 1.0))
+			# рваная рана на груди, чуть ниже шеи, с собственным потёком крови
+			var wound: float = (x - 32.0) * (x - 32.0) / 4.0 + (y - 28.0) * (y - 28.0) / 9.0
+			if wound < 1.0 and y > 24:
+				var wd: bool = ((x * 3 + y) % 4) < 2
+				albedo.set_pixel(x, y, Color(40 / 255.0, 3 / 255.0, 4 / 255.0, 1.0) if wd else Color(85 / 255.0, 8 / 255.0, 6 / 255.0, 1.0))
+			elif x == 32 and y >= 33 and y < 45 and (y % 3) != 0:
+				albedo.set_pixel(x, y, Color(60 / 255.0, 5 / 255.0, 5 / 255.0, 1.0))
 			# пасть шире и глубже прежней -- неестественно растянутый
 			# оскал, а не аккуратный человеческий рот
 			var m: float = (x - 32.0) * (x - 32.0) / 9.0 + (y - 19.0) * (y - 19.0) / 7.5
