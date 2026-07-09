@@ -301,10 +301,14 @@ func _sense(delta: float) -> void:
 	var sensed := false
 	var speed := Vector2(player.velocity.x, player.velocity.z).length()
 	var w: float = wear()   # чувства острее с глубиной, до +30-35% на дне
+	# "low sanity = ragged panic breathing: the Stalker hears you from
+	# farther" (ai.c) -- раньше слух зависел только от глубины, страх самого
+	# игрока никак его не подводил ближе, хотя рассудок уже тает от охоты.
+	var dread: float = 1.0 - player.sanity
 
 	if mon_type == MonType.LISTENER:
 		# слепой -- зрение не участвует вовсе, только гораздо более острый слух
-		var hear := (LISTENER_HEAR_RUN if speed > 3.5 else LISTENER_HEAR_WALK) * (1.0 + w * 0.3)
+		var hear := (LISTENER_HEAR_RUN if speed > 3.5 else LISTENER_HEAR_WALK) * (1.0 + w * 0.3) * (1.0 + dread * 0.4)
 		if speed > 0.5 and d < hear:
 			sensed = true
 	elif mon_type == MonType.WATCHER:
@@ -319,7 +323,7 @@ func _sense(delta: float) -> void:
 		if d < see_range and _has_los(ppos):
 			sensed = true
 		else:
-			var hear := (HEAR_RUN if speed > 3.5 else HEAR_WALK) * (1.0 + w * 0.3)
+			var hear := (HEAR_RUN if speed > 3.5 else HEAR_WALK) * (1.0 + w * 0.3) * (1.0 + dread * 0.5)
 			if speed > 0.5 and d < hear:
 				sensed = true
 
@@ -340,7 +344,20 @@ func _sense(delta: float) -> void:
 	elif state == State.HUNT:
 		state = State.SEARCH
 		search_time = 8.0
-		set_target(Vector2i(int(last_known.x), int(last_known.y)))
+		# порт из ai.c: теряя след, оно первым делом проверяет ближайший к
+		# месту потери шкафчик, а не просто идёт в пустую точку -- прятки
+		# сразу после разрыва видимости не гарантия безопасности, если
+		# шкафчик был слишком близко к тому месту, где оно вас видело
+		# в последний раз. Раньше вообще не учитывалось: SEARCH всегда шёл
+		# ровно в last_known, шкафчики никак не участвовали.
+		var tgt := Vector2i(int(last_known.x), int(last_known.y))
+		var best_ld := 3.0
+		for l in player.lockers:
+			var ld: float = abs(l.position.x - last_known.x) + abs(l.position.z - last_known.y)
+			if ld < best_ld:
+				best_ld = ld
+				tgt = Vector2i(int(l.position.x), int(l.position.z))
+		set_target(tgt)
 	elif state == State.SEARCH:
 		_check_noise()
 		search_time -= delta
@@ -430,6 +447,14 @@ func _move(delta: float) -> void:
 			velocity = Vector3.ZERO
 			return
 		speed_mult = WATCHER_RUSH_MULT
+	elif state == State.HUNT:
+		# "it surges when hunting you at close range -- a terrifying final
+		# lunge" (ai.c) -- было в C-версии, потерялось при портировании:
+		# Сталкер/Слухач шли одной и той же скоростью весь эпизод охоты,
+		# без рывка на добивании, когда до игрока остаются считанные метры.
+		var pd: float = Vector2(position.x, position.z).distance_to(Vector2(player.position.x, player.position.z))
+		if pd < 3.0:
+			speed_mult = 1.0 + (3.0 - pd) / 3.0 * 0.55
 
 	var cx := int(position.x)
 	var cz := int(position.z)
