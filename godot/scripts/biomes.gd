@@ -27,11 +27,13 @@ const WALL_RESOURCES := [
 	"res://resources/wall_material_2.tres",
 	"res://resources/wall_material_3.tres",
 ]
+const FLOOR_RESOURCES := [
+	"res://resources/floor_material.tres",
+	"res://resources/floor_material_2.tres",
+]
 
 static func apply(depth: int) -> String:
 	var b: Dictionary = BIOMES[(depth - 1) % BIOMES.size()]
-	var floor_mat: StandardMaterial3D = load("res://resources/floor_material.tres")
-	floor_mat.albedo_color = b.floor
 	# порт build_textures (render.c): кладка с мортаром + трещины/пятна,
 	# усиливающиеся с глубиной -- раньше это были голые залитые цветом
 	# коробки без всякой текстуры. albedo_texture умножается на albedo_color
@@ -42,8 +44,11 @@ static func apply(depth: int) -> String:
 		wall_mat.albedo_color = b.wall
 		wall_mat.albedo_texture = _build_wall_texture(wear)
 		wall_mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
-	floor_mat.albedo_texture = _build_floor_texture(wear)
-	floor_mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
+	for path in FLOOR_RESOURCES:
+		var floor_mat: StandardMaterial3D = load(path)
+		floor_mat.albedo_color = b.floor
+		floor_mat.albedo_texture = _build_floor_texture(wear)
+		floor_mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
 	return b.name
 
 static func _build_wall_texture(wear: float) -> ImageTexture:

@@ -9,6 +9,7 @@ const MH := 21
 const WALL_ITEM := 0
 const WALL_ITEMS := [0, 2, 3]   # три варианта текстуры стены, см. Biomes.WALL_RESOURCES
 const FLOOR_ITEM := 1
+const FLOOR_ITEMS := [1, 4]     # два варианта текстуры пола, см. Biomes.FLOOR_RESOURCES
 const WALL_H := 2   # стены в две клетки высотой -- иначе игрок видит поверх них
 const TORCH_SPACING := 2.6   # совпадает с TORCH_SPACING в render.c
 const TORCH_SCENE := preload("res://scenes/torch.tscn")
@@ -364,11 +365,12 @@ func _paint() -> void:
 	for y in range(MH):
 		for x in range(MW):
 			if is_open(x, y):
-				floor_map.set_cell_item(Vector3i(x, 0, y), FLOOR_ITEM)
+				floor_map.set_cell_item(Vector3i(x, 0, y), FLOOR_ITEMS[randi() % FLOOR_ITEMS.size()])
 				# потолок над каждой открытой клеткой -- замыкает пространство
 				# сверху, чтобы небо не проглядывало (тот же плоский тайл пола,
-				# поднятый на высоту стен)
-				floor_map.set_cell_item(Vector3i(x, WALL_H, y), FLOOR_ITEM)
+				# поднятый на высоту стен); собственный случайный вариант,
+				# независимый от пола под ногами -- ещё меньше похоже на штамп
+				floor_map.set_cell_item(Vector3i(x, WALL_H, y), FLOOR_ITEMS[randi() % FLOOR_ITEMS.size()])
 			else:
 				# стена рисуется, только если рядом есть открытая клетка --
 				# как в build_world_mesh (render.c): по одной грани на
