@@ -302,7 +302,11 @@ func _sense(delta: float) -> void:
 		# игрок на него смотрит (см. _move)
 		sensed = true
 	else:
-		if d < SEE_RANGE and _has_los(ppos):
+		# порт "see_range *= 1.9" из ai.c: горящая спичка выдаёт тебя
+		# Сталкеру издалека -- та половина сделки "свет против того, чтобы
+		# быть увиденным", которую раньше никто не подключал.
+		var see_range: float = SEE_RANGE * (1.9 if player.lit_by_match else 1.0)
+		if d < see_range and _has_los(ppos):
 			sensed = true
 		else:
 			var hear := HEAR_RUN if speed > 3.5 else HEAR_WALK

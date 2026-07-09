@@ -23,6 +23,7 @@ var sanity: float = 1.0
 var monster: CharacterBody3D = null   # level_gen проставляет после спавна
 var level_gen: Node = null            # level_gen проставляет после спавна
 var story_speed_mult: float = 1.0     # сюжетный режим -- медленный подход, заморозка на месте
+var lit_by_match: bool = false        # items.gd проставляет пока горит спичка -- монстр видит дальше
 
 func _ready() -> void:
 	GameState.state_changed.connect(_on_state_changed)

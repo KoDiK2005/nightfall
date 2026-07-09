@@ -75,3 +75,7 @@ func _process(delta: float) -> void:
 		match_burn -= delta
 		if match_burn <= 0.0:
 			match_light.visible = false
+	# порт "see_range *= 1.9" из ai.c -- горящая спичка светит удобно, но
+	# выдаёт тебя монстру издалека. Раньше эта половина сделки не была
+	# подключена вовсе: спичка просто светила без всякой цены.
+	player.lit_by_match = match_burn > 0.0

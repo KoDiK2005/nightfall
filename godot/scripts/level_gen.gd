@@ -270,6 +270,9 @@ func try_pickup_nearby(p: Vector2) -> bool:
 			c.mesh.visible = false
 			keys_left -= 1
 			hud_changed.emit()
+			# скрип открывающегося сундука -- ещё один источник шума
+			# (см. README), которого раньше тут не было вовсе
+			make_noise(c.pos, 6.0)
 			if keys_left == 0:
 				exit_mesh.get_active_material(0).albedo_color = Color(0.3, 1.0, 0.5)
 			return true
