@@ -30,6 +30,113 @@ var level_gen: Node = null
 var player: CharacterBody3D = null
 var frozen: bool = false   # dev-хук NIGHTFALL_SHOWMON: стоит на месте для скриншота
 
+## Порт сприта 0 (THE STALKER) из build_sprites (render.c): высокий сутулый
+## силуэт с впалым бледным лицом, тонкими когтистыми руками и горящими
+## глазами -- раньше тело было просто чёрной капсулой с двумя отдельными
+## сферами-глазами. Теперь это billboard-плоскость (сам движок держит её
+## лицом к камере -- ручной _face_player() для этого больше не нужен, но
+## оставлен: он же используется в watcher-логике "видит ли игрок монстра").
+const TEX := 64
+@onready var body: MeshInstance3D = $Body
+static var _albedo_tex: ImageTexture = null
+static var _emission_tex: ImageTexture = null
+
+## каждый вид носит свой оттенок -- дешёвый способ различить силуэты,
+## не рисуя три разных сприта (см. "each kind wears its own pallor")
+const TYPE_TINT := {
+	0: Color(1.0, 1.0, 1.0),     # STALKER -- как нарисовано
+	1: Color(0.75, 0.8, 0.95),   # LISTENER -- бледнее, holodный синеватый
+	2: Color(0.55, 0.15, 0.55),  # WATCHER -- неестественный лиловый
+}
+
+func _build_body_material() -> StandardMaterial3D:
+	if _albedo_tex == null:
+		var pair := _build_stalker_textures()
+		_albedo_tex = pair[0]
+		_emission_tex = pair[1]
+	var mat := StandardMaterial3D.new()
+	mat.albedo_texture = _albedo_tex
+	mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	mat.billboard_mode = BaseMaterial3D.BILLBOARD_ENABLED
+	mat.emission_enabled = true
+	mat.emission_texture = _emission_tex
+	mat.emission_energy_multiplier = 4.0
+	mat.albedo_color = TYPE_TINT.get(mon_type, Color.WHITE)
+	return mat
+
+static func _build_stalker_textures() -> Array:
+	var albedo := Image.create(TEX, TEX, false, Image.FORMAT_RGBA8)
+	var emission := Image.create(TEX, TEX, false, Image.FORMAT_RGBA8)
+	for y in range(TEX):
+		for x in range(TEX):
+			var nx: float = x - 32.0
+			var part := 0   # 1 = тёмная плоть, 2 = бледное лицо
+			var hy: float = y - 11.0
+			var he: float = (nx * nx) / (5.5 * 5.5) + (hy * hy) / (8.0 * 8.0)
+			if he < 1.0:
+				part = 2
+			if y >= 17 and y <= 20 and abs(nx) < 2.3 and part == 0:
+				part = 1
+			if y >= 19 and y <= 47:
+				var tt: float = (y - 19) / 28.0
+				var hw: float = 9.5 - tt * 6.0
+				if abs(nx) < hw and part == 0:
+					part = 1
+			if y >= 20 and y <= 55:
+				var ax: float = 8.0 + (y - 20) * 0.16
+				if abs(abs(nx) - ax) < 2.1 and part == 0:
+					part = 1
+				if y >= 50 and abs(nx) - ax > -1.5 and abs(nx) - ax < 4.5 and (x % 2 == 0) and part == 0:
+					part = 1
+			if y >= 46 and y <= 63 and abs(abs(nx) - 3.5) < 2.0 and part == 0:
+				part = 1
+			if part == 1:
+				var v: float = (6.0 + randf() * 7.0) / 255.0
+				if randf() < 0.04:
+					v += 22.0 / 255.0
+				albedo.set_pixel(x, y, Color(v, v, v + 2.0 / 255.0, 1.0))
+			elif part == 2:
+				var edge: float = abs(nx) / 5.5
+				var v2: float = (64.0 - edge * 42.0) / 255.0 + randf() * 6.0 / 255.0
+				albedo.set_pixel(x, y, Color(v2, v2 * 0.92, v2 * 0.86, 1.0))
+	# впалые глазницы, горящие глаза и клыкастая пасть -- второй проход
+	# поверх тела, только в верхней полосе (лицо)
+	for y in range(4, 27):
+		for x in range(TEX):
+			var lex: float = x - 27.5
+			var ley: float = y - 10.0
+			var le: float = lex * lex + ley * ley
+			var rex: float = x - 36.5
+			var re: float = rex * rex + ley * ley
+			if le < 10.0 or re < 10.0:
+				var q: float = (min(le, re)) / 10.0
+				var c := Color(1.0, (90.0 - q * 60.0) / 255.0, (30.0 - q * 22.0) / 255.0, 1.0)
+				albedo.set_pixel(x, y, c)
+				emission.set_pixel(x, y, c)
+			elif le < 22.0 or re < 22.0:
+				albedo.set_pixel(x, y, Color(120 / 255.0, 12 / 255.0, 8 / 255.0, 1.0))
+				emission.set_pixel(x, y, Color(120 / 255.0, 12 / 255.0, 8 / 255.0, 1.0))
+			elif le < 40.0 or re < 40.0:
+				albedo.set_pixel(x, y, Color(4 / 255.0, 2 / 255.0, 2 / 255.0, 1.0))
+			if (x == 27 or x == 37) and y > 12 and y < 24 and ((y + x) % 3) != 0:
+				albedo.set_pixel(x, y, Color(70 / 255.0, 6 / 255.0, 6 / 255.0, 1.0))
+			var m: float = (x - 32.0) * (x - 32.0) / 12.0 + (y - 19.0) * (y - 19.0) / 6.0
+			if m < 1.0:
+				var fang: bool
+				if y < 19:
+					fang = ((x * 7) % 5) < 2 and y > 16
+				else:
+					fang = ((x * 7 + 3) % 5) < 2 and y < 21
+				if fang:
+					var fc := Color(205 / 255.0, 195 / 255.0, 175 / 255.0, 1.0)
+					albedo.set_pixel(x, y, fc)
+					emission.set_pixel(x, y, fc)
+				else:
+					albedo.set_pixel(x, y, Color(5 / 255.0, 2 / 255.0, 3 / 255.0, 1.0))
+	return [ImageTexture.create_from_image(albedo), ImageTexture.create_from_image(emission)]
+
 ## Рёв при входе в погоню и рваное рычание, пока она длится -- порт
 ## соответствующего куска update_ai (ai.c). До этого фикса звуки лежали в
 ## assets/ неиспользованными: монстр был совершенно немым даже во время
@@ -57,6 +164,7 @@ func setup(p_level_gen: Node, p_player: CharacterBody3D) -> void:
 	mon_type = _pick_type()
 	pick_wander()
 	_setup_voice()
+	body.material_override = _build_body_material()
 
 func _setup_voice() -> void:
 	roar_player = AudioStreamPlayer3D.new()
