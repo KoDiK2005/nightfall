@@ -1,14 +1,3 @@
-# build artifact
-/nightfall
-/nightfall.exe
-/nightfall-classic
-/nightfall-classic.exe
-# runtime DLLs `make dist` copies in next to the .exe on Windows
-*.dll
-
-# object files
-*.o
-
 # raw source photos stay local (the processed screamers in assets/visions get committed)
 /photos/*
 !/photos/README.md
@@ -17,6 +6,3 @@
 *.swp
 .vscode/
 .DS_Store
-
-# local per-player session log (never committed -- see README)
-/nightfall_log.txt
