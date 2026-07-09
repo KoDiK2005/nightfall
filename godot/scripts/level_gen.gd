@@ -735,22 +735,39 @@ func _update_doors(p: Vector2) -> void:
 
 ## клетки пола сразу за одной из четырёх границ комнаты, где начинается
 ## коридор -- направление (dir) смотрит НАРУЖУ из комнаты, вдоль коридора.
+## Раньше ставила дверь на КАЖДУЮ открытую клетку вдоль границы комнаты --
+## если коридор шёл вдоль всей стены (а не заходил через один узкий проём),
+## получалась целая вереница дверей подряд в одном широком проходе ("10
+## дверей в одном проёме"). Теперь один дверной проём -- один непрерывный
+## открытый участок границы, а дверь ставится в его середине.
 func _room_doorway_cells(r: Rect2i) -> Array:
 	var out: Array = []
 	var x0: int = r.position.x
 	var y0: int = r.position.y
 	var x1: int = x0 + r.size.x - 1
 	var y1: int = y0 + r.size.y - 1
-	for x in range(x0, x1 + 1):
-		if is_open(x, y0 - 1):
-			out.append({"pos": Vector2i(x, y0 - 1), "dir": Vector2i(0, -1)})
-		if is_open(x, y1 + 1):
-			out.append({"pos": Vector2i(x, y1 + 1), "dir": Vector2i(0, 1)})
-	for y in range(y0, y1 + 1):
-		if is_open(x0 - 1, y):
-			out.append({"pos": Vector2i(x0 - 1, y), "dir": Vector2i(-1, 0)})
-		if is_open(x1 + 1, y):
-			out.append({"pos": Vector2i(x1 + 1, y), "dir": Vector2i(1, 0)})
+	out.append_array(_doorway_runs(x0, x1, y0 - 1, true, Vector2i(0, -1)))
+	out.append_array(_doorway_runs(x0, x1, y1 + 1, true, Vector2i(0, 1)))
+	out.append_array(_doorway_runs(y0, y1, x0 - 1, false, Vector2i(-1, 0)))
+	out.append_array(_doorway_runs(y0, y1, x1 + 1, false, Vector2i(1, 0)))
+	return out
+
+## сканирует одну грань комнаты (горизонтальную при horizontal=true, вдоль
+## x на фиксированном y=fixed_coord; вертикальную иначе) и группирует
+## подряд идущие открытые клетки в участки -- один дверной проём на участок,
+## по его середине.
+func _doorway_runs(a0: int, a1: int, fixed_coord: int, horizontal: bool, dir: Vector2i) -> Array:
+	var out: Array = []
+	var run_start := -1
+	for a in range(a0, a1 + 2):   # +1 за край, чтобы закрыть последний участок
+		var open: bool = a <= a1 and (is_open(a, fixed_coord) if horizontal else is_open(fixed_coord, a))
+		if open and run_start == -1:
+			run_start = a
+		elif not open and run_start != -1:
+			var mid: int = (run_start + a - 1) / 2
+			var pos := Vector2i(mid, fixed_coord) if horizontal else Vector2i(fixed_coord, mid)
+			out.append({"pos": pos, "dir": dir})
+			run_start = -1
 	return out
 
 func _build_door_frame(cell: Vector2i, dir: Vector2i, wood_mat: StandardMaterial3D) -> void:
