@@ -13,11 +13,54 @@ extends CanvasLayer
 @onready var vignette: ColorRect = $Vignette
 @onready var compass: Label = $Compass
 @onready var warning_label: Label = $WarningLabel
+@onready var vision_flash: TextureRect = $VisionFlash
 
 var level_gen: Node = null
 var player: CharacterBody3D = null
 var items: Node = null
 var _dungeon_hud: bool = false   # compass.visible сам гасится/зажигается по сундукам, этим не проверить режим
+
+## "твои собственные галлюцинации" (README): PNG из assets/visions/
+## вспыхивают на доли секунды поверх экрана, когда рассудок низкий --
+## порт load_visions/draw_vision из main.c/hud.c, которого в Godot-порте
+## не было вовсе (не просто неподключённый ассет -- целая система).
+## Image.load_from_file грузит PNG прямо с диска в обход импорт-пайплайна,
+## так что новые файлы подхватываются без переоткрытия проекта в редакторе --
+## как и в C-версии, где просто "положил файлы -> make -> запустил".
+const VISIONS_DIR := "res://assets/visions"
+const VISION_MAX_SIDE := 900
+const VISION_MAX_COUNT := 24
+var vision_textures: Array = []
+var vision_timer: float = 8.0
+
+func _load_visions() -> void:
+	var dir := DirAccess.open(VISIONS_DIR)
+	if dir == null:
+		return
+	dir.list_dir_begin()
+	var fname := dir.get_next()
+	while fname != "" and vision_textures.size() < VISION_MAX_COUNT:
+		if not dir.current_is_dir() and fname.get_extension().to_lower() == "png":
+			var img := Image.load_from_file(VISIONS_DIR + "/" + fname)
+			if img != null:
+				var w := img.get_width()
+				var h := img.get_height()
+				if w > VISION_MAX_SIDE or h > VISION_MAX_SIDE:
+					var s: float = float(VISION_MAX_SIDE) / max(w, h)
+					img.resize(max(int(w * s), 1), max(int(h * s), 1))
+				vision_textures.append(ImageTexture.create_from_image(img))
+			else:
+				push_warning("visions: не смог загрузить " + fname)
+		fname = dir.get_next()
+	dir.list_dir_end()
+
+func _flash_vision(tex: ImageTexture) -> void:
+	vision_flash.texture = tex
+	vision_flash.modulate.a = 0.0
+	var tw := create_tween()
+	tw.tween_property(vision_flash, "modulate:a", 0.85, 0.06)
+	tw.tween_interval(0.12)
+	tw.tween_property(vision_flash, "modulate:a", 0.0, 0.22)
 
 ## "затухающее предупреждение при входе учит правилу каждого" (README) --
 ## текста не было вовсе, игрок сталкивался со Слухачом/Наблюдателем без
@@ -44,6 +87,17 @@ func _ready() -> void:
 	if GameState.pending_warning != -1:
 		_show_warning(GameState.pending_warning)
 		GameState.pending_warning = -1
+
+	_load_visions()
+	# dev-хук NIGHTFALL_SHOWVISION=i (порт из C-версии): показать картинку
+	# с индексом i и держать её на экране, а не мелькать долей секунды --
+	# удобно для скриншотов/отладки без ожидания низкого рассудка
+	var sv := OS.get_environment("NIGHTFALL_SHOWVISION")
+	if sv != "" and sv.is_valid_int():
+		var i: int = clampi(sv.to_int(), 0, max(vision_textures.size() - 1, 0))
+		if vision_textures.size() > 0:
+			vision_flash.texture = vision_textures[i]
+			vision_flash.modulate.a = 0.85
 
 func _show_warning(mon_type: int) -> void:
 	if not MONSTER_WARNINGS.has(mon_type):
@@ -73,7 +127,7 @@ func _on_hud_changed() -> void:
 	keys_label.text = "КЛЮЧИ %d/%d" % [level_gen.num_keys - level_gen.keys_left, level_gen.num_keys]
 	biome_label.text = level_gen.biome_name
 
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
 	if player == null:
 		return
 	stamina_bar.value = player.stamina * 100.0
@@ -87,6 +141,16 @@ func _process(_delta: float) -> void:
 	if GameState.pending_warning != -1:
 		_show_warning(GameState.pending_warning)
 		GameState.pending_warning = -1
+
+	# "чем сильнее безумие, тем чаще и ярче" -- та же схема, что и у
+	# шёпотов (dread>0.45), но короткая резкая вспышка вместо звука
+	if dread > 0.45 and not vision_textures.is_empty():
+		vision_timer -= delta
+		if vision_timer <= 0.0:
+			_flash_vision(vision_textures[randi() % vision_textures.size()])
+			vision_timer = lerp(9.0, 2.5, clamp((dread - 0.45) / 0.55, 0.0, 1.0))
+	else:
+		vision_timer = max(vision_timer, 4.0)
 
 ## "золотой компас-чутьё на ключи... указывает на ближайший сундук, ярче
 ## чем ближе вы к нему и тусклее по мере помутнения рассудка" -- эта
