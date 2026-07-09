@@ -31,6 +31,7 @@ static var _bone_tex: ImageTexture = null
 static var _web_tex: ImageTexture = null
 static var _matchbox_tex: ImageTexture = null
 static var _rockpick_tex: ImageTexture = null
+static var _key_icon_tex: ImageTexture = null
 
 ## дощатый косяк дверного проёма -- та же идея, что и у мебели в
 ## story_level.gd, но тут своя копия: level_gen.gd не зависит от
@@ -94,6 +95,30 @@ static func _chest_texture() -> ImageTexture:
 			img.set_pixel(x, y, c)
 	_chest_tex = ImageTexture.create_from_image(img)
 	return _chest_tex
+
+## Золотой значок ключа, парящий над сундуком -- раньше "ключ" был чистой
+## абстракцией (счётчик на HUD), сам предмет-цель выглядел как сундук, а не
+## как ключ. Пиксель-арт силуэт: кольцо-бородка сверху, стержень вниз, два
+## зубца у основания -- читается однозначно на любом фоне, т.к. рисуется
+## как billboard с альфа-прозрачностью, а не текстура на кубе.
+static func _key_icon_texture() -> ImageTexture:
+	if _key_icon_tex:
+		return _key_icon_tex
+	const TEX := 32
+	var img := Image.create(TEX, TEX, false, Image.FORMAT_RGBA8)
+	for y in range(TEX):
+		for x in range(TEX):
+			var dx: float = x - 15.5
+			var dy: float = y - 8.0
+			var ring: bool = abs(dx * dx + dy * dy - 25.0) < 9.0   # кольцо-бородка
+			var shaft: bool = abs(dx) < 1.6 and y > 10 and y < 27  # стержень
+			var tooth1: bool = x > 15 and x < 21 and y > 19 and y < 23
+			var tooth2: bool = x > 15 and x < 19 and y > 24 and y < 27
+			if ring or shaft or tooth1 or tooth2:
+				var shade: float = 0.85 + randf() * 0.12
+				img.set_pixel(x, y, Color(0.95 * shade, 0.78 * shade, 0.25 * shade, 1.0))
+	_key_icon_tex = ImageTexture.create_from_image(img)
+	return _key_icon_tex
 
 ## Порт спрайта 3 (LOCKER): крашеный металл со швом двери, горизонтальными
 ## жалюзи-рёбрами и ручкой -- раньше шкафчик был просто тёмно-серым кубом.
@@ -815,6 +840,20 @@ func _place_keys_and_exit() -> void:
 	chest_mat.emission = Color(0.5, 0.35, 0.05)
 	chest_mat.emission_energy_multiplier = 0.18   # чуть светится в темноте -- манит подойти
 
+	# "нормальные ключи" -- раньше ключ был чистой абстракцией (счётчик на
+	# HUD), а цель на полу выглядела как безликий сундук. Золотой значок
+	# ключа парит над каждым сундуком -- billboard, всегда лицом к камере.
+	var key_icon_mat := StandardMaterial3D.new()
+	key_icon_mat.albedo_texture = _key_icon_texture()
+	key_icon_mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
+	key_icon_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	key_icon_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	key_icon_mat.billboard_mode = BaseMaterial3D.BILLBOARD_ENABLED
+	key_icon_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	key_icon_mat.emission_enabled = true
+	key_icon_mat.emission = Color(1.0, 0.8, 0.3)
+	key_icon_mat.emission_energy_multiplier = 0.9
+
 	var placed_keys := 0
 	for i in range(1, rooms.size()):
 		if placed_keys >= num_keys:
@@ -830,6 +869,12 @@ func _place_keys_and_exit() -> void:
 		mesh.mesh.size = chest_size
 		mesh.material_override = chest_mat
 		_add_beacon(mesh, Color(1.0, 0.75, 0.35), 0.55, 2.4, 0.3)
+		var key_icon := MeshInstance3D.new()
+		key_icon.mesh = QuadMesh.new()
+		key_icon.mesh.size = Vector2(0.3, 0.3)
+		key_icon.material_override = key_icon_mat
+		key_icon.position = Vector3(0, 0.55, 0)
+		mesh.add_child(key_icon)
 		var chest_root := _add_prop_collision(mesh, Vector3(cx, 0.22, cy), chest_size)
 		chests.append({"pos": Vector2(cx, cy), "active": true, "mesh": mesh, "root": chest_root})
 		placed_keys += 1
@@ -1083,6 +1128,39 @@ func _place_lockers(exit_room_idx: int) -> void:
 			var locker_size := Vector3(0.5, 1.8, 0.5)
 			mesh.mesh.size = locker_size
 			mesh.material_override = locker_mat
+			# без источника света шкафчик был из той же серии жалоб "не
+			# видно" -- у сундука/камня/спички уже есть маячок, у шкафчика
+			# не было вовсе. Холодный тусклый белый -- под цвет металла, не
+			# золотой, как у ключей/сундука, чтобы силуэт не путался с ними.
+			_add_beacon(mesh, Color(0.65, 0.7, 0.78), 0.3, 1.7, 0.5)
+			# физическая ручка + шов двери -- раньше единственным намёком на
+			# "это шкаф, а не просто ящик" была плоская текстура; при слабом
+			# освещении и с новыми ящиками-декором того же размера рядом
+			# силуэт был неотличим. Ручка/шов -- уже настоящая геометрия,
+			# не текстура, читается в темноте лучше.
+			# передняя грань (в сторону от стены) -- локальные оси меша не
+			# повёрнуты (look_at тут не звался), так что смещение считаем от
+			# направления к стене явно, а не жёстко зашитой осью: для
+			# шкафчика у стены по X передняя грань смотрит по Z, и наоборот.
+			var front := Vector3(-wall_dir.x, 0, -wall_dir.y) * 0.26
+			var side := Vector3(0, 1, 0) if wall_dir.x != 0 else Vector3(1, 0, 0)
+			var seam := MeshInstance3D.new()
+			seam.mesh = BoxMesh.new()
+			seam.mesh.size = Vector3(0.03, locker_size.y - 0.14, 0.02) if wall_dir.x == 0 \
+				else Vector3(0.02, locker_size.y - 0.14, 0.03)
+			seam.material_override = locker_mat
+			seam.position = front
+			mesh.add_child(seam)
+			var handle_mat := StandardMaterial3D.new()
+			handle_mat.albedo_color = Color(0.72, 0.68, 0.5)
+			handle_mat.metallic = 0.7
+			handle_mat.roughness = 0.3
+			var handle := MeshInstance3D.new()
+			handle.mesh = BoxMesh.new()
+			handle.mesh.size = Vector3(0.05, 0.16, 0.05)
+			handle.material_override = handle_mat
+			handle.position = front + side * 0.16 + Vector3(0, -0.05, 0)
+			mesh.add_child(handle)
 			# как и у сундука -- своя коллизия (см. _add_prop_collision), но
 			# при входе в шкафчик игрок телепортируется ровно на его позицию
 			# (см. player._try_interact): столкновение с СОБСТВЕННЫМ
