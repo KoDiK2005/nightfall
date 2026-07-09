@@ -447,20 +447,111 @@ func _place_keys_and_exit() -> void:
 
 	var er: Rect2i = rooms[exit_room_idx]
 	exit_pos = Vector2(er.position.x + er.size.x / 2.0, er.position.y + er.size.y / 2.0)
+	_place_exit_door(exit_pos)
+	if keys_left == 0:
+		exit_mesh.get_active_material(0).albedo_color = Color(0.3, 1.0, 0.5)
+
+	_place_lockers(exit_room_idx)
+	_place_doors()
+
+## Дверь выхода -- прежде была просто цветной коробкой посреди комнаты.
+## Теперь это свободностоящая рама (железные столбы + притолока), а плита
+## (та же exit_mesh, что и раньше -- по ней переключается цвет замка/выхода)
+## вставлена в неё, а не просто болтается сама по себе.
+func _place_exit_door(pos: Vector2) -> void:
+	var iron_mat := StandardMaterial3D.new()
+	iron_mat.albedo_color = Color(0.15, 0.14, 0.14)
+	iron_mat.metallic = 0.4
+	iron_mat.roughness = 0.5
+
+	var half := 0.55
+	for side in [-1.0, 1.0]:
+		var post := MeshInstance3D.new()
+		post.mesh = BoxMesh.new()
+		post.mesh.size = Vector3(0.12, 2.0, 0.12)
+		post.material_override = iron_mat
+		post.position = Vector3(pos.x + side * half, 1.0, pos.y)
+		props_root.add_child(post)
+	var lintel := MeshInstance3D.new()
+	lintel.mesh = BoxMesh.new()
+	lintel.mesh.size = Vector3(half * 2.0 + 0.12, 0.14, 0.14)
+	lintel.material_override = iron_mat
+	lintel.position = Vector3(pos.x, 1.95, pos.y)
+	props_root.add_child(lintel)
+
 	var exit_red := StandardMaterial3D.new()
 	exit_red.albedo_color = Color(1.0, 0.25, 0.25)
 	exit_red.emission_enabled = true
 	exit_red.emission = Color(0.6, 0.1, 0.1)
 	exit_mesh = MeshInstance3D.new()
 	exit_mesh.mesh = BoxMesh.new()
-	exit_mesh.mesh.size = Vector3(0.8, 1.6, 0.15)
+	exit_mesh.mesh.size = Vector3(0.9, 1.8, 0.08)
 	exit_mesh.material_override = exit_red
-	exit_mesh.position = Vector3(exit_pos.x, 0.8, exit_pos.y)
+	exit_mesh.position = Vector3(pos.x, 0.9, pos.y)
 	props_root.add_child(exit_mesh)
-	if keys_left == 0:
-		exit_mesh.get_active_material(0).albedo_color = Color(0.3, 1.0, 0.5)
 
-	_place_lockers(exit_room_idx)
+## Дверные проёмы там, где коридор входит в комнату -- порт того, что в
+## подземелье раньше вообще не было дверей: комнаты просто перетекали в
+## коридор голым разрывом стены. Ищем клетки пола сразу за границей каждой
+## комнаты (там, где коридор её касается) и ставим раму: деревянный косяк
+## по бокам прохода + притолока сверху. Чисто декор, без коллизии -- проход
+## остаётся свободным, как и был.
+func _place_doors() -> void:
+	var wood_mat := StandardMaterial3D.new()
+	wood_mat.albedo_color = Color(0.22, 0.15, 0.09)
+	wood_mat.roughness = 1.0
+
+	var seen: Dictionary = {}
+	for r in rooms:
+		for entry in _room_doorway_cells(r):
+			var key: Vector2i = entry.pos
+			if seen.has(key):
+				continue
+			seen[key] = true
+			_build_door_frame(entry.pos, entry.dir, wood_mat)
+
+## клетки пола сразу за одной из четырёх границ комнаты, где начинается
+## коридор -- направление (dir) смотрит НАРУЖУ из комнаты, вдоль коридора.
+func _room_doorway_cells(r: Rect2i) -> Array:
+	var out: Array = []
+	var x0: int = r.position.x
+	var y0: int = r.position.y
+	var x1: int = x0 + r.size.x - 1
+	var y1: int = y0 + r.size.y - 1
+	for x in range(x0, x1 + 1):
+		if is_open(x, y0 - 1):
+			out.append({"pos": Vector2i(x, y0 - 1), "dir": Vector2i(0, -1)})
+		if is_open(x, y1 + 1):
+			out.append({"pos": Vector2i(x, y1 + 1), "dir": Vector2i(0, 1)})
+	for y in range(y0, y1 + 1):
+		if is_open(x0 - 1, y):
+			out.append({"pos": Vector2i(x0 - 1, y), "dir": Vector2i(-1, 0)})
+		if is_open(x1 + 1, y):
+			out.append({"pos": Vector2i(x1 + 1, y), "dir": Vector2i(1, 0)})
+	return out
+
+func _build_door_frame(cell: Vector2i, dir: Vector2i, wood_mat: StandardMaterial3D) -> void:
+	var cx: float = cell.x + 0.5
+	var cz: float = cell.y + 0.5
+	# косяк идёт поперёк прохода: если проём смотрит по X (dir.x != 0),
+	# косяки стоят по бокам вдоль Z, и наоборот
+	var perp := Vector2(0.0, 1.0) if dir.x != 0 else Vector2(1.0, 0.0)
+	var half := 0.46
+	for side in [-1.0, 1.0]:
+		var post := MeshInstance3D.new()
+		post.mesh = BoxMesh.new()
+		post.mesh.size = Vector3(0.08, float(WALL_H), 0.08)
+		post.material_override = wood_mat
+		post.position = Vector3(cx + perp.x * half * side, WALL_H / 2.0, cz + perp.y * half * side)
+		props_root.add_child(post)
+	var lintel := MeshInstance3D.new()
+	lintel.mesh = BoxMesh.new()
+	var span: float = half * 2.0 + 0.10
+	# длинная сторона притолоки идёт вдоль той же оси, что и косяки (perp)
+	lintel.mesh.size = Vector3(0.12, 0.12, span) if dir.x != 0 else Vector3(span, 0.12, 0.12)
+	lintel.material_override = wood_mat
+	lintel.position = Vector3(cx, float(WALL_H) - 0.15, cz)
+	props_root.add_child(lintel)
 
 ## шкафчики, где можно спрятаться -- порт locker-плейсмента из reset_level
 ## (gen.c): по одному на комнату, не в стартовой/финальной.
