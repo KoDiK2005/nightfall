@@ -15,6 +15,7 @@ const WALL_H := 2   # стены в две клетки высотой -- ина
 const TORCH_SPACING := 2.6   # совпадает с TORCH_SPACING в render.c
 const TORCH_SCENE := preload("res://scenes/torch.tscn")
 const PICKUP_DIST := 0.9
+const ITEM_PICKUP_DIST := 0.55   # PICKUP_DIST в main.c -- спички/камни подбираются на ходу, без E
 const EXIT_DIST := 0.7
 const MAX_KEYS := 6
 const MONSTER_SCENE := preload("res://scenes/monster.tscn")
@@ -28,6 +29,8 @@ static var _rubble_tex: ImageTexture = null
 static var _crate_tex: ImageTexture = null
 static var _bone_tex: ImageTexture = null
 static var _web_tex: ImageTexture = null
+static var _matchbox_tex: ImageTexture = null
+static var _rockpick_tex: ImageTexture = null
 
 ## дощатый косяк дверного проёма -- та же идея, что и у мебели в
 ## story_level.gd, но тут своя копия: level_gen.gd не зависит от
@@ -185,6 +188,35 @@ static func _web_texture() -> ImageTexture:
 	_web_tex = ImageTexture.create_from_image(img)
 	return _web_tex
 
+## коробок спичек -- тёмно-красная крышка с полоской для чирка сбоку.
+static func _matchbox_texture() -> ImageTexture:
+	if _matchbox_tex:
+		return _matchbox_tex
+	const TEX := 32
+	var img := Image.create(TEX, TEX, false, Image.FORMAT_RGB8)
+	for y in range(TEX):
+		for x in range(TEX):
+			var strike: bool = y > 12 and y < 18
+			var v: float = 0.55 + randf() * 0.06
+			var c: Color = Color(0.15, 0.13, 0.11) if strike else Color(v * 0.75, v * 0.14, v * 0.10)
+			img.set_pixel(x, y, c)
+	_matchbox_tex = ImageTexture.create_from_image(img)
+	return _matchbox_tex
+
+## подобранный камень для броска -- та же заготовка щебня, но однотонней.
+static func _rockpick_texture() -> ImageTexture:
+	if _rockpick_tex:
+		return _rockpick_tex
+	const TEX := 32
+	var img := Image.create(TEX, TEX, false, Image.FORMAT_RGB8)
+	for y in range(TEX):
+		for x in range(TEX):
+			var n: float = sin(x * 0.4 + y * 0.23) * 0.04
+			var v: float = 0.34 + n + randf() * 0.03
+			img.set_pixel(x, y, Color(v, v * 0.98, v * 0.94))
+	_rockpick_tex = ImageTexture.create_from_image(img)
+	return _rockpick_tex
+
 var map: Array = []   # map[y][x] == true, если клетка открыта (пол)
 var rooms: Array = [] # Rect2i(x, y, w, h) на каждую комнату
 var torches: Array = []   # Node3D-инстансы факелов этого уровня
@@ -222,6 +254,10 @@ func make_noise(pos: Vector2, ttl: float) -> void:
 @onready var world_env: WorldEnvironment = $"../WorldEnvironment"
 @onready var dir_light: DirectionalLight3D = $"../DirectionalLight3D"
 @onready var fade_rect: ColorRect = $"../Fade/Black"
+@onready var items: Node = $"../Items"
+
+var matchpicks: Array = []   # {pos: Vector2, active: bool, mesh: MeshInstance3D} -- см. _place_pickups
+var rockpicks: Array = []
 
 func _ready() -> void:
 	randomize()
@@ -344,6 +380,7 @@ func _process(delta: float) -> void:
 	var p := Vector2(player.position.x, player.position.z)
 	if Input.is_action_just_pressed("interact"):
 		try_pickup_nearby(p)
+	_collect_pickups(p)
 	if keys_left == 0 and p.distance_to(exit_pos) < EXIT_DIST:
 		descend()
 	_update_shrine_hum(delta, p)
@@ -648,6 +685,8 @@ func _place_keys_and_exit() -> void:
 	for c in chests:
 		c.mesh.queue_free()
 	chests.clear()
+	matchpicks.clear()   # меши -- дети props_root, чистятся общей петлёй ниже
+	rockpicks.clear()
 	if exit_door_pivot:
 		exit_door_pivot.queue_free()   # тащит exit_mesh за собой -- он теперь его ребёнок
 		exit_door_pivot = null
@@ -707,6 +746,7 @@ func _place_keys_and_exit() -> void:
 	_place_lockers(exit_room_idx)
 	_place_doors()
 	_place_room_dressing()
+	_place_pickups(start.position + Vector2i(start.size.x / 2, start.size.y / 2))
 
 ## Дверь выхода -- прежде была просто цветной коробкой посреди комнаты.
 ## Теперь это свободностоящая рама (железные столбы + притолока), а плита
@@ -912,6 +952,87 @@ func _place_lockers(exit_room_idx: int) -> void:
 		mesh.position = Vector3(cx, 0.9, cy)
 		props_root.add_child(mesh)
 		player.lockers.append(mesh)
+
+## "a struck match doesn't survive the descent; scatter a few fresh ones" /
+## "rocks to throw as a lure; a fresh handful each floor" (gen.c) -- этой
+## части не было в Godot-порте вовсе: items.gd выдавал ровно 2 спички и
+## 2 камня один раз на весь забег (сброс только на новую игру, НЕ на
+## спуск), и подобрать добавочные было решительно негде -- level_gen ни
+## разу не клал predметы на пол. 2-3 спички и 2-3 камня на этаж, не ближе
+## 4 клеток (по Манхэттену) от старта -- как в C.
+func _place_pickups(start_cell: Vector2i) -> void:
+	var match_mat := StandardMaterial3D.new()
+	match_mat.albedo_texture = _matchbox_texture()
+	match_mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
+	var rock_mat := StandardMaterial3D.new()
+	rock_mat.albedo_texture = _rockpick_texture()
+	rock_mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
+
+	var mp: int = 2 + randi() % 2
+	var tries := 0
+	while matchpicks.size() < mp and tries < 400:
+		tries += 1
+		var x: int = 1 + randi() % (MW - 2)
+		var y: int = 1 + randi() % (MH - 2)
+		if not is_open(x, y) or absi(x - start_cell.x) + absi(y - start_cell.y) < 4:
+			continue
+		var pos := Vector2(x + 0.5, y + 0.5)
+		var mesh := MeshInstance3D.new()
+		mesh.mesh = BoxMesh.new()
+		mesh.mesh.size = Vector3(0.16, 0.06, 0.10)
+		mesh.material_override = match_mat
+		mesh.position = Vector3(pos.x, 0.06, pos.y)
+		mesh.rotation.y = randf() * TAU
+		props_root.add_child(mesh)
+		matchpicks.append({"pos": pos, "active": true, "mesh": mesh})
+
+	tries = 0
+	var rp: int = 2 + randi() % 2
+	while rockpicks.size() < rp and tries < 400:
+		tries += 1
+		var x: int = 1 + randi() % (MW - 2)
+		var y: int = 1 + randi() % (MH - 2)
+		if not is_open(x, y) or absi(x - start_cell.x) + absi(y - start_cell.y) < 4:
+			continue
+		var pos := Vector2(x + 0.5, y + 0.5)
+		var mesh := MeshInstance3D.new()
+		mesh.mesh = BoxMesh.new()
+		mesh.mesh.size = Vector3(0.14, 0.12, 0.14)
+		mesh.material_override = rock_mat
+		mesh.position = Vector3(pos.x, 0.06, pos.y)
+		mesh.rotation.y = randf() * TAU
+		props_root.add_child(mesh)
+		rockpicks.append({"pos": pos, "active": true, "mesh": mesh})
+
+## подбор спичек/камней на ходу, без E (см. PICKUP_DIST в main.c) -- звук
+## тот же pickup.wav, что и у ключей.
+func _collect_pickups(p: Vector2) -> void:
+	for m in matchpicks:
+		if not m.active:
+			continue
+		if p.distance_to(m.pos) < ITEM_PICKUP_DIST:
+			m.active = false
+			m.mesh.visible = false
+			items.match_count += 1
+			_play_pickup_sound(m.pos)
+	for r in rockpicks:
+		if not r.active:
+			continue
+		if p.distance_to(r.pos) < ITEM_PICKUP_DIST:
+			r.active = false
+			r.mesh.visible = false
+			items.rock_count += 1
+			_play_pickup_sound(r.pos)
+
+func _play_pickup_sound(pos: Vector2) -> void:
+	var snd := AudioStreamPlayer3D.new()
+	snd.stream = load("res://assets/pickup.wav")
+	snd.unit_size = 3.0
+	snd.max_distance = 12.0
+	snd.position = Vector3(pos.x, 0.3, pos.y)
+	props_root.add_child(snd)
+	snd.play()
+	snd.finished.connect(snd.queue_free)
 
 ## "качественное наполнение комнат" -- раньше кроме сундука/шкафчиков
 ## комнаты были пустыми коробками, разве что стены и пол. Раскидывает по
