@@ -7,6 +7,7 @@ extends Node
 const MW := 29
 const MH := 21
 const WALL_ITEM := 0
+const WALL_ITEMS := [0, 2, 3]   # три варианта текстуры стены, см. Biomes.WALL_RESOURCES
 const FLOOR_ITEM := 1
 const WALL_H := 2   # стены в две клетки высотой -- иначе игрок видит поверх них
 const TORCH_SPACING := 2.6   # совпадает с TORCH_SPACING в render.c
@@ -376,8 +377,12 @@ func _paint() -> void:
 				var neighbours_open: bool = is_open(x + 1, y) or is_open(x - 1, y) \
 					or is_open(x, y + 1) or is_open(x, y - 1)
 				if neighbours_open:
+					# один из трёх вариантов текстуры на весь столбец клетки --
+					# иначе одна и та же кладка, отштампованная по каждой грани
+					# коридора подряд, читается как явный повторяющийся тайл.
+					var item: int = WALL_ITEMS[randi() % WALL_ITEMS.size()]
 					for layer in range(WALL_H):
-						wall_map.set_cell_item(Vector3i(x, layer, y), WALL_ITEM)
+						wall_map.set_cell_item(Vector3i(x, layer, y), item)
 
 func _place_torches() -> void:
 	for t in torches:

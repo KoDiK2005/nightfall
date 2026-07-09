@@ -15,19 +15,33 @@ const BIOMES := [
 
 const TEX := 64
 
+## три материала стены (wall_material[_2/_3].tres, зарегистрированы в
+## tiles.tres как отдельные item -- см. level_gen.gd::_paint) вместо одного:
+## одна и та же кладка, отштампованная на каждую грань подряд, читалась как
+## явный повторяющийся тайл ("смешай текстуры стен"). Каждый вызов
+## _build_wall_texture кладёт свой случайный шум/трещины, так что три
+## материала выходят похожими, но не идентичными -- level_gen выбирает
+## между ними вперемешку по клеткам.
+const WALL_RESOURCES := [
+	"res://resources/wall_material.tres",
+	"res://resources/wall_material_2.tres",
+	"res://resources/wall_material_3.tres",
+]
+
 static func apply(depth: int) -> String:
 	var b: Dictionary = BIOMES[(depth - 1) % BIOMES.size()]
-	var wall_mat: StandardMaterial3D = load("res://resources/wall_material.tres")
 	var floor_mat: StandardMaterial3D = load("res://resources/floor_material.tres")
-	wall_mat.albedo_color = b.wall
 	floor_mat.albedo_color = b.floor
 	# порт build_textures (render.c): кладка с мортаром + трещины/пятна,
 	# усиливающиеся с глубиной -- раньше это были голые залитые цветом
 	# коробки без всякой текстуры. albedo_texture умножается на albedo_color
-	# выше, так что раскраска по биому остаётся той же системой, что и была.
+	# ниже, так что раскраска по биому остаётся той же системой, что и была.
 	var wear: float = clamp(float(depth - 1) / 12.0, 0.0, 1.0)
-	wall_mat.albedo_texture = _build_wall_texture(wear)
-	wall_mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
+	for path in WALL_RESOURCES:
+		var wall_mat: StandardMaterial3D = load(path)
+		wall_mat.albedo_color = b.wall
+		wall_mat.albedo_texture = _build_wall_texture(wear)
+		wall_mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
 	floor_mat.albedo_texture = _build_floor_texture(wear)
 	floor_mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
 	return b.name
