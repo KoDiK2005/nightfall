@@ -101,6 +101,55 @@ static func _ceramic_texture() -> ImageTexture:
 	_ceramic_tex = ImageTexture.create_from_image(img)
 	return _ceramic_tex
 
+static var _shingle_tex: ImageTexture = null
+static var _books_tex: ImageTexture = null
+
+## черепица крыши -- ряды внахлёст с индивидуальным оттенком на плитку,
+## вместо одной плоской заливки цветом.
+static func _shingle_texture() -> ImageTexture:
+	if _shingle_tex:
+		return _shingle_tex
+	var img := Image.create(HOUSE_TEX, HOUSE_TEX, false, Image.FORMAT_RGB8)
+	var row_h := 8
+	var tile_w := 10
+	for y in range(HOUSE_TEX):
+		var row := y / row_h
+		var ox := (tile_w / 2) if (row % 2 == 1) else 0
+		for x in range(HOUSE_TEX):
+			var seam: bool = ((x + ox) % tile_w) < 1 or (y % row_h) < 1
+			var tile_id: int = ((x + ox) / tile_w) * 100 + row
+			var shade: float = 0.85 + fmod(sin(float(tile_id) * 12.9898) * 43758.5453, 1.0) * 0.3
+			var base: float = 0.24 * shade
+			if seam:
+				base -= 0.08
+			base = max(base, 0.04)
+			img.set_pixel(x, y, Color(base * 1.3, base * 0.7, base * 0.55))
+	_shingle_tex = ImageTexture.create_from_image(img)
+	return _shingle_tex
+
+## корешки книг на полке -- цветные вертикальные полосы разной ширины
+## вместо голого дерева, чтобы стеллаж читался как книжный, а не ящик.
+static func _books_texture() -> ImageTexture:
+	if _books_tex:
+		return _books_tex
+	var img := Image.create(HOUSE_TEX, HOUSE_TEX, false, Image.FORMAT_RGB8)
+	var hues: Array = [
+		Color(0.45, 0.18, 0.15), Color(0.18, 0.30, 0.22), Color(0.20, 0.22, 0.42),
+		Color(0.40, 0.32, 0.14), Color(0.30, 0.18, 0.32), Color(0.15, 0.15, 0.15),
+	]
+	var x := 0
+	while x < HOUSE_TEX:
+		var w: int = 3 + (randi() % 4)
+		var c: Color = hues[randi() % hues.size()]
+		for xx in range(x, min(x + w, HOUSE_TEX)):
+			for y in range(HOUSE_TEX):
+				var shade: float = 0.9 + randf() * 0.15
+				var edge: bool = (xx == x) or y < 3 or y > HOUSE_TEX - 4
+				img.set_pixel(xx, y, c * shade if not edge else c * 0.6)
+		x += w
+	_books_tex = ImageTexture.create_from_image(img)
+	return _books_tex
+
 const DOOR_POS := Vector3(14.5, 0, 13.5)
 const MOTHER_POS := Vector3(14.5, 0, 14.6)
 const SPAWN_POS := Vector3(14.5, 0.1, 2.5)
@@ -399,8 +448,9 @@ func _place_lamps() -> void:
 ## плоская крыша-заглушка над каждым крылом -- проще ступенчатой из C-версии,
 ## но закрывает вид на небо изнутри дома.
 func _place_roof() -> void:
-	_prop(Vector3(20.0, 2.15, 22.0), Vector3(25.0, 0.3, 19.0), Color(0.30, 0.16, 0.13))
-	_prop(Vector3(43.5, 2.15, 6.5), Vector3(20.0, 0.3, 12.0), Color(0.30, 0.16, 0.13))
+	var shingle := _shingle_texture()
+	_prop_tex(Vector3(20.0, 2.15, 22.0), Vector3(25.0, 0.3, 19.0), shingle, Color(1.0, 1.0, 1.0))
+	_prop_tex(Vector3(43.5, 2.15, 6.5), Vector3(20.0, 0.3, 12.0), shingle, Color(1.0, 1.0, 1.0))
 
 ## подмножество place_ground_floor_furniture (story.c) -- по предмету на
 ## комнату вместо полного списка, для узнаваемости планировки.
@@ -432,6 +482,7 @@ func _place_ground_floor_furniture() -> void:
 	_prop_tex(Vector3(26.0, 0.2, 24.0), Vector3(1.0, 0.36, 0.6), wood, Color(0.8, 0.65, 0.5))        # журнальный столик
 	_prop_tex(Vector3(26.5, 0.02, 27.0), Vector3(4.0, 0.04, 3.0), fabric, Color(0.4, 0.28, 0.42))    # ковёр у дивана
 	_prop_tex(Vector3(30.5, 0.55, 18.0), Vector3(0.4, 1.6, 1.8), wood, Color(0.6, 0.48, 0.36))       # книжный стеллаж
+	_prop_tex(Vector3(30.28, 0.6, 18.0), Vector3(0.05, 1.3, 1.6), _books_texture(), Color(1.0, 1.0, 1.0))  # книги на полке
 
 ## беседка на лужайке -- порт place_gazebo (story.c): четыре столба и
 ## плоская крыша, чисто декор, без коллизии (как и вся прочая мебель тут).
@@ -458,11 +509,12 @@ func _place_car_and_clothesline() -> void:
 	var clx0 := 17.0
 	var clx1 := 20.0
 	var clz := 33.5
-	var pole_color := Color(0.30, 0.22, 0.16)
-	_prop(Vector3(clx0, 0.5, clz), Vector3(0.1, 1.0, 0.1), pole_color)
-	_prop(Vector3(clx1, 0.5, clz), Vector3(0.1, 1.0, 0.1), pole_color)
+	var wood := _gazebo_wood_texture()
+	var fabric := _fabric_texture()
+	_prop_tex(Vector3(clx0, 0.5, clz), Vector3(0.1, 1.0, 0.1), wood, Color(0.75, 0.6, 0.45))
+	_prop_tex(Vector3(clx1, 0.5, clz), Vector3(0.1, 1.0, 0.1), wood, Color(0.75, 0.6, 0.45))
 	_prop(Vector3((clx0 + clx1) / 2.0, 0.985, clz), Vector3(clx1 - clx0, 0.03, 0.04), Color(0.55, 0.52, 0.46))   # провисшая верёвка
-	_prop(Vector3(clx0 + 0.6, 0.825, clz), Vector3(0.28, 0.25, 0.06), Color(0.62, 0.60, 0.55))                   # тряпка на ней
+	_prop_tex(Vector3(clx0 + 0.6, 0.825, clz), Vector3(0.28, 0.25, 0.06), fabric, Color(0.85, 0.85, 0.85))       # тряпка на ней
 
 ## подмножество place_upper_floor_furniture (story.c).
 func _place_upper_floor_furniture() -> void:
