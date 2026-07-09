@@ -260,6 +260,40 @@ func _process(delta: float) -> void:
 		try_pickup_nearby(p)
 	if keys_left == 0 and p.distance_to(exit_pos) < EXIT_DIST:
 		descend()
+	_update_shrine_hum(delta, p)
+
+## "золотой компас-чутьё на ключи" из README -- звуковая половина: тихий
+## гул у ближайшего непройденного сундука (порт play_positional(CH_SHRINE,
+## ...) из audio.c), громче по мере приближения. shrine.wav лежал
+## неиспользованным.
+var _shrine_player: AudioStreamPlayer3D = null
+var _shrine_timer: float = 0.0
+func _update_shrine_hum(delta: float, p: Vector2) -> void:
+	_shrine_timer -= delta
+	if _shrine_timer > 0.0:
+		return
+	var nearest_pos := Vector2.ZERO
+	var best_d := INF
+	for c in chests:
+		if not c.active:
+			continue
+		var d: float = p.distance_to(c.pos)
+		if d < best_d:
+			best_d = d
+			nearest_pos = c.pos
+	if best_d > 12.0:
+		_shrine_timer = 1.0
+		return
+	if _shrine_player == null:
+		_shrine_player = AudioStreamPlayer3D.new()
+		_shrine_player.stream = load("res://assets/shrine.wav")
+		_shrine_player.unit_size = 3.0
+		_shrine_player.max_distance = 12.0
+		props_root.add_child(_shrine_player)
+	_shrine_player.position = Vector3(nearest_pos.x, 0.4, nearest_pos.y)
+	_shrine_player.volume_db = linear_to_db(clamp(1.0 - best_d / 12.0, 0.1, 1.0))
+	_shrine_player.play()
+	_shrine_timer = lerp(6.0, 2.0, clamp(1.0 - best_d / 12.0, 0.0, 1.0))
 
 ## подобрать ключ из сундука, если игрок рядом с активным (вынесено из
 ## _process, чтобы дёргать и из самотеста без эмуляции ввода)
@@ -468,6 +502,7 @@ func _place_keys_and_exit() -> void:
 		exit_mesh = null
 	for child in props_root.get_children():
 		child.queue_free()
+	_shrine_player = null   # тоже был ребёнком props_root -- та же чистка
 
 	num_keys = min(3 + (GameState.depth - 1) / 3, MAX_KEYS)
 	keys_left = num_keys
