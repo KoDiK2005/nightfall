@@ -139,7 +139,7 @@ func _place_notes() -> void:
 func _unhandled_input(event: InputEvent) -> void:
 	if GameState.state != GameState.State.PLAY:
 		return
-	if event is InputEventAction and event.action == "interact" and event.pressed:
+	if event.is_action_pressed("interact"):
 		if reading:
 			reading = false
 			panel.visible = false

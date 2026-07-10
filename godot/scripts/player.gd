@@ -84,7 +84,7 @@ func _unhandled_input(event: InputEvent) -> void:
 		rotate_y(-event.relative.x * mouse_sens)
 		pitch = clamp(pitch - event.relative.y * mouse_sens, -1.45, 1.45)
 		camera.rotation.x = pitch
-	if event is InputEventAction and event.action == "interact" and event.pressed:
+	if event.is_action_pressed("interact"):
 		_try_interact()
 
 func _try_interact() -> void:

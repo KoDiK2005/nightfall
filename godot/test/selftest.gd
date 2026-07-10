@@ -145,6 +145,29 @@ func _run() -> void:
 	var total_repeat: int = items.match_count + items.rock_count + items.flare_count + items.wrap_count
 	check(total_repeat == total_after, "повторный обыск того же ящика ничего не даёт")
 
+	# 7b) реальный путь ввода E, а не прямой вызов метода: раньше player.gd/
+	# notes.gd/story_level.gd проверяли "event is InputEventAction", а
+	# физическое нажатие клавиши в Godot всегда приходит как InputEventKey
+	# -- условие никогда не выполнялось в настоящей игре (E не открывал
+	# шкафчик/ящик/алтарь/записку), но самотесты этого не ловили, потому что
+	# дёргали try_pickup_nearby/search_crate/pray_at_altar напрямую в обход
+	# _unhandled_input. Строим настоящий InputEventKey и гоняем его через
+	# реальный обработчик записки, чтобы этот класс бага больше не проходил
+	# незамеченным (тот же приём, что уже использует selftest_pause.gd).
+	var notes_node: Node = main.find_child("Notes", true, false)
+	if notes_node and not notes_node.notes.is_empty():
+		var note: Dictionary = notes_node.notes[0]
+		player.position = Vector3(note.pos.x, 0.1, note.pos.y)
+		await process_frame
+		check(not notes_node.near_note.is_empty(), "игрок у записки -- near_note выставлен")
+		var e_key := InputEventKey.new()
+		e_key.physical_keycode = KEY_E
+		e_key.pressed = true
+		notes_node._unhandled_input(e_key)
+		check(notes_node.reading, "настоящее нажатие E (InputEventKey) открывает записку")
+		notes_node._unhandled_input(e_key)
+		check(not notes_node.reading, "повторное нажатие E закрывает записку")
+
 	# 8) алтарь: один гарантированный на этаж, молитва один раз поднимает
 	# рассудок и гасит себя
 	check(not lg.altar.is_empty(), "алтарь сгенерирован на этаже")

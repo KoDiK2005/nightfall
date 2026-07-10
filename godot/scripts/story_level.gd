@@ -205,7 +205,7 @@ func _ready() -> void:
 func _unhandled_input(event: InputEvent) -> void:
 	if GameState.mode != GameState.Mode.STORY or GameState.state != GameState.State.PLAY:
 		return
-	if event is InputEventAction and event.action == "interact" and event.pressed:
+	if event.is_action_pressed("interact"):
 		skip_line()
 
 func _on_mode_changed(new_mode: GameState.Mode) -> void:
