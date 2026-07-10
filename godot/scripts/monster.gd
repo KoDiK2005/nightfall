@@ -305,10 +305,14 @@ func _sense(delta: float) -> void:
 	# farther" (ai.c) -- раньше слух зависел только от глубины, страх самого
 	# игрока никак его не подводил ближе, хотя рассудок уже тает от охоты.
 	var dread: float = 1.0 - player.sanity
+	# обмотки (items.gd::_wrap_feet) -- единственный прямой контрприём
+	# против Слухача, у которого зрение не участвует вовсе: приглушают
+	# собственные шаги, а не пытаются перекричать его слух приманкой.
+	var muffle: float = 0.35 if player.muffled else 1.0
 
 	if mon_type == MonType.LISTENER:
 		# слепой -- зрение не участвует вовсе, только гораздо более острый слух
-		var hear := (LISTENER_HEAR_RUN if speed > 3.5 else LISTENER_HEAR_WALK) * (1.0 + w * 0.3) * (1.0 + dread * 0.4)
+		var hear := (LISTENER_HEAR_RUN if speed > 3.5 else LISTENER_HEAR_WALK) * (1.0 + w * 0.3) * (1.0 + dread * 0.4) * muffle
 		if speed > 0.5 and d < hear:
 			sensed = true
 	elif mon_type == MonType.WATCHER:
@@ -323,7 +327,7 @@ func _sense(delta: float) -> void:
 		if d < see_range and _has_los(ppos):
 			sensed = true
 		else:
-			var hear := (HEAR_RUN if speed > 3.5 else HEAR_WALK) * (1.0 + w * 0.3) * (1.0 + dread * 0.5)
+			var hear := (HEAR_RUN if speed > 3.5 else HEAR_WALK) * (1.0 + w * 0.3) * (1.0 + dread * 0.5) * muffle
 			if speed > 0.5 and d < hear:
 				sensed = true
 

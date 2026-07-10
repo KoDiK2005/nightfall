@@ -32,6 +32,7 @@ static var _web_tex: ImageTexture = null
 static var _matchbox_tex: ImageTexture = null
 static var _rockpick_tex: ImageTexture = null
 static var _flarepick_tex: ImageTexture = null
+static var _wrappick_tex: ImageTexture = null
 static var _key_icon_tex: ImageTexture = null
 
 ## дощатый косяк дверного проёма -- та же идея, что и у мебели в
@@ -262,6 +263,22 @@ static func _flarepick_texture() -> ImageTexture:
 	_flarepick_tex = ImageTexture.create_from_image(img)
 	return _flarepick_tex
 
+## свёрток обмоток -- тусклая пыльная холстина с полосами бинтования,
+## заметно бледнее камня/спички, чтобы силуэт узла читался, а не терялся
+## пятном того же тона, что и щебень.
+static func _wrappick_texture() -> ImageTexture:
+	if _wrappick_tex:
+		return _wrappick_tex
+	const TEX := 32
+	var img := Image.create(TEX, TEX, false, Image.FORMAT_RGB8)
+	for y in range(TEX):
+		for x in range(TEX):
+			var band: bool = (int(x * 0.6 + y * 0.9)) % 6 < 2
+			var v: float = (0.62 if band else 0.5) + randf() * 0.05
+			img.set_pixel(x, y, Color(v * 0.92, v * 0.86, v * 0.72))
+	_wrappick_tex = ImageTexture.create_from_image(img)
+	return _wrappick_tex
+
 var map: Array = []   # map[y][x] == true, если клетка открыта (пол)
 var rooms: Array = [] # Rect2i(x, y, w, h) на каждую комнату
 var torches: Array = []   # Node3D-инстансы факелов этого уровня
@@ -336,6 +353,7 @@ func _add_prop_collision(mesh: MeshInstance3D, pos: Vector3, size: Vector3) -> N
 var matchpicks: Array = []   # {pos: Vector2, active: bool, mesh: MeshInstance3D} -- см. _place_pickups
 var rockpicks: Array = []
 var flarepicks: Array = []
+var wrappicks: Array = []
 
 func _ready() -> void:
 	randomize()
@@ -827,6 +845,7 @@ func _place_keys_and_exit() -> void:
 	matchpicks.clear()   # меши -- дети props_root, чистятся общей петлёй ниже
 	rockpicks.clear()
 	flarepicks.clear()
+	wrappicks.clear()
 	if exit_door_pivot:
 		exit_door_pivot.queue_free()   # тащит exit_mesh за собой -- он теперь его ребёнок
 		exit_door_pivot = null
@@ -1285,8 +1304,36 @@ func _place_pickups(start_cell: Vector2i) -> void:
 			props_root.add_child(mesh)
 			flarepicks.append({"pos": pos, "active": true, "mesh": mesh})
 
-## подбор спичек/камней/шашек на ходу, без E (см. PICKUP_DIST в main.c) --
-## звук тот же pickup.wav, что и у ключей.
+	# обмотки -- тоже редкие и максимум одни за раз, как шашка: защитный
+	# предмет, а не расходник вроде спичек/камней.
+	if randf() < 0.55:
+		var wrap_mat := StandardMaterial3D.new()
+		wrap_mat.albedo_texture = _wrappick_texture()
+		wrap_mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
+		wrap_mat.roughness = 1.0
+		wrap_mat.emission_enabled = true
+		wrap_mat.emission = Color(0.3, 0.28, 0.22)
+		wrap_mat.emission_energy_multiplier = 0.15
+		tries = 0
+		while wrappicks.size() < 1 and tries < 400:
+			tries += 1
+			var x: int = 1 + randi() % (MW - 2)
+			var y: int = 1 + randi() % (MH - 2)
+			if not is_open(x, y) or absi(x - start_cell.x) + absi(y - start_cell.y) < 4:
+				continue
+			var pos := Vector2(x + 0.5, y + 0.5)
+			var mesh := MeshInstance3D.new()
+			mesh.mesh = BoxMesh.new()
+			mesh.mesh.size = Vector3(0.22, 0.09, 0.16)
+			mesh.material_override = wrap_mat
+			mesh.position = Vector3(pos.x, 0.075, pos.y)
+			mesh.rotation.y = randf() * TAU
+			_add_beacon(mesh, Color(0.75, 0.7, 0.6), 0.3, 1.6, 0.1)
+			props_root.add_child(mesh)
+			wrappicks.append({"pos": pos, "active": true, "mesh": mesh})
+
+## подбор спичек/камней/шашек/обмоток на ходу, без E (см. PICKUP_DIST в
+## main.c) -- звук тот же pickup.wav, что и у ключей.
 func _collect_pickups(p: Vector2) -> void:
 	for m in matchpicks:
 		if not m.active:
@@ -1312,6 +1359,14 @@ func _collect_pickups(p: Vector2) -> void:
 			fl.mesh.visible = false
 			items.flare_count += 1
 			_play_pickup_sound(fl.pos)
+	for wr in wrappicks:
+		if not wr.active:
+			continue
+		if p.distance_to(wr.pos) < ITEM_PICKUP_DIST:
+			wr.active = false
+			wr.mesh.visible = false
+			items.wrap_count += 1
+			_play_pickup_sound(wr.pos)
 
 ## "маячок" на подбираемых предметах -- этаж намеренно почти чёрный всюду,
 ## кроме пятен света у факелов (см. _setup_dungeon_env), и одной лишь

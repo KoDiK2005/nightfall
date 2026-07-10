@@ -102,7 +102,17 @@ func _run() -> void:
 	var flare_noise_pos: Vector2 = lg.noise_pos
 	check(flare_noise_pos.distance_to(Vector2(flare_pos.x, flare_pos.z)) < 0.01, "шум шашки -- ровно на месте броска")
 
-	# 5) поимка: ставим игрока вплотную к монстру -- физика должна поймать
+	# 5) обмотки: тратят счётчик, выставляют player.muffled на время действия
+	check(items.wrap_count == 1, "стартовый запас обмоток -- 1")
+	items._wrap_feet()
+	check(items.wrap_count == 0, "использование обмоток тратит счётчик")
+	await process_frame
+	check(player.muffled, "обмотки выставляют player.muffled")
+	items.wrap_burn = 0.0
+	await process_frame
+	check(not player.muffled, "player.muffled снимается, когда обмотки догорели")
+
+	# 6) поимка: ставим игрока вплотную к монстру -- физика должна поймать
 	var mon: Node = player.monster
 	player.hidden = false
 	player.position = mon.position
