@@ -17,6 +17,7 @@ extends CanvasLayer
 @onready var postfx: ColorRect = $PostFX
 @onready var hidden_overlay: ColorRect = $HiddenOverlay
 @onready var hidden_label: Label = $HiddenLabel
+@onready var search_prompt: Label = $SearchPrompt
 
 var level_gen: Node = null
 var player: CharacterBody3D = null
@@ -190,6 +191,10 @@ func _process(delta: float) -> void:
 	# замирал на виде из шкафчика, неотличимом от обычного зависания игры.
 	hidden_overlay.visible = player.hidden
 	hidden_label.visible = player.hidden
+	# подсказка появляется только пока рядом с ещё не обысканным ящиком --
+	# без неё обыскиваемые ящики ничем не отличались бы для игрока от
+	# декоративных, кроме тусклого маячка, который легко не заметить.
+	search_prompt.visible = not player.hidden and not player.near_crate.is_empty()
 	stamina_bar.value = player.stamina * 100.0
 	sanity_bar.value = player.sanity * 100.0
 	var dread: float = 1.0 - player.sanity

@@ -112,7 +112,22 @@ func _run() -> void:
 	await process_frame
 	check(not player.muffled, "player.muffled снимается, когда обмотки догорели")
 
-	# 6) поимка: ставим игрока вплотную к монстру -- физика должна поймать
+	# 6) обыскиваемый ящик: даёт ровно один расходник и деактивируется --
+	# спавн реальных supply_crates рандомный (макс. 2 на этаж), поэтому тут
+	# подсовываем фиктивную запись напрямую в search_crate, а не полагаемся
+	# на то, что этому конкретно сгенерированному этажу повезло с ящиком.
+	var dummy_mesh := MeshInstance3D.new()
+	var fake_crate := {"pos": Vector2(lg.exit_pos.x, lg.exit_pos.y), "active": true, "mesh": dummy_mesh}
+	var total_before: int = items.match_count + items.rock_count + items.flare_count + items.wrap_count
+	lg.search_crate(fake_crate)
+	check(not fake_crate.active, "обыск ящика деактивирует запись")
+	var total_after: int = items.match_count + items.rock_count + items.flare_count + items.wrap_count
+	check(total_after == total_before + 1, "обыск ящика выдаёт ровно один расходник")
+	lg.search_crate(fake_crate)
+	var total_repeat: int = items.match_count + items.rock_count + items.flare_count + items.wrap_count
+	check(total_repeat == total_after, "повторный обыск того же ящика ничего не даёт")
+
+	# 7) поимка: ставим игрока вплотную к монстру -- физика должна поймать
 	var mon: Node = player.monster
 	player.hidden = false
 	player.position = mon.position

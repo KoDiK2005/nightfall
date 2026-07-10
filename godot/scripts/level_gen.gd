@@ -354,6 +354,7 @@ var matchpicks: Array = []   # {pos: Vector2, active: bool, mesh: MeshInstance3D
 var rockpicks: Array = []
 var flarepicks: Array = []
 var wrappicks: Array = []
+var supply_crates: Array = []   # {pos: Vector2, active: bool, mesh: MeshInstance3D} -- см. _spawn_crate
 
 func _ready() -> void:
 	randomize()
@@ -846,6 +847,7 @@ func _place_keys_and_exit() -> void:
 	rockpicks.clear()
 	flarepicks.clear()
 	wrappicks.clear()
+	supply_crates.clear()
 	if exit_door_pivot:
 		exit_door_pivot.queue_free()   # тащит exit_mesh за собой -- он теперь его ребёнок
 		exit_door_pivot = null
@@ -1454,7 +1456,11 @@ func _place_room_dressing() -> void:
 			if roll < 0.4:
 				_spawn_rubble(pos, rubble_mat)
 			elif roll < 0.7:
-				_spawn_crate(pos, crate_mat)
+				# не каждый ящик стоит обыскивать -- иначе "обыщи всё подряд"
+				# обесценивает саму находку. Максимум 2 обыскиваемых на этаж,
+				# остальные -- чистый декор, как и раньше.
+				var supply: bool = supply_crates.size() < 2 and randf() < 0.3
+				_spawn_crate(pos, crate_mat, supply)
 			else:
 				_spawn_bones(pos, bone_mat)
 		# паутина в углу у потолка -- туда взгляд заходит редко, самое
@@ -1508,7 +1514,13 @@ func _spawn_rubble(pos: Vector2, mat: StandardMaterial3D) -> void:
 		mesh.rotation.y = randf() * TAU
 		props_root.add_child(mesh)
 
-func _spawn_crate(pos: Vector2, mat: StandardMaterial3D) -> void:
+## is_supply: часть ящиков (максимум 2 за этаж, см. вызов выше) прячут
+## внутри бонусный расходник (спичка/камень/шашка/обмотки) -- обыскиваются
+## по E, как шкафчик, но не занимают collision-слой шкафчиков (то же
+## взаимодействие, другой набор объектов, см. player.gd::near_crate).
+## Отмечены тёплым маячком, как сундук/подбираемые предметы -- иначе
+## неотличимы от десятков чисто декоративных ящиков в комнате.
+func _spawn_crate(pos: Vector2, mat: StandardMaterial3D, is_supply: bool = false) -> void:
 	var mesh := MeshInstance3D.new()
 	mesh.mesh = BoxMesh.new()
 	var crate_size := Vector3(0.5, 0.5, 0.5)
@@ -1527,6 +1539,30 @@ func _spawn_crate(pos: Vector2, mat: StandardMaterial3D) -> void:
 		mesh2.position = Vector3(pos.x + randf_range(-0.06, 0.06), 0.5 + 0.19, pos.y + randf_range(-0.06, 0.06))
 		mesh2.rotation.y = randf() * TAU
 		props_root.add_child(mesh2)
+	if is_supply:
+		_add_beacon(mesh, Color(1.0, 0.82, 0.35), 0.4, 2.0, 0.32)
+		supply_crates.append({"pos": pos, "active": true, "mesh": mesh})
+
+## обыск ящика по E (см. player.gd::_try_interact/near_crate) -- гасит
+## маячок и один раз выдаёт случайный расходник, тем же звуком, что и
+## подбор на ходу.
+func search_crate(entry: Dictionary) -> void:
+	if not entry.active:
+		return
+	entry.active = false
+	for child in entry.mesh.get_children():
+		if child is OmniLight3D:
+			child.visible = false
+	var roll := randf()
+	if roll < 0.4:
+		items.match_count += 1
+	elif roll < 0.7:
+		items.rock_count += 1
+	elif roll < 0.85:
+		items.flare_count += 1
+	else:
+		items.wrap_count += 1
+	_play_pickup_sound(entry.pos)
 
 func _spawn_bones(pos: Vector2, mat: StandardMaterial3D) -> void:
 	var n := 3 + randi() % 3
@@ -1570,6 +1606,14 @@ func _spawn_player() -> void:
 		player.look_at(Vector3(exit_pos.x, 0.9, exit_pos.y), Vector3.UP)
 		hud_changed.emit()
 		_open_exit_door()
+
+	# dev-хук NIGHTFALL_SHOWCRATE: встать перед первым обыскиваемым ящиком
+	# этажа (см. _spawn_crate::is_supply) -- их максимум 2 на этаж и позиция
+	# случайна, вручную дойти для скриншота неудобно.
+	if OS.get_environment("NIGHTFALL_SHOWCRATE") != "" and not supply_crates.is_empty():
+		var sc = supply_crates[0]
+		player.position = Vector3(sc.pos.x - 0.9, 0.9, sc.pos.y)
+		player.look_at(Vector3(sc.pos.x, 0.9, sc.pos.y), Vector3.UP)
 
 ## сориентировать игрока в самую открытую из четырёх сторон -- считаем,
 ## сколько клеток пола подряд тянется от спавна, и смотрим туда (иначе

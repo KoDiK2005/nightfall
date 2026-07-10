@@ -10,6 +10,7 @@ extends CharacterBody3D
 const STAM_DRAIN := 0.34
 const STAM_REGEN := 0.22 / 3.0   # втрое медленнее -- см. память про C-версию
 const HIDE_DIST := 1.0
+const CRATE_DIST := 1.1
 const ACCEL := 11.0   # порт "eased accel (11/s start, 14/s stop)" из C -- разгон/торможение,
 const DECEL := 14.0   # а не мгновенная смена скорости, как было раньше
 
@@ -20,6 +21,7 @@ var stamina: float = 1.0
 var exhausted: bool = false
 var hidden: bool = false
 var near_locker: Node3D = null
+var near_crate: Dictionary = {}   # запись из level_gen.supply_crates, пока в радиусе обыска
 var lockers: Array = []   # заполняется level_gen'ом после генерации уровня
 var sanity: float = 1.0
 var tension: float = 0.0   # см. _update_sanity -- непрерывная тревога по дистанции до монстра
@@ -92,6 +94,10 @@ func _try_interact() -> void:
 		# внутри собственной солидной мебели. Возвращается выше при выходе.
 		set_collision_mask_value(8, false)
 		global_position = near_locker.global_position
+		return
+	if not near_crate.is_empty() and level_gen:
+		level_gen.search_crate(near_crate)
+		near_crate = {}
 
 func _physics_process(delta: float) -> void:
 	if GameState.state != GameState.State.PLAY:
@@ -99,12 +105,23 @@ func _physics_process(delta: float) -> void:
 		return
 
 	near_locker = null
+	near_crate = {}
 	if not hidden:
 		var p := Vector2(global_position.x, global_position.z)
 		for l in lockers:
 			if p.distance_to(Vector2(l.global_position.x, l.global_position.z)) < HIDE_DIST:
 				near_locker = l
 				break
+		# обыскиваемые ящики (level_gen.gd::search_crate) -- та же клавиша E,
+		# что и у шкафчиков, но не взаимный exclusive-выбор: если игрок
+		# одновременно у шкафчика и ящика, приоритет прятке (см. _try_interact).
+		if level_gen:
+			for c in level_gen.supply_crates:
+				if not c.active:
+					continue
+				if p.distance_to(c.pos) < CRATE_DIST:
+					near_crate = c
+					break
 
 	if hidden:
 		# раньше ранний return тут обрывал кадр ДО _update_sanity() ниже --
