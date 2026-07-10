@@ -31,6 +31,7 @@ static var _bone_tex: ImageTexture = null
 static var _web_tex: ImageTexture = null
 static var _matchbox_tex: ImageTexture = null
 static var _rockpick_tex: ImageTexture = null
+static var _flarepick_tex: ImageTexture = null
 static var _key_icon_tex: ImageTexture = null
 
 ## дощатый косяк дверного проёма -- та же идея, что и у мебели в
@@ -245,6 +246,22 @@ static func _rockpick_texture() -> ImageTexture:
 	_rockpick_tex = ImageTexture.create_from_image(img)
 	return _rockpick_tex
 
+## сигнальная шашка на полу, ещё не поднятая -- бумажная гильза, красная,
+## как и все сигнальные ракеты, с торцевой полоской запала потемнее.
+static func _flarepick_texture() -> ImageTexture:
+	if _flarepick_tex:
+		return _flarepick_tex
+	const TEX := 32
+	var img := Image.create(TEX, TEX, false, Image.FORMAT_RGB8)
+	for y in range(TEX):
+		for x in range(TEX):
+			var tip: bool = y < 6
+			var v: float = 0.5 + randf() * 0.06
+			var c: Color = Color(0.12, 0.11, 0.10) if tip else Color(v * 0.85, v * 0.12, v * 0.08)
+			img.set_pixel(x, y, c)
+	_flarepick_tex = ImageTexture.create_from_image(img)
+	return _flarepick_tex
+
 var map: Array = []   # map[y][x] == true, если клетка открыта (пол)
 var rooms: Array = [] # Rect2i(x, y, w, h) на каждую комнату
 var torches: Array = []   # Node3D-инстансы факелов этого уровня
@@ -318,6 +335,7 @@ func _add_prop_collision(mesh: MeshInstance3D, pos: Vector3, size: Vector3) -> N
 
 var matchpicks: Array = []   # {pos: Vector2, active: bool, mesh: MeshInstance3D} -- см. _place_pickups
 var rockpicks: Array = []
+var flarepicks: Array = []
 
 func _ready() -> void:
 	randomize()
@@ -808,6 +826,7 @@ func _place_keys_and_exit() -> void:
 	chests.clear()
 	matchpicks.clear()   # меши -- дети props_root, чистятся общей петлёй ниже
 	rockpicks.clear()
+	flarepicks.clear()
 	if exit_door_pivot:
 		exit_door_pivot.queue_free()   # тащит exit_mesh за собой -- он теперь его ребёнок
 		exit_door_pivot = null
@@ -1235,8 +1254,39 @@ func _place_pickups(start_cell: Vector2i) -> void:
 		props_root.add_child(mesh)
 		rockpicks.append({"pos": pos, "active": true, "mesh": mesh})
 
-## подбор спичек/камней на ходу, без E (см. PICKUP_DIST в main.c) -- звук
-## тот же pickup.wav, что и у ключей.
+	# шашка -- редкий предмет: не каждый этаж, максимум одна за раз, в
+	# отличие от 2-3 спичек/камней. Приманка сильная (тянет монстра на
+	# 16с непрерывно), поэтому не должна быть таким же расходником.
+	if randf() < 0.6:
+		var flare_mat := StandardMaterial3D.new()
+		flare_mat.albedo_texture = _flarepick_texture()
+		flare_mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
+		flare_mat.emission_enabled = true
+		flare_mat.emission = Color(0.55, 0.1, 0.05)
+		flare_mat.emission_energy_multiplier = 0.22
+		tries = 0
+		while flarepicks.size() < 1 and tries < 400:
+			tries += 1
+			var x: int = 1 + randi() % (MW - 2)
+			var y: int = 1 + randi() % (MH - 2)
+			if not is_open(x, y) or absi(x - start_cell.x) + absi(y - start_cell.y) < 4:
+				continue
+			var pos := Vector2(x + 0.5, y + 0.5)
+			var mesh := MeshInstance3D.new()
+			mesh.mesh = CylinderMesh.new()
+			mesh.mesh.top_radius = 0.05
+			mesh.mesh.bottom_radius = 0.05
+			mesh.mesh.height = 0.22
+			mesh.material_override = flare_mat
+			mesh.position = Vector3(pos.x, 0.11, pos.y)
+			mesh.rotation.y = randf() * TAU
+			mesh.rotation.x = deg_to_rad(90)   # лежит на боку, как выроненная гильза
+			_add_beacon(mesh, Color(1.0, 0.35, 0.1), 0.4, 1.8, 0.12)
+			props_root.add_child(mesh)
+			flarepicks.append({"pos": pos, "active": true, "mesh": mesh})
+
+## подбор спичек/камней/шашек на ходу, без E (см. PICKUP_DIST в main.c) --
+## звук тот же pickup.wav, что и у ключей.
 func _collect_pickups(p: Vector2) -> void:
 	for m in matchpicks:
 		if not m.active:
@@ -1254,6 +1304,14 @@ func _collect_pickups(p: Vector2) -> void:
 			r.mesh.visible = false
 			items.rock_count += 1
 			_play_pickup_sound(r.pos)
+	for fl in flarepicks:
+		if not fl.active:
+			continue
+		if p.distance_to(fl.pos) < ITEM_PICKUP_DIST:
+			fl.active = false
+			fl.mesh.visible = false
+			items.flare_count += 1
+			_play_pickup_sound(fl.pos)
 
 ## "маячок" на подбираемых предметах -- этаж намеренно почти чёрный всюду,
 ## кроме пятен света у факелов (см. _setup_dungeon_env), и одной лишь

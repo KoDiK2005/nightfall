@@ -1,14 +1,18 @@
 extends Node
-## Спички и камни -- порт соответствующих кусков main.c/render.c.
-## Спичка: F зажигает временный источник света, но выдаёт тебя монстру
-## (see_range растёт). Камень: G бросает его по направлению взгляда,
+## Спички, камни и сигнальные шашки -- порт соответствующих кусков
+## main.c/render.c плюс новый предмет-приманка (шашка), которого в C-версии
+## не было. Спичка: F зажигает временный источник света, но выдаёт тебя
+## монстру (see_range растёт). Камень: G бросает его по направлению взгляда,
 ## удар о стену создаёт шум, который слышит/расследует монстр (make_noise
-## в gen.c/ai.c) -- удобная приманка в сторону от себя.
+## в gen.c/ai.c) -- удобная приманка в сторону от себя. Шашка: H втыкает её
+## в пол под ногами -- она сама шумит и светит, пока горит (см. flare.gd),
+## так что расследующий монстр идёт на неё, а не по твоему следу.
 
 const MATCH_DUR := 6.0
 const ROCK_MAX_RANGE := 6.0
 const ROCK_FLY_DUR := 0.5
 const ROCK_NOISE_TTL := 4.0
+const FLARE_SCENE := preload("res://scenes/flare.tscn")
 
 @onready var player: CharacterBody3D = $"../Player"
 @onready var level_gen: Node = $"../LevelGen"
@@ -17,6 +21,7 @@ const ROCK_NOISE_TTL := 4.0
 var match_count: int = 2
 var match_burn: float = 0.0
 var rock_count: int = 2
+var flare_count: int = 1
 
 func _ready() -> void:
 	GameState.state_changed.connect(_on_state_changed)
@@ -26,6 +31,7 @@ func _on_state_changed(new_state: GameState.State) -> void:
 	if new_state == GameState.State.PLAY:
 		match_count = 2
 		rock_count = 2
+		flare_count = 1
 		match_burn = 0.0
 		match_light.visible = false
 
@@ -33,13 +39,15 @@ func _unhandled_input(event: InputEvent) -> void:
 	if GameState.state != GameState.State.PLAY or player.hidden:
 		return
 	# physical_keycode, а не keycode -- у пользователя раскладка ЙЦУКЕН, и
-	# по keycode физическая F/G отдавала бы кириллицу (см. память про
+	# по keycode физическая F/G/H отдавала бы кириллицу (см. память про
 	# sdl-input-scancodes). Совпадает с тем, как заданы действия move_*/run.
 	if event is InputEventKey and event.pressed and not event.echo:
 		if event.physical_keycode == KEY_F:
 			_strike_match()
 		elif event.physical_keycode == KEY_G:
 			_throw_rock()
+		elif event.physical_keycode == KEY_H:
+			_drop_flare()
 
 func _strike_match() -> void:
 	if match_count <= 0 or match_burn > 0.0:
@@ -81,6 +89,15 @@ func _throw_rock() -> void:
 	level_gen.props_root.add_child(thud)
 	thud.play()
 	thud.finished.connect(thud.queue_free)
+
+func _drop_flare() -> void:
+	if flare_count <= 0:
+		return
+	flare_count -= 1
+	var flare := FLARE_SCENE.instantiate()
+	flare.position = Vector3(player.position.x, 0.02, player.position.z)
+	level_gen.props_root.add_child(flare)
+	flare.setup(level_gen)
 
 func _process(delta: float) -> void:
 	if match_burn > 0.0:

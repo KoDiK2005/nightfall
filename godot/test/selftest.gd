@@ -88,7 +88,21 @@ func _run() -> void:
 	check(lg.keys_left == lg.num_keys, "новый этаж выдал свежий набор ключей")
 	check(player.sanity < 0.9, "рассудок не сбрасывается спуском на новый этаж (%.3f)" % player.sanity)
 
-	# 4) поимка: ставим игрока вплотную к монстру -- физика должна поймать
+	# 4) шашка: втыкается на месте игрока, тратит счётчик, тянет noise на себя
+	var items: Node = main.get_node("Items")
+	check(items.flare_count == 1, "стартовый запас шашек -- 1")
+	var flare_pos := Vector3(player.position.x, 0.02, player.position.z)
+	player.position = flare_pos
+	var flares_before: int = lg.props_root.get_child_count()
+	lg.noise_t = 0.0   # старый шум (от сбора ключей выше) не должен маскировать шум шашки
+	items._drop_flare()
+	check(items.flare_count == 0, "бросок шашки тратит счётчик")
+	check(lg.props_root.get_child_count() == flares_before + 1, "шашка добавлена в сцену")
+	check(lg.noise_t > 0.0, "шашка сразу создаёт шум на своей позиции")
+	var flare_noise_pos: Vector2 = lg.noise_pos
+	check(flare_noise_pos.distance_to(Vector2(flare_pos.x, flare_pos.z)) < 0.01, "шум шашки -- ровно на месте броска")
+
+	# 5) поимка: ставим игрока вплотную к монстру -- физика должна поймать
 	var mon: Node = player.monster
 	player.hidden = false
 	player.position = mon.position

@@ -200,7 +200,7 @@ func _process(delta: float) -> void:
 	postfx.material.set_shader_parameter("dread", dread)
 	postfx.material.set_shader_parameter("scare", scare)
 	if items_label.visible and items:
-		items_label.text = "СПИЧКИ %d   КАМНИ %d" % [items.match_count, items.rock_count]
+		items_label.text = "СПИЧКИ %d   КАМНИ %d   ШАШКИ %d" % [items.match_count, items.rock_count, items.flare_count]
 	if _dungeon_hud and level_gen:
 		_update_compass(dread)
 	if GameState.pending_warning != -1:
