@@ -156,7 +156,19 @@ func _run() -> void:
 		lg.pray_at_altar()
 		check(player.sanity <= 1.0, "молитва не поднимает рассудок выше 1.0 (%.3f)" % player.sanity)
 
-	# 9) поимка: ставим игрока вплотную к монстру -- физика должна поймать
+	# 9) камерная комната: генерация редкая (22%/комнату), поэтому тут не
+	# полагаемся на удачу с конкретным этажом -- дёргаем сами builder-функции
+	# напрямую и проверяем, что они не падают и действительно кладут объекты.
+	var dummy_cage_mat := StandardMaterial3D.new()
+	var dummy_blood_mat := StandardMaterial3D.new()
+	var props_before: int = lg.props_root.get_child_count()
+	var cage_spots_before: int = lg.cage_spots.size()
+	lg._spawn_cage(Vector2(lg.exit_pos.x, lg.exit_pos.y), Vector2i(1, 0), dummy_cage_mat)
+	lg._spawn_blood_pool(Vector2(lg.exit_pos.x, lg.exit_pos.y), dummy_blood_mat)
+	check(lg.cage_spots.size() == cage_spots_before + 1, "_spawn_cage регистрирует позицию в cage_spots")
+	check(lg.props_root.get_child_count() == props_before + 2, "клетка и лужа крови добавлены в сцену")
+
+	# 10) поимка: ставим игрока вплотную к монстру -- физика должна поймать
 	var mon: Node = player.monster
 	player.hidden = false
 	player.position = mon.position

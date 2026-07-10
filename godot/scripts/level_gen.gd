@@ -41,6 +41,8 @@ static var _rockpick_tex: ImageTexture = null
 static var _flarepick_tex: ImageTexture = null
 static var _wrappick_tex: ImageTexture = null
 static var _key_icon_tex: ImageTexture = null
+static var _cage_tex: ImageTexture = null
+static var _blood_tex: ImageTexture = null
 
 ## дощатый косяк дверного проёма -- та же идея, что и у мебели в
 ## story_level.gd, но тут своя копия: level_gen.gd не зависит от
@@ -222,6 +224,47 @@ static func _web_texture() -> ImageTexture:
 	_web_tex = ImageTexture.create_from_image(img)
 	return _web_tex
 
+## ржавое железо прута клетки -- тёмный металл с редкими рыжими потёками.
+static func _cage_texture() -> ImageTexture:
+	if _cage_tex:
+		return _cage_tex
+	const TEX := 32
+	var img := Image.create(TEX, TEX, false, Image.FORMAT_RGB8)
+	for y in range(TEX):
+		for x in range(TEX):
+			var v: float = 0.16 + randf() * 0.05
+			var rust: bool = (sin(x * 0.7 + y * 1.3) * 0.5 + 0.5) > 0.82
+			var c: Color
+			if rust:
+				c = Color(v * 1.8, v * 0.9, v * 0.35)
+			else:
+				c = Color(v, v * 0.97, v * 0.95)
+			img.set_pixel(x, y, c)
+	_cage_tex = ImageTexture.create_from_image(img)
+	return _cage_tex
+
+## лужа крови на полу -- неровное тёмно-бурое пятно с рваным затухающим
+## краем (шум по радиусу вместо идеального круга), не заливка на всю клетку.
+static func _blood_texture() -> ImageTexture:
+	if _blood_tex:
+		return _blood_tex
+	const TEX := 64
+	var img := Image.create(TEX, TEX, false, Image.FORMAT_RGBA8)
+	for y in range(TEX):
+		for x in range(TEX):
+			var dx: float = x - 32.0
+			var dy: float = y - 32.0
+			var ang: float = atan2(dy, dx)
+			var wobble: float = 1.0 + 0.30 * sin(ang * 5.0 + 1.7) + 0.15 * sin(ang * 11.0)
+			var dist: float = sqrt(dx * dx + dy * dy) / wobble
+			if dist > 27.0:
+				continue
+			var a: float = clamp(0.75 - dist / 27.0, 0.0, 0.75)
+			var v: float = 0.10 + randf() * 0.03
+			img.set_pixel(x, y, Color(v * 1.6, v * 0.35, v * 0.30, a))
+	_blood_tex = ImageTexture.create_from_image(img)
+	return _blood_tex
+
 ## коробок спичек -- тёмно-красная крышка с полоской для чирка сбоку.
 static func _matchbox_texture() -> ImageTexture:
 	if _matchbox_tex:
@@ -367,6 +410,7 @@ var wrappicks: Array = []
 var supply_crates: Array = []   # {pos: Vector2, active: bool, mesh: MeshInstance3D} -- см. _spawn_crate
 var desk_note_spots: Array = []   # {pos: Vector2, y: float} -- поверхности столов, куда notes.gd может положить записку плашмя, см. _spawn_desk
 var altar: Dictionary = {}   # {pos: Vector2, active: bool, mesh: MeshInstance3D} -- см. _place_altar/pray_at_altar, максимум один на этаж
+var cage_spots: Array = []   # Vector2 -- позиции клеток "камерных" комнат, см. _dress_cell_room/_spawn_cage (чисто декор, только для dev-хука/тестов)
 
 func _ready() -> void:
 	randomize()
@@ -862,6 +906,7 @@ func _place_keys_and_exit() -> void:
 	supply_crates.clear()
 	desk_note_spots.clear()
 	altar = {}
+	cage_spots.clear()
 	if exit_door_pivot:
 		exit_door_pivot.queue_free()   # тащит exit_mesh за собой -- он теперь его ребёнок
 		exit_door_pivot = null
@@ -942,7 +987,7 @@ func _place_keys_and_exit() -> void:
 	_place_lockers(exit_room_idx)
 	_place_doors()
 	_place_altar(exit_room_idx, start)
-	_place_room_dressing()
+	_place_room_dressing(exit_room_idx)
 	_place_pickups(start.position + Vector2i(start.size.x / 2, start.size.y / 2))
 	_place_room_theme_lights(exit_room_idx, start)
 
@@ -1417,7 +1462,14 @@ func _play_pickup_sound(pos: Vector2) -> void:
 ## каждой комнате 2-5 куч щебня/ящиков/костей на свободных местах, плюс
 ## паутину по углам у потолка -- декоративно, без коллизии (как и у
 ## сундуков/шкафчиков выше), монстр по-прежнему ходит по клеточной сетке.
-func _place_room_dressing() -> void:
+## доля комнат (кроме старта и выхода), которые вместо обычного набора
+## декора (щебень/ящик/стол/кости) становятся "камерами" -- клетки вдоль
+## стен, лужи крови на полу. Было в самой первой C-сборке (RM_CELLS,
+## commit 53b774f) -- в Godot-порт так и не попало, комнаты этого вида
+## тут никогда не существовали.
+const CELL_ROOM_CHANCE := 0.22
+
+func _place_room_dressing(exit_room_idx: int) -> void:
 	var rubble_mat := StandardMaterial3D.new()
 	rubble_mat.albedo_texture = _rubble_texture()
 	rubble_mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
@@ -1440,6 +1492,16 @@ func _place_room_dressing() -> void:
 	web_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	web_mat.billboard_mode = BaseMaterial3D.BILLBOARD_ENABLED
 	web_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	var cage_mat := StandardMaterial3D.new()
+	cage_mat.albedo_texture = _cage_texture()
+	cage_mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
+	cage_mat.metallic = 0.3
+	cage_mat.roughness = 0.55
+	var blood_mat := StandardMaterial3D.new()
+	blood_mat.albedo_texture = _blood_texture()
+	blood_mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
+	blood_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	blood_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 
 	# уже занятые места -- сундуки, шкафчики, дверь выхода, дверные проёмы
 	# коридоров -- клатер их не перекрывает. Раньше дверные проёмы вообще
@@ -1457,7 +1519,20 @@ func _place_room_dressing() -> void:
 	if not altar.is_empty():
 		occupied.append(altar.pos)
 
-	for r in rooms:
+	for ri in range(rooms.size()):
+		var r: Rect2i = rooms[ri]
+		if ri != 0 and ri != exit_room_idx and randf() < CELL_ROOM_CHANCE:
+			_dress_cell_room(r, cage_mat, blood_mat, occupied)
+			if randf() < 0.6:
+				var cell_corners := [
+					Vector2(r.position.x + 0.35, r.position.y + 0.35),
+					Vector2(r.position.x + r.size.x - 0.35, r.position.y + 0.35),
+					Vector2(r.position.x + 0.35, r.position.y + r.size.y - 0.35),
+					Vector2(r.position.x + r.size.x - 0.35, r.position.y + r.size.y - 0.35),
+				]
+				var cell_corner: Vector2 = cell_corners[randi() % cell_corners.size()]
+				_spawn_cobweb(cell_corner.x, cell_corner.y, web_mat)
+			continue
 		var n: int = 2 + randi() % 4
 		var placed := 0
 		var tries := 0
@@ -1714,6 +1789,104 @@ func _spawn_cobweb(cx: float, cy: float, mat: StandardMaterial3D) -> void:
 	mesh.position = Vector3(cx, float(WALL_H) - 0.32, cy)
 	props_root.add_child(mesh)
 
+## "камера" -- клетки вдоль стен вместо обычного щебня/ящиков/стола, лужи
+## крови на полу между ними. occupied передаётся по ссылке (Array в
+## GDScript -- reference type) и пополняется позициями клеток, чтобы
+## последующие комнаты того же этажа их не перекрывали.
+func _dress_cell_room(r: Rect2i, cage_mat: StandardMaterial3D, blood_mat: StandardMaterial3D, occupied: Array) -> void:
+	var wall_cells: Array = []
+	for y in range(r.position.y, r.position.y + r.size.y):
+		for x in range(r.position.x, r.position.x + r.size.x):
+			if is_open(x, y) and _wall_dir(x, y) != Vector2i.ZERO:
+				wall_cells.append(Vector2i(x, y))
+	wall_cells.shuffle()
+
+	var cage_positions: Array = []
+	var n_cages: int = 2 + randi() % 3
+	for c in wall_cells:
+		if cage_positions.size() >= n_cages:
+			break
+		var pos := Vector2(c.x + 0.5, c.y + 0.5)
+		var clash := false
+		for o in occupied:
+			if pos.distance_to(o) < 1.1:
+				clash = true
+				break
+		if not clash:
+			for cp in cage_positions:
+				if pos.distance_to(cp) < 1.3:
+					clash = true
+					break
+		if clash:
+			continue
+		_spawn_cage(pos, _wall_dir(c.x, c.y), cage_mat)
+		cage_positions.append(pos)
+		occupied.append(pos)
+
+	var n_blood: int = 2 + randi() % 2
+	var placed := 0
+	var tries := 0
+	while placed < n_blood and tries < n_blood * 8:
+		tries += 1
+		var bx: float = r.position.x + 0.6 + randf() * max(r.size.x - 1.2, 0.1)
+		var by: float = r.position.y + 0.6 + randf() * max(r.size.y - 1.2, 0.1)
+		var pos := Vector2(bx, by)
+		var clash := false
+		for cp in cage_positions:
+			if pos.distance_to(cp) < 0.9:
+				clash = true
+				break
+		if clash:
+			continue
+		_spawn_blood_pool(pos, blood_mat)
+		placed += 1
+
+## прутья клетки, вжатой в стену -- пять вертикальных ржавых прутов + верхняя
+## перекладина, тем же приёмом "сдвиг к стене + look_at по wall_dir", что и
+## у записок/факелов (см. notes.gd::_place_notes) -- после look_at локальная
+## X идёт вдоль стены, ровно то, что нужно для ряда прутьев.
+func _spawn_cage(pos: Vector2, wall_dir: Vector2i, mat: StandardMaterial3D) -> void:
+	const BAR_H := 1.7
+	const WIDTH := 0.8
+	var root := Node3D.new()
+	root.position = Vector3(pos.x + wall_dir.x * 0.42, 0, pos.y + wall_dir.y * 0.42)
+	# look_at требует, чтобы узел уже был в дереве сцены (иначе у него нет
+	# глобального трансформа) -- как и mesh.look_at в notes.gd, добавляем в
+	# props_root ДО look_at, а не после. Раньше был обратный порядок --
+	# "Node not inside tree" в логе, ошибка на каждую клетку каждого этажа.
+	props_root.add_child(root)
+	root.look_at(root.position + Vector3(wall_dir.x, 0, wall_dir.y), Vector3.UP)
+	for i in range(5):
+		var t: float = (i / 4.0) - 0.5
+		var bar := MeshInstance3D.new()
+		bar.mesh = BoxMesh.new()
+		bar.mesh.size = Vector3(0.04, BAR_H, 0.04)
+		bar.material_override = mat
+		bar.position = Vector3(t * WIDTH, BAR_H / 2.0, 0)
+		root.add_child(bar)
+	var rail := MeshInstance3D.new()
+	rail.mesh = BoxMesh.new()
+	rail.mesh.size = Vector3(WIDTH + 0.06, 0.05, 0.05)
+	rail.material_override = mat
+	rail.position = Vector3(0, BAR_H - 0.02, 0)
+	root.add_child(rail)
+	cage_spots.append(pos)
+
+## лужа крови на полу -- плоская декаль, тем же базисом "плашмя + случайный
+## поворот", что и записка на столе (см. notes.gd::_place_notes), и тем же
+## FLOOR_CLEARANCE, что и у щебня/камней/ящиков -- иначе декаль ровно на
+## y=0 копланарна полу и мерцает тем самым z-fighting'ом, который здесь уже
+## однажды чинили.
+func _spawn_blood_pool(pos: Vector2, mat: StandardMaterial3D) -> void:
+	var mesh := MeshInstance3D.new()
+	mesh.mesh = QuadMesh.new()
+	var s: float = 0.7 + randf() * 0.6
+	mesh.mesh.size = Vector2(s, s)
+	mesh.material_override = mat
+	mesh.position = Vector3(pos.x, FLOOR_CLEARANCE, pos.y)
+	mesh.transform.basis = Basis(Vector3.UP, randf() * TAU) * Basis(Vector3.RIGHT, -PI / 2.0)
+	props_root.add_child(mesh)
+
 func _spawn_player() -> void:
 	if rooms.is_empty() or player == null:
 		return
@@ -1758,6 +1931,14 @@ func _spawn_player() -> void:
 	if OS.get_environment("NIGHTFALL_SHOWALTAR") != "" and not altar.is_empty():
 		player.position = Vector3(altar.pos.x - 0.8, 0.9, altar.pos.y)
 		player.look_at(Vector3(altar.pos.x, 0.7, altar.pos.y), Vector3.UP)
+
+	# dev-хук NIGHTFALL_SHOWCELL: встать перед первой клеткой "камерной"
+	# комнаты (см. _dress_cell_room) -- шанс 22% на комнату, не на каждом
+	# этаже есть, удобнее подождать нужный этаж, чем обходить все комнаты.
+	if OS.get_environment("NIGHTFALL_SHOWCELL") != "" and not cage_spots.is_empty():
+		var cs: Vector2 = cage_spots[0]
+		player.position = Vector3(cs.x, 0.9, cs.y - 1.2)
+		player.look_at(Vector3(cs.x, 0.9, cs.y), Vector3.UP)
 
 ## сориентировать игрока в самую открытую из четырёх сторон -- считаем,
 ## сколько клеток пола подряд тянется от спавна, и смотрим туда (иначе
