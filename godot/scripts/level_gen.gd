@@ -20,6 +20,13 @@ const EXIT_DIST := 0.7
 const MAX_KEYS := 6
 const MONSTER_SCENE := preload("res://scenes/monster.tscn")
 const NUM_LOCKERS := 5
+## зазор между низом декоративного меша и полом (y=0, см. tiles.tres::
+## item/1,4 -- верхняя грань пола ровно на нуле). Щебень/подобранные камни/
+## ящики раньше садились впритык, низ меша копланарен полу -- классический
+## z-fighting, мерцающий на глаз как "битая текстура" именно там, где стоят
+## эти объекты ("часто проблемы с текстурками на полу" -- баг-репорт). У
+## сундука/костей такой отступ уже был, здесь -- не было.
+const FLOOR_CLEARANCE := 0.01
 
 static var _chest_tex: ImageTexture = null
 static var _locker_tex: ImageTexture = null
@@ -321,7 +328,10 @@ func make_noise(pos: Vector2, ttl: float) -> void:
 ## добавленный корневой узел (StaticBody3D либо голый mesh для мелочи вроде
 ## костей) -- вызывающий код должен прятать/удалять именно его, не только
 ## внутренний mesh, иначе коллизия переживёт исчезновение картинки.
-func _add_prop_collision(mesh: MeshInstance3D, pos: Vector3, size: Vector3) -> Node3D:
+## mesh: обычно MeshInstance3D (сундук/шкафчик/ящик), но подходит любой
+## Node3D -- см. _spawn_desk, где визуал стола собран из пяти отдельных
+## мешей (столешница + 4 ножки) под одним общим родителем.
+func _add_prop_collision(mesh: Node3D, pos: Vector3, size: Vector3) -> Node3D:
 	if size.y < 0.10:
 		mesh.position = pos
 		props_root.add_child(mesh)
@@ -355,6 +365,7 @@ var rockpicks: Array = []
 var flarepicks: Array = []
 var wrappicks: Array = []
 var supply_crates: Array = []   # {pos: Vector2, active: bool, mesh: MeshInstance3D} -- см. _spawn_crate
+var desk_note_spots: Array = []   # {pos: Vector2, y: float} -- поверхности столов, куда notes.gd может положить записку плашмя, см. _spawn_desk
 
 func _ready() -> void:
 	randomize()
@@ -848,6 +859,7 @@ func _place_keys_and_exit() -> void:
 	flarepicks.clear()
 	wrappicks.clear()
 	supply_crates.clear()
+	desk_note_spots.clear()
 	if exit_door_pivot:
 		exit_door_pivot.queue_free()   # тащит exit_mesh за собой -- он теперь его ребёнок
 		exit_door_pivot = null
@@ -1269,7 +1281,7 @@ func _place_pickups(start_cell: Vector2i) -> void:
 		mesh.mesh = BoxMesh.new()
 		mesh.mesh.size = Vector3(0.20, 0.17, 0.20)   # чуть крупнее -- раньше терялся на полу
 		mesh.material_override = rock_mat
-		mesh.position = Vector3(pos.x, 0.085, pos.y)
+		mesh.position = Vector3(pos.x, 0.085 + FLOOR_CLEARANCE, pos.y)
 		mesh.rotation.y = randf() * TAU
 		_add_beacon(mesh, Color(0.8, 0.8, 0.9), 0.35, 1.8, 0.15)
 		props_root.add_child(mesh)
@@ -1412,6 +1424,12 @@ func _place_room_dressing() -> void:
 	var bone_mat := StandardMaterial3D.new()
 	bone_mat.albedo_texture = _bone_texture()
 	bone_mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
+	# стол -- та же изношенная древесина, что у ящика (_crate_texture), но
+	# тонированная теплее, под столешницу, а не тарный горбыль
+	var desk_mat := StandardMaterial3D.new()
+	desk_mat.albedo_texture = _crate_texture()
+	desk_mat.albedo_color = Color(0.62, 0.46, 0.3)
+	desk_mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
 	var web_mat := StandardMaterial3D.new()
 	web_mat.albedo_texture = _web_texture()
 	web_mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
@@ -1453,14 +1471,16 @@ func _place_room_dressing() -> void:
 			occupied.append(pos)
 			placed += 1
 			var roll := randf()
-			if roll < 0.4:
+			if roll < 0.35:
 				_spawn_rubble(pos, rubble_mat)
-			elif roll < 0.7:
+			elif roll < 0.6:
 				# не каждый ящик стоит обыскивать -- иначе "обыщи всё подряд"
 				# обесценивает саму находку. Максимум 2 обыскиваемых на этаж,
 				# остальные -- чистый декор, как и раньше.
 				var supply: bool = supply_crates.size() < 2 and randf() < 0.3
 				_spawn_crate(pos, crate_mat, supply)
+			elif roll < 0.8:
+				_spawn_desk(pos, desk_mat)
 			else:
 				_spawn_bones(pos, bone_mat)
 		# паутина в углу у потолка -- туда взгляд заходит редко, самое
@@ -1510,7 +1530,7 @@ func _spawn_rubble(pos: Vector2, mat: StandardMaterial3D) -> void:
 		mesh.mesh.size = s
 		mesh.material_override = mat
 		var off := Vector2(randf_range(-0.22, 0.22), randf_range(-0.22, 0.22))
-		mesh.position = Vector3(pos.x + off.x, s.y / 2.0, pos.y + off.y)
+		mesh.position = Vector3(pos.x + off.x, s.y / 2.0 + FLOOR_CLEARANCE, pos.y + off.y)
 		mesh.rotation.y = randf() * TAU
 		props_root.add_child(mesh)
 
@@ -1530,7 +1550,7 @@ func _spawn_crate(pos: Vector2, mat: StandardMaterial3D, is_supply: bool = false
 	# в отличие от щебня/костей рядом -- цельный ящик достаточно крупный,
 	# чтобы об него было странно проходить насквозь; та же коллизия, что и
 	# у сундука/шкафчика (см. _add_prop_collision)
-	_add_prop_collision(mesh, Vector3(pos.x, 0.25, pos.y), crate_size)
+	_add_prop_collision(mesh, Vector3(pos.x, 0.25 + FLOOR_CLEARANCE, pos.y), crate_size)
 	if randf() < 0.35:
 		var mesh2 := MeshInstance3D.new()
 		mesh2.mesh = BoxMesh.new()
@@ -1563,6 +1583,40 @@ func search_crate(entry: Dictionary) -> void:
 	else:
 		items.wrap_count += 1
 	_play_pickup_sound(entry.pos)
+
+## Стол -- первая мебель комнаты, которая не сундук/шкафчик/ящик: столешница
+## + четыре ножки, с реальной коллизией (см. _add_prop_collision), как и
+## остальная крупная мебель. С шансом 0.5 регистрирует свою столешницу в
+## desk_note_spots -- notes.gd кладёт туда записку плашмя вместо того,
+## чтобы всегда пришпиливать её к стене (см. notes.gd::_place_notes).
+func _spawn_desk(pos: Vector2, mat: StandardMaterial3D) -> void:
+	const TOP_H := 0.72
+	const TOP_SIZE := Vector3(0.9, 0.06, 0.5)
+	# _add_prop_collision зануляет position корневого узла и делает его
+	# ребёнком StaticBody3D, стоящего в мировой точке pos (см. саму функцию)
+	# -- поэтому все дочерние смещения ниже считаем относительно ЦЕНТРА
+	# коллизионной коробки (мировой Y = TOP_H/2), а не относительно пола.
+	var legs_parent := Node3D.new()
+	legs_parent.rotation.y = randf() * TAU
+	var top := MeshInstance3D.new()
+	top.mesh = BoxMesh.new()
+	top.mesh.size = TOP_SIZE
+	top.material_override = mat
+	top.position = Vector3(0, TOP_H / 2.0 + TOP_SIZE.y / 2.0, 0)
+	legs_parent.add_child(top)
+	for lx in [-1, 1]:
+		for lz in [-1, 1]:
+			var leg := MeshInstance3D.new()
+			leg.mesh = BoxMesh.new()
+			leg.mesh.size = Vector3(0.06, TOP_H, 0.06)
+			leg.material_override = mat
+			leg.position = Vector3(lx * (TOP_SIZE.x / 2.0 - 0.05), 0, lz * (TOP_SIZE.z / 2.0 - 0.05))
+			legs_parent.add_child(leg)
+	# коллизия на весь габарит стола разом -- проще и дешевле, чем отдельная
+	# форма на каждую ножку, и всё равно не даёт пройти сквозь столешницу
+	_add_prop_collision(legs_parent, Vector3(pos.x, TOP_H / 2.0, pos.y), Vector3(TOP_SIZE.x, TOP_H, TOP_SIZE.z))
+	if randf() < 0.5:
+		desk_note_spots.append({"pos": pos, "y": TOP_H + TOP_SIZE.y / 2.0})
 
 func _spawn_bones(pos: Vector2, mat: StandardMaterial3D) -> void:
 	var n := 3 + randi() % 3
@@ -1614,6 +1668,14 @@ func _spawn_player() -> void:
 		var sc = supply_crates[0]
 		player.position = Vector3(sc.pos.x - 0.9, 0.9, sc.pos.y)
 		player.look_at(Vector3(sc.pos.x, 0.9, sc.pos.y), Vector3.UP)
+
+	# dev-хук NIGHTFALL_SHOWDESK: встать над первым столом с запиской на
+	# столешнице (см. _spawn_desk/desk_note_spots) -- удобно для скриншота,
+	# не обходя весь этаж в поисках подходящей комнаты.
+	if OS.get_environment("NIGHTFALL_SHOWDESK") != "" and not desk_note_spots.is_empty():
+		var ds = desk_note_spots[0]
+		player.position = Vector3(ds.pos.x, ds.y + 1.1, ds.pos.y + 0.01)
+		player.look_at(Vector3(ds.pos.x, ds.y, ds.pos.y), Vector3.UP)
 
 ## сориентировать игрока в самую открытую из четырёх сторон -- считаем,
 ## сколько клеток пола подряд тянется от спавна, и смотрим туда (иначе

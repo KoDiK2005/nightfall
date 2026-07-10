@@ -84,6 +84,30 @@ func _place_notes() -> void:
 	var start: Rect2i = level_gen.rooms[0]
 	var start_center := Vector2(start.position.x + start.size.x / 2.0, start.position.y + start.size.y / 2.0)
 
+	# столы (level_gen.gd::_spawn_desk) дают вторую, не пришпиленную к стене
+	# позу для записки -- лежит плашмя на столешнице. Разбираем их первыми,
+	# остаток NUM_NOTES как раньше уходит на стены, чтобы не все записки
+	# этажа выглядели одинаково развешанными.
+	var desk_spots: Array = level_gen.desk_note_spots.duplicate()
+	desk_spots.shuffle()
+	for d in desk_spots:
+		if notes.size() >= NUM_NOTES:
+			break
+		if Vector2(d.pos).distance_to(start_center) < 3.0:
+			continue
+		var mesh := MeshInstance3D.new()
+		mesh.mesh = QuadMesh.new()
+		mesh.mesh.size = Vector2(0.34, 0.40)
+		mesh.material_override = note_mat
+		mesh.position = Vector3(d.pos.x, d.y, d.pos.y)
+		# базис явно, а не mesh.rotation.x/.z по отдельности -- Euler-порядок
+		# Node3D.rotation неочевиден, компоновка через Basis однозначна:
+		# сперва положить плашмя (тик вокруг своей X), потом уже произвольный
+		# поворот "как её кто-то бросил на стол" вокруг мировой вертикали.
+		mesh.transform.basis = Basis(Vector3.UP, randf() * TAU) * Basis(Vector3.RIGHT, -PI / 2.0)
+		level_gen.props_root.add_child(mesh)
+		notes.append({"pos": d.pos, "text": NOTE_TEXTS[randi() % NOTE_TEXTS.size()], "mesh": mesh})
+
 	var candidates: Array = _wall_candidates()
 	candidates.shuffle()
 	for c in candidates:
