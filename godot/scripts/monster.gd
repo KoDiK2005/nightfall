@@ -16,7 +16,11 @@ const LISTENER_HEAR_WALK := 7.2   # HEAR_WALK * 2.4, как в ai.c
 const LISTENER_HEAR_RUN := 12.4
 const CATCH_DIST := 0.6
 const CHECK_DIST := 1.0   # на таком расстоянии оно "проверяет" шкафчик
-const SPEED := 1.55   # MONSTER_SPD в game.h
+## было 1.55 (MONSTER_SPD из game.h) -- общее замедление темпа вместе с
+## player.gd::walk_speed/run_speed (см. комментарий там). Монстр остаётся
+## медленнее игрока на ходьбе/беге почти везде -- опасность не в том, что
+## оно вас перегонит, а в том, что оно неотступно идёт и не устаёт.
+const SPEED := 1.3
 const WATCHER_RUSH_MULT := 2.3   # совпадает с render.c
 
 ## "с каждым этажом вниз оно быстрее и чутче" (см. README) -- раньше

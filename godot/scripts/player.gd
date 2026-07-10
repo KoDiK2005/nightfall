@@ -3,16 +3,21 @@ extends CharacterBody3D
 ## выносливостью, E прячется в шкафчик. Порт соответствующих кусков
 ## main.c (движение/стамина) и E-хендлинга для шкафчиков (gen.c).
 
-@export var walk_speed: float = 3.1   # совпадает с PLAYER_WALK в game.h
-@export var run_speed: float = 4.7    # совпадает с PLAYER_RUN
+## Общее замедление темпа (пользовательский запрос: "игрок должен
+## чувствовать себя незащищённым") -- было 3.1/4.7 (как в C PLAYER_WALK/RUN).
+## Медленнее ходьба/бег, тяжелее разгон/торможение, бег дороже по
+## выносливости -- решения даются весомее, простой спринт прочь уже не
+## решает всё так легко, как раньше.
+@export var walk_speed: float = 2.6
+@export var run_speed: float = 3.9
 @export var mouse_sens: float = 0.0025
 
-const STAM_DRAIN := 0.34
+const STAM_DRAIN := 0.4
 const STAM_REGEN := 0.22 / 3.0   # втрое медленнее -- см. память про C-версию
 const HIDE_DIST := 1.0
 const CRATE_DIST := 1.1
-const ACCEL := 11.0   # порт "eased accel (11/s start, 14/s stop)" из C -- разгон/торможение,
-const DECEL := 14.0   # а не мгновенная смена скорости, как было раньше
+const ACCEL := 8.5    # было 11/14 -- шаг ощущается тяжелее, не так отзывчиво
+const DECEL := 11.0
 
 @onready var camera: Camera3D = $Camera3D
 
