@@ -644,11 +644,10 @@ func try_pickup_nearby(p: Vector2) -> bool:
 			continue
 		if p.distance_to(c.pos) < PICKUP_DIST:
 			c.active = false
-			c.mesh.visible = false
-			# погасить и коллизию, не только визуал -- иначе после открытия
-			# на этом месте остаётся невидимая стена до конца этажа
-			if c.root is StaticBody3D:
-				c.root.collision_layer = 0
+			# крышка распахивается (см. _build_chest/_open_chest_lid), сундук
+			# остаётся на месте открытым ориентиром -- коллизия тоже остаётся
+			# сплошной, теперь у неё есть видимое тело, которое её оправдывает.
+			_open_chest_lid(c)
 			keys_left -= 1
 			hud_changed.emit()
 			# скрип открывающегося сундука -- ещё один источник шума
@@ -962,20 +961,7 @@ func _place_keys_and_exit() -> void:
 		var r: Rect2i = rooms[i]
 		var cx: float = r.position.x + r.size.x / 2.0
 		var cy: float = r.position.y + r.size.y / 2.0
-		var mesh := MeshInstance3D.new()
-		mesh.mesh = BoxMesh.new()
-		var chest_size := Vector3(0.55, 0.34, 0.36)   # приземистый сундук-коффер, не куб
-		mesh.mesh.size = chest_size
-		mesh.material_override = chest_mat
-		_add_beacon(mesh, Color(1.0, 0.75, 0.35), 0.55, 2.4, 0.3)
-		var key_icon := MeshInstance3D.new()
-		key_icon.mesh = QuadMesh.new()
-		key_icon.mesh.size = Vector2(0.3, 0.3)
-		key_icon.material_override = key_icon_mat
-		key_icon.position = Vector3(0, 0.55, 0)
-		mesh.add_child(key_icon)
-		var chest_root := _add_prop_collision(mesh, Vector3(cx, 0.22, cy), chest_size)
-		chests.append({"pos": Vector2(cx, cy), "active": true, "mesh": mesh, "root": chest_root})
+		chests.append(_build_chest(Vector2(cx, cy), chest_mat, key_icon_mat))
 		placed_keys += 1
 
 	var er: Rect2i = rooms[exit_room_idx]
@@ -990,6 +976,64 @@ func _place_keys_and_exit() -> void:
 	_place_room_dressing(exit_room_idx)
 	_place_pickups(start.position + Vector2i(start.size.x / 2, start.size.y / 2))
 	_place_room_theme_lights(exit_room_idx, start)
+
+## Сундук -- раньше был цельным боксом, который при подборе ключа мгновенно
+## пропадал (mesh.visible = false) без всякой анимации: с виду -- будто
+## нажатие E ничего не сделало, пока не посмотришь на счётчик ключей на
+## HUD ("не получается осмотреть сундук"). Теперь тело и крышка -- отдельные
+## меши, крышка на пивоте у заднего верхнего ребра (тот же приём "пивот +
+## смещённый ребёнок", что и у двери выхода, см. _open_exit_door) -- E
+## реально распахивает крышку с тем же скрипом, а сундук остаётся на месте
+## как открытый ориентир, а не исчезает целиком.
+func _build_chest(pos: Vector2, chest_mat: StandardMaterial3D, key_icon_mat: StandardMaterial3D) -> Dictionary:
+	const CHEST_SIZE := Vector3(0.55, 0.34, 0.36)
+	const LID_FRAC := 0.42   # доля общей высоты, которая приходится на крышку
+	var lid_h: float = CHEST_SIZE.y * LID_FRAC
+	var body_h: float = CHEST_SIZE.y - lid_h
+
+	var root := Node3D.new()
+	var body := MeshInstance3D.new()
+	body.mesh = BoxMesh.new()
+	body.mesh.size = Vector3(CHEST_SIZE.x, body_h, CHEST_SIZE.z)
+	body.material_override = chest_mat
+	body.position = Vector3(0, -CHEST_SIZE.y / 2.0 + body_h / 2.0, 0)
+	root.add_child(body)
+
+	var lid_pivot := Node3D.new()
+	lid_pivot.position = Vector3(0, CHEST_SIZE.y / 2.0 - lid_h, -CHEST_SIZE.z / 2.0)
+	root.add_child(lid_pivot)
+	var lid := MeshInstance3D.new()
+	lid.mesh = BoxMesh.new()
+	lid.mesh.size = Vector3(CHEST_SIZE.x, lid_h, CHEST_SIZE.z)
+	lid.material_override = chest_mat
+	lid.position = Vector3(0, lid_h / 2.0, CHEST_SIZE.z / 2.0)
+	lid_pivot.add_child(lid)
+
+	var key_icon := MeshInstance3D.new()
+	key_icon.mesh = QuadMesh.new()
+	key_icon.mesh.size = Vector2(0.3, 0.3)
+	key_icon.material_override = key_icon_mat
+	key_icon.position = Vector3(0, 0.55, 0)
+	root.add_child(key_icon)
+
+	_add_beacon(root, Color(1.0, 0.75, 0.35), 0.55, 2.4, 0.3)
+	var chest_root := _add_prop_collision(root, Vector3(pos.x, 0.22, pos.y), CHEST_SIZE)
+	return {"pos": pos, "active": true, "mesh": root, "root": chest_root, "key_icon": key_icon, "lid_pivot": lid_pivot}
+
+## Распахнуть крышку конкретного сундука -- тот же tween-приём и звук
+## (creak.wav), что и у двери выхода, но короче и на другой оси (крышка
+## запрокидывается назад по X, а не поворачивается по Y, как дверная плита).
+func _open_chest_lid(c: Dictionary) -> void:
+	c.key_icon.visible = false
+	var creak := AudioStreamPlayer3D.new()
+	creak.stream = load("res://assets/creak.wav")
+	creak.unit_size = 3.0
+	creak.max_distance = 10.0
+	c.lid_pivot.add_child(creak)
+	creak.play()
+	var tw := create_tween()
+	tw.tween_property(c.lid_pivot, "rotation:x", -deg_to_rad(100.0), 0.5) \
+		.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 
 ## Дверь выхода -- прежде была просто цветной коробкой посреди комнаты.
 ## Теперь это свободностоящая рама (железные столбы + притолока), а плита

@@ -63,6 +63,9 @@ func _run() -> void:
 	check(all_chests_reachable, "все сундуки достижимы от старта")
 
 	# 2) подбор ключей: телепортируемся на каждый сундук и дёргаем подбор
+	var first_chest: Dictionary = lg.chests[0]
+	check(rad_to_deg(first_chest.lid_pivot.rotation.x) == 0.0, "крышка сундука закрыта до подбора")
+	check(first_chest.key_icon.visible, "значок ключа виден на закрытом сундуке")
 	var picked := 0
 	var expected_keys: int = lg.num_keys
 	for c in lg.chests.duplicate():
@@ -74,9 +77,12 @@ func _run() -> void:
 	check(picked == expected_keys, "подобраны все ключи (%d/%d)" % [picked, expected_keys])
 	check(lg.keys_left == 0, "keys_left обнулился после сбора всех ключей")
 	check(lg.exit_door_open, "дверь выхода открылась после последнего ключа")
+	check(not first_chest.key_icon.visible, "значок ключа спрятан после подбора")
 	for _i in range(20):
 		await process_frame
 	check(abs(lg.exit_door_pivot.rotation.y) > 0.1, "дверь выхода реально повернулась (анимация идёт)")
+	check(abs(first_chest.lid_pivot.rotation.x) > 0.1, "крышка сундука реально распахнулась (анимация идёт)")
+	check(first_chest.active == false, "сундук помечен неактивным, но объект остаётся в сцене (не спрятан целиком)")
 
 	# 3) спуск: на выходе с нулём ключей глубина растёт и строится новый уровень
 	var depth_before: int = gs.depth
