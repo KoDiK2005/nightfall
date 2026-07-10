@@ -104,7 +104,7 @@ default. Download it once from the official
 [Godot download page](https://godotengine.org/download/) and it works for
 every project, this one included.
 
-<details>
+<details open>
 <summary><b>Windows</b></summary>
 
 1. On the [download page](https://godotengine.org/download/windows/), grab
@@ -132,7 +132,7 @@ cd path\to\nightfall\godot
 
 </details>
 
-<details>
+<details open>
 <summary><b>macOS</b></summary>
 
 1. On the [download page](https://godotengine.org/download/macos/), grab
