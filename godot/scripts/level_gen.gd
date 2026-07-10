@@ -366,6 +366,7 @@ var flarepicks: Array = []
 var wrappicks: Array = []
 var supply_crates: Array = []   # {pos: Vector2, active: bool, mesh: MeshInstance3D} -- см. _spawn_crate
 var desk_note_spots: Array = []   # {pos: Vector2, y: float} -- поверхности столов, куда notes.gd может положить записку плашмя, см. _spawn_desk
+var altar: Dictionary = {}   # {pos: Vector2, active: bool, mesh: MeshInstance3D} -- см. _place_altar/pray_at_altar, максимум один на этаж
 
 func _ready() -> void:
 	randomize()
@@ -860,6 +861,7 @@ func _place_keys_and_exit() -> void:
 	wrappicks.clear()
 	supply_crates.clear()
 	desk_note_spots.clear()
+	altar = {}
 	if exit_door_pivot:
 		exit_door_pivot.queue_free()   # тащит exit_mesh за собой -- он теперь его ребёнок
 		exit_door_pivot = null
@@ -939,6 +941,7 @@ func _place_keys_and_exit() -> void:
 
 	_place_lockers(exit_room_idx)
 	_place_doors()
+	_place_altar(exit_room_idx, start)
 	_place_room_dressing()
 	_place_pickups(start.position + Vector2i(start.size.x / 2, start.size.y / 2))
 	_place_room_theme_lights(exit_room_idx, start)
@@ -1451,6 +1454,8 @@ func _place_room_dressing() -> void:
 	for d in doors:
 		occupied.append(d.pos)
 	occupied.append(exit_pos)
+	if not altar.is_empty():
+		occupied.append(altar.pos)
 
 	for r in rooms:
 		var n: int = 2 + randi() % 4
@@ -1584,6 +1589,77 @@ func search_crate(entry: Dictionary) -> void:
 		items.wrap_count += 1
 	_play_pickup_sound(entry.pos)
 
+## Алтарь -- "shrine" из README и _update_shrine_hum (shrine.wav) до сих пор
+## был только звуком у ближайшего сундука, без физического объекта. Один
+## гарантированный на этаж (не в стартовой/выходной комнате, не впритык к
+## сундуку/двери), с реальной коллизией. E рядом даёт разовое восстановление
+## рассудка -- единственный источник "почти бесплатной" передышки помимо
+## того, что и так копится в тишине (см. player.gd::_update_sanity).
+func _place_altar(exit_room_idx: int, start: Rect2i) -> void:
+	altar = {}
+	var start_center := Vector2(start.position.x + start.size.x / 2.0, start.position.y + start.size.y / 2.0)
+	var candidates: Array = range(1, rooms.size()).filter(func(i): return i != exit_room_idx)
+	candidates.shuffle()
+	for ri in candidates:
+		var r: Rect2i = rooms[ri]
+		var cx: float = r.position.x + 0.6 + randf() * max(r.size.x - 1.2, 0.1)
+		var cy: float = r.position.y + 0.6 + randf() * max(r.size.y - 1.2, 0.1)
+		var pos := Vector2(cx, cy)
+		if pos.distance_to(start_center) < 3.0 or pos.distance_to(exit_pos) < 2.0:
+			continue
+		var clash := false
+		for c in chests:
+			if pos.distance_to(c.pos) < 1.4:
+				clash = true
+				break
+		if not clash:
+			for d in doors:
+				if pos.distance_to(d.pos) < 1.2:
+					clash = true
+					break
+		if clash:
+			continue
+		_build_altar(pos)
+		return
+
+func _build_altar(pos: Vector2) -> void:
+	const PED_SIZE := Vector3(0.5, 0.6, 0.5)
+	var stone_mat := StandardMaterial3D.new()
+	stone_mat.albedo_color = Color(0.32, 0.30, 0.34)
+	stone_mat.roughness = 1.0
+	var pedestal := MeshInstance3D.new()
+	pedestal.mesh = BoxMesh.new()
+	pedestal.mesh.size = PED_SIZE
+	pedestal.material_override = stone_mat
+	var candle_mat := StandardMaterial3D.new()
+	candle_mat.albedo_color = Color(0.9, 0.85, 0.6)
+	candle_mat.emission_enabled = true
+	candle_mat.emission = Color(1.0, 0.6, 0.2)
+	candle_mat.emission_energy_multiplier = 1.6
+	for i in range(3):
+		var ang: float = TAU * i / 3.0
+		var candle := MeshInstance3D.new()
+		candle.mesh = BoxMesh.new()
+		candle.mesh.size = Vector3(0.05, 0.16, 0.05)
+		candle.material_override = candle_mat
+		candle.position = Vector3(cos(ang) * 0.14, PED_SIZE.y / 2.0 + 0.08, sin(ang) * 0.14)
+		pedestal.add_child(candle)
+	_add_beacon(pedestal, Color(1.0, 0.65, 0.3), 0.6, 2.6, 0.5)
+	_add_prop_collision(pedestal, Vector3(pos.x, PED_SIZE.y / 2.0 + FLOOR_CLEARANCE, pos.y), PED_SIZE)
+	altar = {"pos": pos, "active": true, "mesh": pedestal}
+
+## молитва у алтаря по E (см. player.gd::_try_interact/near_altar) -- гасит
+## маячок, разовое восстановление рассудка, тот же звук, что и у подбора.
+func pray_at_altar() -> void:
+	if altar.is_empty() or not altar.active:
+		return
+	altar.active = false
+	player.sanity = clamp(player.sanity + 0.35, 0.0, 1.0)
+	for child in altar.mesh.get_children():
+		if child is OmniLight3D:
+			child.visible = false
+	_play_pickup_sound(altar.pos)
+
 ## Стол -- первая мебель комнаты, которая не сундук/шкафчик/ящик: столешница
 ## + четыре ножки, с реальной коллизией (см. _add_prop_collision), как и
 ## остальная крупная мебель. С шансом 0.5 регистрирует свою столешницу в
@@ -1676,6 +1752,12 @@ func _spawn_player() -> void:
 		var ds = desk_note_spots[0]
 		player.position = Vector3(ds.pos.x, ds.y + 1.1, ds.pos.y + 0.01)
 		player.look_at(Vector3(ds.pos.x, ds.y, ds.pos.y), Vector3.UP)
+
+	# dev-хук NIGHTFALL_SHOWALTAR: встать перед алтарём (см. _place_altar) --
+	# один на этаж, позиция случайна среди не-стартовых/не-выходных комнат.
+	if OS.get_environment("NIGHTFALL_SHOWALTAR") != "" and not altar.is_empty():
+		player.position = Vector3(altar.pos.x - 0.8, 0.9, altar.pos.y)
+		player.look_at(Vector3(altar.pos.x, 0.7, altar.pos.y), Vector3.UP)
 
 ## сориентировать игрока в самую открытую из четырёх сторон -- считаем,
 ## сколько клеток пола подряд тянется от спавна, и смотрим туда (иначе

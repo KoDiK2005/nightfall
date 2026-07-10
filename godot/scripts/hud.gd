@@ -191,10 +191,18 @@ func _process(delta: float) -> void:
 	# замирал на виде из шкафчика, неотличимом от обычного зависания игры.
 	hidden_overlay.visible = player.hidden
 	hidden_label.visible = player.hidden
-	# подсказка появляется только пока рядом с ещё не обысканным ящиком --
-	# без неё обыскиваемые ящики ничем не отличались бы для игрока от
-	# декоративных, кроме тусклого маячка, который легко не заметить.
-	search_prompt.visible = not player.hidden and not player.near_crate.is_empty()
+	# подсказка появляется только пока рядом с ещё не обысканным ящиком или
+	# ещё не использованным алтарём -- без неё оба ничем не отличались бы
+	# для игрока от декоративных объектов, кроме тусклого маячка, который
+	# легко не заметить. Один и тот же Label, текст меняется по контексту.
+	if not player.hidden and not player.near_crate.is_empty():
+		search_prompt.text = "E - ОБЫСКАТЬ ЯЩИК"
+		search_prompt.visible = true
+	elif not player.hidden and player.near_altar:
+		search_prompt.text = "E - ПОМОЛИТЬСЯ"
+		search_prompt.visible = true
+	else:
+		search_prompt.visible = false
 	stamina_bar.value = player.stamina * 100.0
 	sanity_bar.value = player.sanity * 100.0
 	var dread: float = 1.0 - player.sanity

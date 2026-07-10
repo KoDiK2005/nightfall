@@ -139,7 +139,24 @@ func _run() -> void:
 	var total_repeat: int = items.match_count + items.rock_count + items.flare_count + items.wrap_count
 	check(total_repeat == total_after, "повторный обыск того же ящика ничего не даёт")
 
-	# 8) поимка: ставим игрока вплотную к монстру -- физика должна поймать
+	# 8) алтарь: один гарантированный на этаж, молитва один раз поднимает
+	# рассудок и гасит себя
+	check(not lg.altar.is_empty(), "алтарь сгенерирован на этаже")
+	if not lg.altar.is_empty():
+		check(lg.altar.active, "свежий алтарь активен")
+		player.sanity = 0.3
+		lg.pray_at_altar()
+		check(not lg.altar.active, "молитва деактивирует алтарь")
+		check(absf(player.sanity - 0.65) < 0.001, "молитва поднимает рассудок на 0.35 (%.3f)" % player.sanity)
+		var sanity_after_first: float = player.sanity
+		lg.pray_at_altar()
+		check(absf(player.sanity - sanity_after_first) < 0.001, "повторная молитва у того же алтаря ничего не даёт")
+		player.sanity = 0.9
+		lg.altar.active = true
+		lg.pray_at_altar()
+		check(player.sanity <= 1.0, "молитва не поднимает рассудок выше 1.0 (%.3f)" % player.sanity)
+
+	# 9) поимка: ставим игрока вплотную к монстру -- физика должна поймать
 	var mon: Node = player.monster
 	player.hidden = false
 	player.position = mon.position

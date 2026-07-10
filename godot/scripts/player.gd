@@ -22,6 +22,7 @@ var exhausted: bool = false
 var hidden: bool = false
 var near_locker: Node3D = null
 var near_crate: Dictionary = {}   # запись из level_gen.supply_crates, пока в радиусе обыска
+var near_altar: bool = false       # рядом с ещё не использованным level_gen.altar
 var lockers: Array = []   # заполняется level_gen'ом после генерации уровня
 var sanity: float = 1.0
 var tension: float = 0.0   # см. _update_sanity -- непрерывная тревога по дистанции до монстра
@@ -98,6 +99,10 @@ func _try_interact() -> void:
 	if not near_crate.is_empty() and level_gen:
 		level_gen.search_crate(near_crate)
 		near_crate = {}
+		return
+	if near_altar and level_gen:
+		level_gen.pray_at_altar()
+		near_altar = false
 
 func _physics_process(delta: float) -> void:
 	if GameState.state != GameState.State.PLAY:
@@ -106,6 +111,7 @@ func _physics_process(delta: float) -> void:
 
 	near_locker = null
 	near_crate = {}
+	near_altar = false
 	if not hidden:
 		var p := Vector2(global_position.x, global_position.z)
 		for l in lockers:
@@ -122,6 +128,11 @@ func _physics_process(delta: float) -> void:
 				if p.distance_to(c.pos) < CRATE_DIST:
 					near_crate = c
 					break
+			# алтарь (level_gen.gd::pray_at_altar) -- ровно один на этаж,
+			# поэтому без цикла, просто по флагу active.
+			if not level_gen.altar.is_empty() and level_gen.altar.active:
+				if p.distance_to(level_gen.altar.pos) < CRATE_DIST:
+					near_altar = true
 
 	if hidden:
 		# раньше ранний return тут обрывал кадр ДО _update_sanity() ниже --
