@@ -102,7 +102,19 @@ func _run() -> void:
 	var flare_noise_pos: Vector2 = lg.noise_pos
 	check(flare_noise_pos.distance_to(Vector2(flare_pos.x, flare_pos.z)) < 0.01, "шум шашки -- ровно на месте броска")
 
-	# 5) обмотки: тратят счётчик, выставляют player.muffled на время действия
+	# 5) спичка: периодически "мерцает" шумом-приманкой, пока горит, даже
+	# без прямой видимости монстра (см. items.gd::_process, MATCH_GLOW_PERIOD)
+	check(items.match_count == 2, "стартовый запас спичек -- 2")
+	items._strike_match()
+	check(items.match_count == 1, "чирк тратит счётчик")
+	await process_frame
+	check(player.lit_by_match, "чирк выставляет player.lit_by_match")
+	lg.noise_t = 0.0   # снимаем шум самого чирка -- проверяем именно периодическое мерцание
+	items._match_glow_timer = 0.0
+	await process_frame
+	check(lg.noise_t > 0.0, "горящая спичка периодически шумит сама по себе")
+
+	# 6) обмотки: тратят счётчик, выставляют player.muffled на время действия
 	check(items.wrap_count == 1, "стартовый запас обмоток -- 1")
 	items._wrap_feet()
 	check(items.wrap_count == 0, "использование обмоток тратит счётчик")
@@ -112,7 +124,7 @@ func _run() -> void:
 	await process_frame
 	check(not player.muffled, "player.muffled снимается, когда обмотки догорели")
 
-	# 6) обыскиваемый ящик: даёт ровно один расходник и деактивируется --
+	# 7) обыскиваемый ящик: даёт ровно один расходник и деактивируется --
 	# спавн реальных supply_crates рандомный (макс. 2 на этаж), поэтому тут
 	# подсовываем фиктивную запись напрямую в search_crate, а не полагаемся
 	# на то, что этому конкретно сгенерированному этажу повезло с ящиком.
@@ -127,7 +139,7 @@ func _run() -> void:
 	var total_repeat: int = items.match_count + items.rock_count + items.flare_count + items.wrap_count
 	check(total_repeat == total_after, "повторный обыск того же ящика ничего не даёт")
 
-	# 7) поимка: ставим игрока вплотную к монстру -- физика должна поймать
+	# 8) поимка: ставим игрока вплотную к монстру -- физика должна поймать
 	var mon: Node = player.monster
 	player.hidden = false
 	player.position = mon.position

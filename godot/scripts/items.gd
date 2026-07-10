@@ -2,8 +2,10 @@ extends Node
 ## Спички, камни, сигнальные шашки и обмотки -- порт соответствующих кусков
 ## main.c/render.c плюс два новых предмета (шашка, обмотки), которых в
 ## C-версии не было. Спичка: F зажигает временный источник света, но выдаёт
-## тебя монстру (see_range растёт). Камень: G бросает его по направлению
-## взгляда, удар о стену создаёт шум, который слышит/расследует монстр
+## тебя монстру -- see_range растёт при прямой видимости, и пока горит,
+## сама периодически "мерцает" слабым шумом-приманкой даже без неё. Камень:
+## G бросает его по направлению взгляда, удар о стену создаёт шум, который
+## слышит/расследует монстр
 ## (make_noise в gen.c/ai.c) -- удобная приманка в сторону от себя. Шашка:
 ## H втыкает её в пол под ногами -- она сама шумит и светит, пока горит
 ## (см. flare.gd), так что расследующий монстр идёт на неё, а не по твоему
@@ -11,6 +13,8 @@ extends Node
 ## вместо приманки, единственный прямой контрприём против Слухача.
 
 const MATCH_DUR := 6.0
+const MATCH_GLOW_PERIOD := 1.4
+const MATCH_GLOW_TTL := 1.6
 const ROCK_MAX_RANGE := 6.0
 const ROCK_FLY_DUR := 0.5
 const ROCK_NOISE_TTL := 4.0
@@ -27,6 +31,7 @@ var rock_count: int = 2
 var flare_count: int = 1
 var wrap_count: int = 1
 var wrap_burn: float = 0.0
+var _match_glow_timer: float = 0.0
 
 func _ready() -> void:
 	GameState.state_changed.connect(_on_state_changed)
@@ -40,6 +45,7 @@ func _on_state_changed(new_state: GameState.State) -> void:
 		wrap_count = 1
 		match_burn = 0.0
 		wrap_burn = 0.0
+		_match_glow_timer = 0.0
 		match_light.visible = false
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -119,6 +125,18 @@ func _process(delta: float) -> void:
 		match_burn -= delta
 		if match_burn <= 0.0:
 			match_light.visible = false
+		# раньше горящая спичка выдавала себя только один раз в момент чирка
+		# (см. _strike_match): если монстр не видел игрока напрямую и не был
+		# рядом в тот самый миг, дальше спичка горела бесплатно -- весь риск
+		# сделки "свет против того, чтобы быть увиденным" (см. monster.gd::
+		# _sense, see_range*1.9) работал только при прямой видимости, стена
+		# полностью гасила отсвет. Теперь горящая спичка сама периодически
+		# "мерцает" шумом-приманкой, слабее и короче шашки (см. flare.gd) --
+		# монстр может пойти проверить даже из-за угла, не увидев напрямую.
+		_match_glow_timer -= delta
+		if _match_glow_timer <= 0.0:
+			level_gen.make_noise(Vector2(player.position.x, player.position.z), MATCH_GLOW_TTL)
+			_match_glow_timer = MATCH_GLOW_PERIOD
 	if wrap_burn > 0.0:
 		wrap_burn -= delta
 	# порт "see_range *= 1.9" из ai.c -- горящая спичка светит удобно, но
