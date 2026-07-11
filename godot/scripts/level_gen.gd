@@ -2102,6 +2102,16 @@ func _spawn_player() -> void:
 		hud_changed.emit()
 		_open_exit_door()
 
+	# dev-хук NIGHTFALL_SHOWDOOR: встать вплотную перед первой дверью и
+	# смотреть на неё -- для скриншотов/проверки геометрии проёма (высота,
+	# стена над дверью), не обходя этаж в поисках двери.
+	if OS.get_environment("NIGHTFALL_SHOWDOOR") != "" and not doors.is_empty():
+		var d0: Dictionary = doors[0]
+		var aw := Vector2(-d0.dir.x, -d0.dir.y)
+		var dp: Vector2 = d0.pos + aw * 2.6
+		player.position = Vector3(dp.x, 0.9, dp.y)
+		player.look_at(Vector3(d0.pos.x, 0.9, d0.pos.y), Vector3.UP)
+
 	# dev-хук NIGHTFALL_SHOWCRATE: встать перед первым обыскиваемым ящиком
 	# этажа (см. _spawn_crate::is_supply) -- их максимум 2 на этаж и позиция
 	# случайна, вручную дойти для скриншота неудобно.
