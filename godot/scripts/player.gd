@@ -22,6 +22,8 @@ extends CharacterBody3D
 ## насколько опускается камера в присяде -- визуальная обратная связь плюс
 ## сам "низкий силуэт". Камера в полный рост на +0.6 (см. main.tscn).
 const CROUCH_CAM_DROP := 0.35
+## сколько рассудка в секунду возвращает горящая спичка (см. _update_sanity)
+const MATCH_SANITY_REGEN := 0.035
 
 const STAM_DRAIN := 0.4
 const STAM_REGEN := 0.22 / 3.0   # втрое медленнее -- см. память про C-версию
@@ -252,5 +254,13 @@ func _update_sanity(delta: float) -> void:
 	var drain: float = 0.004 + dd * 0.0025 + tension * 0.05 + (0.03 if hunting else 0.0) + (0.10 if hunting else 0.0)
 	if tension < 0.12 and not hunting:
 		sanity += delta * 0.02
+	# зажжённая спичка -- маленькая, но безусловная поддержка рассудка: свет
+	# в темноте буквально успокаивает, независимо от тревоги рядом. Раньше
+	# lit_by_match влиял только на see_range монстра (см. monster.gd::
+	# _sense) -- половина сделки "свет против того, чтобы быть увиденным"
+	# была подключена, а обратной стороны (свет и правда помогает) не было
+	# вовсе, спичка выглядела чисто вредной тратой ресурса.
+	if lit_by_match:
+		sanity += delta * MATCH_SANITY_REGEN
 	sanity -= delta * drain
 	sanity = clamp(sanity, 0.0, 1.0)

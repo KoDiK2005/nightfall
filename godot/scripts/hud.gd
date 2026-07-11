@@ -213,7 +213,14 @@ func _process(delta: float) -> void:
 	postfx.material.set_shader_parameter("dread", dread)
 	postfx.material.set_shader_parameter("scare", scare)
 	if items_label.visible and items:
-		items_label.text = "СПИЧКИ %d  КАМНИ %d  ШАШКИ %d  ОБМОТКИ %d" % [items.match_count, items.rock_count, items.flare_count, items.wrap_count]
+		# метка "(горит)"/"(на ногах)" у активного предмета -- раньше строка
+		# показывала только счётчик, и не было способа на глаз понять, что
+		# спичка/обмотки прямо сейчас действуют, а не просто потрачены
+		# ("остальные инструменты бесполезны" -- по факту были без обратной
+		# связи, не проверить, работают ли).
+		var match_tag: String = " (горит)" if items.match_burn > 0.0 else ""
+		var wrap_tag: String = " (на ногах)" if items.wrap_burn > 0.0 else ""
+		items_label.text = "СПИЧКИ %d%s  КАМНИ %d  ШАШКИ %d  ОБМОТКИ %d%s" % [items.match_count, match_tag, items.rock_count, items.flare_count, items.wrap_count, wrap_tag]
 	if _dungeon_hud and level_gen:
 		_update_compass(dread)
 	if GameState.pending_warning != -1:

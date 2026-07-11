@@ -73,6 +73,20 @@ func _strike_match() -> void:
 	# зажжённая спичка -- тоже шум, монстр может пойти на щелчок
 	level_gen.make_noise(Vector2(player.position.x, player.position.z), 2.0)
 
+## камень, летящий по дуге от руки до места удара -- раньше бросок был
+## чисто логическим (raycast + отложенный звук, без единого пикселя в
+## кадре в момент броска), отсюда жалоба "камня не видно, когда кидаешь".
+static func _rock_mesh_mat() -> Array:
+	var mesh := SphereMesh.new()
+	mesh.radius = 0.045
+	mesh.height = 0.09
+	mesh.radial_segments = 6
+	mesh.rings = 3
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = Color(0.32, 0.29, 0.26)
+	mat.roughness = 0.95
+	return [mesh, mat]
+
 func _throw_rock() -> void:
 	if rock_count <= 0:
 		return
@@ -80,30 +94,50 @@ func _throw_rock() -> void:
 	var fwd := -player.transform.basis.z
 	var landing := Vector2(player.position.x, player.position.z)
 	var space := player.get_world_3d().direct_space_state
-	var from := player.position
-	var to := from + fwd * ROCK_MAX_RANGE
+	# бросок стартует от руки (чуть впереди и ниже глаз), не из центра
+	# капсулы игрока -- иначе камень вылетал бы из груди.
+	var from := player.position + Vector3(0, 0.35, 0) + fwd * 0.35
+	var to := player.position + fwd * ROCK_MAX_RANGE
 	var query := PhysicsRayQueryParameters3D.create(from, to)
 	query.collision_mask = 1
 	var hit := space.intersect_ray(query)
+	var to3: Vector3
 	if not hit.is_empty():
 		landing = Vector2(hit.position.x, hit.position.z)
+		to3 = hit.position
 	else:
 		landing = Vector2(to.x, to.z)
-	# удар о камень слышен через мгновение -- пока упрощаем до "сразу"
-	await player.get_tree().create_timer(ROCK_FLY_DUR).timeout
-	level_gen.make_noise(landing, ROCK_NOISE_TTL)
-	# thud.wav из C-сборки (gen_audio.py make_thud) ещё не был скопирован в
-	# Godot -- бросок камня был совсем беззвучным для самого игрока.
-	# AudioStreamPlayer3D сам даёт затухание по расстоянию (see_range/hear в
-	# ai.c делали это вручную).
-	var thud := AudioStreamPlayer3D.new()
-	thud.stream = load("res://assets/thud.wav")
-	thud.unit_size = 3.0
-	thud.max_distance = 16.0
-	thud.position = Vector3(landing.x, 0.3, landing.y)
-	level_gen.props_root.add_child(thud)
-	thud.play()
-	thud.finished.connect(thud.queue_free)
+		to3 = to
+
+	var mm := _rock_mesh_mat()
+	var rock := MeshInstance3D.new()
+	rock.mesh = mm[0]
+	rock.material_override = mm[1]
+	rock.position = from
+	level_gen.props_root.add_child(rock)
+
+	var tw := player.get_tree().create_tween()
+	tw.tween_method(func(t: float):
+		var p: Vector3 = from.lerp(to3, t)
+		p.y += sin(t * PI) * 0.7   # дуга броска, не по прямой линии
+		rock.position = p
+	, 0.0, 1.0, ROCK_FLY_DUR)
+	tw.finished.connect(func():
+		level_gen.make_noise(landing, ROCK_NOISE_TTL)
+		# thud.wav из C-сборки (gen_audio.py make_thud) ещё не был скопирован
+		# в Godot -- бросок камня был совсем беззвучным для самого игрока.
+		var thud := AudioStreamPlayer3D.new()
+		thud.stream = load("res://assets/thud.wav")
+		thud.unit_size = 3.0
+		thud.max_distance = 16.0
+		thud.position = Vector3(landing.x, 0.3, landing.y)
+		level_gen.props_root.add_child(thud)
+		thud.play()
+		thud.finished.connect(thud.queue_free)
+		# камень остаётся лежать секунду-другую, чтобы можно было заметить,
+		# куда он упал, потом убираем -- не копить объекты на полу вечно
+		rock.get_tree().create_timer(2.0).timeout.connect(rock.queue_free)
+	)
 
 func _drop_flare() -> void:
 	if flare_count <= 0:
