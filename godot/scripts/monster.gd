@@ -210,6 +210,19 @@ func _build_bone_material() -> StandardMaterial3D:
 	mat.metallic = 0.0
 	return mat
 
+## пыльно-серая мешковина -- та самая "рваная тряпка на бёдрах" из старого
+## пиксель-арта (см. историю _build_stalker_textures), которая потерялась,
+## когда тело стало 3D-ригом из голых капсул. Не только деталь для
+## узнаваемости: свисающие лоскуты разной длины и под случайным углом
+## ломают чистый силуэт капсулы бедра/торса -- ещё один штрих против
+## "выглядит как манекен", отдельно от шума на самой геометрии.
+func _build_rag_material() -> StandardMaterial3D:
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = Color(0.24, 0.21, 0.17)
+	mat.roughness = 0.95
+	mat.metallic = 0.0
+	return mat
+
 func _sphere(radius: float) -> SphereMesh:
 	var m := SphereMesh.new()
 	m.radius = radius
@@ -377,12 +390,15 @@ func _add_mesh(parent: Node3D, mesh: Mesh, mat: Material, pos: Vector3, rot_deg:
 ## и напрямую из level_gen.gd для "фантома" (галлюцинация на низком
 ## рассудке, см. _spawn_phantom): фантому не нужны сенсы/движение, только
 ## видимое тело с тем же материалом, который потом мерцает альфой.
-## заметно выше игрока (капсула игрока -- 1.7, см. scenes/main.tscn) --
+## заметно выше игрока (капсула игрока -- 1.55, см. scenes/main.tscn) --
 ## "чувствовать беспомощность" в комнате с ним: снизу вверх смотришь на
-## что-то нависающее, а не вровень с собой. Раньше рост был почти равен
-## росту игрока, и вблизи оно читалось скорее как "ещё один человек", а не
-## как непропорциональная угроза.
-const RIG_SCALE := 1.3
+## что-то нависающее, а не вровень с собой. НО потолок (WALL_H в
+## level_gen.gd) -- ровно 2.0, и это жёсткий потолок в буквальном смысле:
+## при более высоком масштабе голова протыкала уже-сплошной (после фикса
+## resources/tiles.tres) потолок и уродливо просвечивала сквозь него.
+## 0.95 при текущей высоте рига (макушка на 2.0 с шеей) укладывается под
+## потолок с небольшим запасом и всё ещё заметно выше игрока.
+const RIG_SCALE := 0.95
 
 func _build_rig() -> void:
 	for c in body.get_children():
@@ -430,6 +446,19 @@ func _build_rig() -> void:
 		var rib_w: float = 0.1 - i * 0.01
 		_add_mesh(torso_node, _lumpy_capsule(0.013, rib_w * 2.0, 0.005, 40 + i), bone_mat, Vector3(0, rib_y, -0.135), Vector3(0, 0, 90))
 
+	# рваные лоскуты мешковины на бёдрах -- висят от пояса (y=0 у torso_node
+	# -- это и есть уровень бёдер, см. hip_l/hip_r ниже) вниз и врозь по
+	# кругу, случайная длина и угол на каждый лоскут
+	var rag_mat := _build_rag_material()
+	for i in range(6):
+		var ang: float = (float(i) / 6.0) * TAU + randf_range(-0.3, 0.3)
+		var rag_len: float = 0.16 + randf() * 0.14
+		var rx: float = cos(ang) * 0.13
+		var rz: float = sin(ang) * 0.1
+		var rag := _add_mesh(torso_node, _lumpy_capsule(0.022, rag_len, 0.008, 60 + i), rag_mat, Vector3(rx, -0.03 - rag_len * 0.5, rz))
+		rag.scale = Vector3(1.6, 1.0, 0.5)
+		rag.rotation = Vector3(randf_range(-0.15, 0.15), ang, randf_range(0.12, 0.32))
+
 	# шея -- тонкая, неестественно длинная, свёрнутая набок под собственным
 	# случайным углом (как и хромота/крен торса выше -- у каждого спавна
 	# свой излом). Раньше голова сидела прямо на плечах без единого сустава
@@ -440,12 +469,12 @@ func _build_rig() -> void:
 	var neck_node := _add_pivot(torso_node, Vector3(0, 0.58, 0))
 	neck_node.rotation.z = neck_tilt
 	neck_node.rotation.x = randf_range(-0.06, 0.14)
-	_add_mesh(neck_node, _lumpy_capsule(0.045, 0.19, 0.01, 19), flesh_mat, Vector3(0, 0.095, 0))
+	_add_mesh(neck_node, _lumpy_capsule(0.045, 0.13, 0.01, 19), flesh_mat, Vector3(0, 0.065, 0))
 
 	# голова: приплюснутая сфера на пивоте у макушки шеи, чтобы вращать
 	# отдельно от торса (кивки/повороты в _animate_walk). Бугры мельче, чем
 	# на теле -- иначе размывается посадка глаз/пасти на поверхности.
-	head_node = _add_pivot(neck_node, Vector3(0, 0.19, 0))
+	head_node = _add_pivot(neck_node, Vector3(0, 0.13, 0))
 	var head_mi := _add_mesh(head_node, _lumpy_sphere(0.14, 0.008, 14), flesh_mat, Vector3(0, 0.14, 0.01))
 	head_mi.scale = Vector3(0.92, 1.12, 0.88)
 
@@ -459,13 +488,13 @@ func _build_rig() -> void:
 		_add_mesh(head_node, ear_mesh.duplicate(), flesh_mat, Vector3(0.11, 0.24, 0), Vector3(0, 0, 20))
 	elif mon_type == MonType.WATCHER:
 		# неестественно крупные, симметричные, немигающие глаза
-		_add_mesh(head_node, _sphere(0.05), eye_mat, Vector3(-0.065, 0.15, -0.115))
-		_add_mesh(head_node, _sphere(0.05), eye_mat, Vector3(0.065, 0.15, -0.115))
+		_add_mesh(head_node, _sphere(0.05), eye_mat, Vector3(-0.065, 0.15, -0.145))
+		_add_mesh(head_node, _sphere(0.05), eye_mat, Vector3(0.065, 0.15, -0.145))
 	else:
 		# асимметричное лицо тревожит сильнее зеркального -- правый глаз
 		# заметно мельче левого (тот же перекос, что был в старом пиксель-арте)
-		_add_mesh(head_node, _sphere(0.032), eye_mat, Vector3(-0.06, 0.15, -0.115))
-		_add_mesh(head_node, _sphere(0.022), eye_mat, Vector3(0.06, 0.155, -0.11))
+		_add_mesh(head_node, _sphere(0.032), eye_mat, Vector3(-0.06, 0.15, -0.145))
+		_add_mesh(head_node, _sphere(0.022), eye_mat, Vector3(0.06, 0.155, -0.14))
 
 	# лицевая пластина -- рот с клыками и тень переносицы, приклеены плоской
 	# нашлёпкой чуть впереди сферы головы (z чуть меньше, чем у глаз, чтобы
@@ -475,7 +504,7 @@ func _build_rig() -> void:
 	# пиксель-арта.
 	var face_mesh := PlaneMesh.new()
 	face_mesh.size = Vector2(0.15, 0.12)
-	var face_mi := _add_mesh(head_node, face_mesh, _build_face_material(), Vector3(0, 0.045, -0.124), Vector3(-90, 0, 0))
+	var face_mi := _add_mesh(head_node, face_mesh, _build_face_material(), Vector3(0, 0.045, -0.16), Vector3(-90, 0, 0))
 	face_mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	_add_drip_particles(head_node, Vector3(0, 0.02, -0.12))
 
@@ -722,6 +751,26 @@ func _animate_walk(delta: float) -> void:
 	var hunch_target: float = 0.4 if hunting else 0.15
 	torso_node.rotation.x = lerp(torso_node.rotation.x, hunch_target, delta * 3.0)
 	head_node.rotation.x = lerp(head_node.rotation.x, hunch_target * 1.4, delta * 3.0)
+
+	# финальный выпад -- на последних ~1.8м погони оно не просто идёт
+	# быстрее (см. speed_mult в _move), тело тоже меняется: корпус
+	# заваливается вперёд почти горизонтально, руки резко бросает вперёд
+	# на игрока вместо обычного маха при ходьбе -- та самая секунда, когда
+	# погоня перестаёт быть "оно идёт следом" и становится "оно СЕЙЧАС
+	# до тебя дотянется". Раньше монстр вплотную к игроку выглядел точно
+	# так же, как и на любой другой дистанции погони -- испуг экрана
+	# (caught.gd) был единственным сигналом, само тело не участвовало.
+	const LUNGE_DIST := 1.8
+	var lunge: float = 0.0
+	if hunting and not frozen:
+		var pd2: float = Vector2(position.x, position.z).distance_to(Vector2(player.position.x, player.position.z))
+		lunge = clamp(1.0 - pd2 / LUNGE_DIST, 0.0, 1.0)
+		lunge = lunge * lunge   # квадратичный разгон -- почти незаметно до полутора метров, потом резко
+	if lunge > 0.0:
+		torso_node.rotation.x = lerp(torso_node.rotation.x, 0.62, lunge)
+		shoulder_l.rotation.x = lerp(shoulder_l.rotation.x, -1.9, lunge)
+		shoulder_r.rotation.x = lerp(shoulder_r.rotation.x, -1.9, lunge)
+		head_node.rotation.x = lerp(head_node.rotation.x, 0.3, lunge)
 
 func _sense(delta: float) -> void:
 	if player.hidden:

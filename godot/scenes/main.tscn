@@ -24,11 +24,11 @@ size = Vector3(58, 0.2, 38)
 
 [sub_resource type="CapsuleMesh" id="CapsuleMesh_player"]
 radius = 0.35
-height = 1.7
+height = 1.55
 
 [sub_resource type="CapsuleShape3D" id="CapsuleShape3D_player"]
 radius = 0.35
-height = 1.7
+height = 1.55
 
 [sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_1"]
 
