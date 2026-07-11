@@ -1220,6 +1220,15 @@ func _place_doors() -> void:
 	wood_mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
 	wood_mat.roughness = 1.0
 
+	# тот же материал, что и у обычных стен (не дерево двери) -- кусок
+	# кладки над проёмом должен выглядеть и, главное, освещаться так же,
+	# как соседняя стена: горизонтальный потолочный тайл почти не ловит
+	# свет от факелов (они бьют в основном вбок, не вниз) и остаётся
+	# тёмным пятном прямо над дверью, даже когда геометрия там есть --
+	# со стороны это неотличимо от настоящей дыры. Вертикальная кладка
+	# ловит тот же свет, что и стены рядом.
+	var wall_mat: StandardMaterial3D = load("res://resources/wall_material.tres")
+
 	var seen: Dictionary = {}
 	for spec in doorway_specs:
 		var cell: Vector2i = spec.pos
@@ -1230,7 +1239,7 @@ func _place_doors() -> void:
 		if not is_open(cell.x, cell.y):
 			continue
 		seen[cell] = true
-		_build_door_frame(cell, spec.dir, wood_mat)
+		_build_door_frame(cell, spec.dir, wood_mat, wall_mat)
 
 ## открывает дверь при приближении игрока и закрывает за спиной, с
 ## гистерезисом между порогами (иначе дверь дребезжала бы туда-сюда прямо
@@ -1251,7 +1260,7 @@ func _update_doors(p: Vector2) -> void:
 			tw2.tween_property(d.pivot, "rotation:y", 0.0, 0.5) \
 				.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN)
 
-func _build_door_frame(cell: Vector2i, dir: Vector2i, wood_mat: StandardMaterial3D) -> void:
+func _build_door_frame(cell: Vector2i, dir: Vector2i, wood_mat: StandardMaterial3D, wall_mat: StandardMaterial3D) -> void:
 	var cx: float = cell.x + 0.5
 	var cz: float = cell.y + 0.5
 	# косяк идёт поперёк прохода: если проём смотрит по X (dir.x != 0),
@@ -1283,6 +1292,20 @@ func _build_door_frame(cell: Vector2i, dir: Vector2i, wood_mat: StandardMaterial
 	lintel.material_override = wood_mat
 	lintel.position = Vector3(cx, leaf_top + lintel_h / 2.0, cz)
 	props_root.add_child(lintel)
+
+	# кладка над притолокой -- геометрически проём и так закрыт потолочным
+	# тайлом (см. resources/tiles.tres), но тот тайл горизонтальный и почти
+	# не ловит свет от факелов на стенах (они светят вбок, не вниз), так что
+	# выглядит как чёрная дыра, даже когда честно на месте. Вертикальный
+	# кусок кладки над самой притолокой ловит тот же свет, что и стены
+	# рядом, и читается как "стена продолжается вверх", а не пустота.
+	var cap := MeshInstance3D.new()
+	cap.mesh = BoxMesh.new()
+	var cap_h: float = float(WALL_H) - leaf_top + 0.3
+	cap.mesh.size = Vector3(1.02, cap_h, 1.02)
+	cap.material_override = wall_mat
+	cap.position = Vector3(cx, leaf_top + cap_h / 2.0, cz)
+	props_root.add_child(cap)
 
 	# сама панель -- навешена на "минус"-столб как на петлю (тот же приём,
 	# что и у двери выхода): пивот стоит у петли, панель -- его ребёнок,
