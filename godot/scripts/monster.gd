@@ -203,6 +203,13 @@ func _build_eye_material() -> StandardMaterial3D:
 	mat.emission_energy_multiplier = 6.0
 	return mat
 
+func _build_bone_material() -> StandardMaterial3D:
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = Color(0.56, 0.51, 0.42)
+	mat.roughness = 0.7
+	mat.metallic = 0.0
+	return mat
+
 func _sphere(radius: float) -> SphereMesh:
 	var m := SphereMesh.new()
 	m.radius = radius
@@ -323,6 +330,34 @@ func _build_face_material() -> StandardMaterial3D:
 	mat.emission_energy_multiplier = 0.5   # лёгкий блик на клыках, не самосвет
 	return mat
 
+## редкие тёмные капли, срывающиеся изо рта -- дешёвый, но сильный сигнал
+## "оно живое и голодное", а не статичная модель. GPUParticles3D сама
+## считает падение/гравитацию, никакого ручного таймера в _process не нужно.
+func _add_drip_particles(parent: Node3D, pos: Vector3) -> void:
+	var particles := GPUParticles3D.new()
+	particles.position = pos
+	particles.amount = 4
+	particles.lifetime = 1.6
+	particles.preprocess = 1.6
+	var pm := ParticleProcessMaterial.new()
+	pm.direction = Vector3(0, -1, 0)
+	pm.spread = 8.0
+	pm.gravity = Vector3(0, -1.6, 0)
+	pm.initial_velocity_min = 0.0
+	pm.initial_velocity_max = 0.05
+	pm.scale_min = 0.6
+	pm.scale_max = 1.0
+	particles.process_material = pm
+	var drip_mesh := _sphere(0.006)
+	var drip_mat := StandardMaterial3D.new()
+	drip_mat.albedo_color = Color(0.12, 0.02, 0.02)
+	drip_mat.emission_enabled = true
+	drip_mat.emission = Color(0.12, 0.02, 0.02)
+	drip_mat.emission_energy_multiplier = 0.6
+	drip_mesh.material = drip_mat
+	particles.draw_pass_1 = drip_mesh
+	parent.add_child(particles)
+
 func _add_pivot(parent: Node3D, pos: Vector3) -> Node3D:
 	var n := Node3D.new()
 	n.position = pos
@@ -384,10 +419,33 @@ func _build_rig() -> void:
 	var torso_mi := _add_mesh(torso_node, _lumpy_capsule(0.16, 0.58, 0.02, 13), flesh_mat, Vector3(0, 0.29, 0))
 	torso_mi.scale = Vector3(1.0, 1.0, 0.72)
 
-	# голова: приплюснутая сфера на пивоте у основания шеи, чтобы вращать
+	# рёбра -- настоящая проступающая геометрия, а не только светлые пятна в
+	# текстуре. Раньше "кость сквозь плоть" была исключительно рисованной
+	# деталью -- с двух метров, в темноте, она сливалась с остальным шумом
+	# кожи; выступающие бледные дуги читаются силуэтом даже там, где текстура
+	# уже неразличима.
+	var bone_mat := _build_bone_material()
+	for i in range(3):
+		var rib_y: float = 0.15 + i * 0.085
+		var rib_w: float = 0.1 - i * 0.01
+		_add_mesh(torso_node, _lumpy_capsule(0.013, rib_w * 2.0, 0.005, 40 + i), bone_mat, Vector3(0, rib_y, -0.135), Vector3(0, 0, 90))
+
+	# шея -- тонкая, неестественно длинная, свёрнутая набок под собственным
+	# случайным углом (как и хромота/крен торса выше -- у каждого спавна
+	# свой излом). Раньше голова сидела прямо на плечах без единого сустава
+	# между ними -- ровная посадка читалась спокойно, "как надо"; сломанная
+	# шея -- самый дешёвый и самый читаемый признак того, что с телом
+	# что-то физически не так.
+	var neck_tilt: float = randf_range(-0.2, 0.2)
+	var neck_node := _add_pivot(torso_node, Vector3(0, 0.58, 0))
+	neck_node.rotation.z = neck_tilt
+	neck_node.rotation.x = randf_range(-0.06, 0.14)
+	_add_mesh(neck_node, _lumpy_capsule(0.045, 0.19, 0.01, 19), flesh_mat, Vector3(0, 0.095, 0))
+
+	# голова: приплюснутая сфера на пивоте у макушки шеи, чтобы вращать
 	# отдельно от торса (кивки/повороты в _animate_walk). Бугры мельче, чем
 	# на теле -- иначе размывается посадка глаз/пасти на поверхности.
-	head_node = _add_pivot(torso_node, Vector3(0, 0.58, 0))
+	head_node = _add_pivot(neck_node, Vector3(0, 0.19, 0))
 	var head_mi := _add_mesh(head_node, _lumpy_sphere(0.14, 0.008, 14), flesh_mat, Vector3(0, 0.14, 0.01))
 	head_mi.scale = Vector3(0.92, 1.12, 0.88)
 
@@ -419,31 +477,39 @@ func _build_rig() -> void:
 	face_mesh.size = Vector2(0.15, 0.12)
 	var face_mi := _add_mesh(head_node, face_mesh, _build_face_material(), Vector3(0, 0.045, -0.124), Vector3(-90, 0, 0))
 	face_mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	_add_drip_particles(head_node, Vector3(0, 0.02, -0.12))
 
 	# руки: две капсулы на сустав (плечо -> локоть -> кисть), тянутся ниже
 	# колен -- те самые "неестественно длинные когтистые руки" из старого
 	# силуэта, но теперь читаются с любого ракурса, не только анфас
+	# одна рука заметно длиннее другой -- какая именно, решает бросок раз в
+	# спавн. Идеально одинаковые конечности -- ещё один манекенный штрих,
+	# которого в живом (пусть и изломанном) теле быть не должно.
+	var long_side: float = -1.0 if randf() < 0.5 else 1.0
 	for side in [-1.0, 1.0]:
+		var lm: float = 1.3 if side == long_side else 1.0
 		var shoulder := _add_pivot(torso_node, Vector3(0.19 * side, 0.56, 0))
 		# слегка разведены в стороны от торса -- иначе капсулы рук сливаются
 		# с торсом в один нечитаемый ком, особенно на средней дистанции
 		shoulder.rotation.z = deg_to_rad(10.0 * side)
 		var arm_seed: int = 15 if side < 0.0 else 16
+		var upper_h: float = 0.42 * lm
+		var fore_h: float = 0.5 * lm
 		_add_mesh(shoulder, _lumpy_sphere(0.058, 0.016, arm_seed + 30), flesh_mat, Vector3.ZERO)
-		_add_mesh(shoulder, _lumpy_capsule(0.05, 0.42, 0.012, arm_seed), flesh_mat, Vector3(0, -0.21, 0))
-		var elbow := _add_pivot(shoulder, Vector3(0, -0.42, 0))
-		_add_mesh(elbow, _lumpy_capsule(0.042, 0.5, 0.011, arm_seed + 10), flesh_mat, Vector3(0, -0.25, 0))
+		_add_mesh(shoulder, _lumpy_capsule(0.05, upper_h, 0.012, arm_seed), flesh_mat, Vector3(0, -upper_h * 0.5, 0))
+		var elbow := _add_pivot(shoulder, Vector3(0, -upper_h, 0))
+		_add_mesh(elbow, _lumpy_capsule(0.042, fore_h, 0.011, arm_seed + 10), flesh_mat, Vector3(0, -fore_h * 0.5, 0))
 		# костяшка локтя -- неровный нарост в месте сустава, скрывает шов
 		# между двумя капсулами руки, который иначе читался как ровный
 		# "манекенный" сгиб на шарнире
-		_add_mesh(shoulder, _lumpy_sphere(0.052, 0.016, arm_seed + 20), flesh_mat, Vector3(0, -0.42, 0))
+		_add_mesh(shoulder, _lumpy_sphere(0.052, 0.016, arm_seed + 20), flesh_mat, Vector3(0, -upper_h, 0))
 		# растопыренные когтистые пальцы -- три тонких конуса веером на кисти
 		var claw_mesh := CylinderMesh.new()
 		claw_mesh.top_radius = 0.0
 		claw_mesh.bottom_radius = 0.016
 		claw_mesh.height = 0.11
 		for cf in [-1, 0, 1]:
-			_add_mesh(elbow, claw_mesh.duplicate(), flesh_mat, Vector3(cf * 0.03, -0.52, -0.02), Vector3(8.0 * cf, 0, 0))
+			_add_mesh(elbow, claw_mesh.duplicate(), flesh_mat, Vector3(cf * 0.03, -fore_h - 0.02, -0.02), Vector3(8.0 * cf, 0, 0))
 		if side < 0.0:
 			shoulder_l = shoulder
 		else:
@@ -544,6 +610,15 @@ func _process(delta: float) -> void:
 			head_node.rotation.y = sin(_twitch_t * 0.6) * 0.55
 		else:
 			head_node.rotation.y = lerp(head_node.rotation.y, 0.0, delta * 3.0)
+
+	# глаза "дышат" -- тлеющая яркость плавно колеблется, а не горит ровным
+	# фиксированным светом. Раньше стабильное свечение читалось скорее как
+	# лампочка/индикатор, чем как что-то живое; на охоте пульс учащается и
+	# резче, ближе к загнанному сердцебиению.
+	if eye_mat:
+		var pulse_speed: float = 9.0 if state == State.HUNT else 3.2
+		var pulse_base: float = 5.0 if state == State.HUNT else 6.0
+		eye_mat.emission_energy_multiplier = pulse_base + sin(_twitch_t * pulse_speed) * 1.8
 
 func _physics_process(delta: float) -> void:
 	if level_gen == null or player == null or GameState.state != GameState.State.PLAY:
