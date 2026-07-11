@@ -1238,6 +1238,22 @@ func _place_doors() -> void:
 		# внутренние клетки) -- строим дверь лишь там, где проход реально открыт
 		if not is_open(cell.x, cell.y):
 			continue
+		# дверь -- только в НАСТОЯЩЕМ проёме: клетка-однотайловый проход сквозь
+		# стену. Позиции проёмов пишутся при генерации (_door_cell), но
+		# Г-образные коридоры и петли (_connect_rooms) потом открывают соседние
+		# клетки, съедая косяк, а иногда клетка проёма вовсе попадает в другую
+		# комнату -- и дверь оказывается стоящей боком посреди открытого пола
+		# ("двери криво в комнате"). Пропускаем такие: у настоящего проёма
+		# по бокам (perp) должна быть глухая стена -- косяки, к которым дверь
+		# крепится -- и открытые клетки спереди и сзади (сквозь неё проходят).
+		var dir: Vector2i = spec.dir
+		var perp := Vector2i(0, 1) if dir.x != 0 else Vector2i(1, 0)
+		var jamb_a: bool = not is_open(cell.x + perp.x, cell.y + perp.y)
+		var jamb_b: bool = not is_open(cell.x - perp.x, cell.y - perp.y)
+		var front_open: bool = is_open(cell.x + dir.x, cell.y + dir.y)
+		var back_open: bool = is_open(cell.x - dir.x, cell.y - dir.y)
+		if not (jamb_a and jamb_b and front_open and back_open):
+			continue
 		seen[cell] = true
 		_build_door_frame(cell, spec.dir, wood_mat, wall_mat)
 
@@ -1266,59 +1282,59 @@ func _build_door_frame(cell: Vector2i, dir: Vector2i, wood_mat: StandardMaterial
 	# косяк идёт поперёк прохода: если проём смотрит по X (dir.x != 0),
 	# косяки стоят по бокам вдоль Z, и наоборот
 	var perp := Vector2(0.0, 1.0) if dir.x != 0 else Vector2(1.0, 0.0)
-	var half := 0.46
-	# полотно и его верхний край считаем заранее: притолока над дверью
-	# должна встать ровно на верх полотна и дотянуться до потолка (см. ниже).
-	var leaf_h: float = float(WALL_H) - 0.32
-	var leaf_top: float = leaf_h + 0.06
+	var jamb_half := 0.46
+	# дверь нормальной высоты (~в рост игрока), а над ней -- полклетки стены
+	# до потолка. Раньше полотно было почти под потолок (WALL_H-0.32=1.68),
+	# и над ним оставалась узкая полоска "притолоки" -- смотрелось как щель,
+	# заткнутая планкой, а не как стена с прорезанным проходом.
+	var leaf_h: float = 1.5
+	var leaf_top: float = leaf_h + 0.05
+
+	# СТЕНА НАД ДВЕРЬЮ -- главное отличие: полноразмерная кладка на всю
+	# ширину клетки (1x1), от верха проёма до самого потолка, тем же
+	# материалом, что и соседние стены. Верх клетки двери заполняется ровно
+	# так же, как _paint заполняет столбцы соседних стеновых клеток -- проём
+	# читается как ДЫРА, ПРОРЕЗАННАЯ В НИЗУ СТЕНЫ, а не как отдельная планка
+	# в пустоте. Раньше сверху был лишь тонкий брусок притолоки да отдельный
+	# кусок кладки, которые не доставали до потолка и висели неестественно.
+	var header := MeshInstance3D.new()
+	header.mesh = BoxMesh.new()
+	var header_h: float = float(WALL_H) - leaf_top + 0.06   # +нахлёст в потолок
+	header.mesh.size = Vector3(1.0, header_h, 1.0)
+	header.material_override = wall_mat
+	header.position = Vector3(cx, leaf_top + header_h / 2.0 - 0.03, cz)
+	props_root.add_child(header)
+
+	# деревянная дверная коробка -- два косяка по бокам проёма и перемычка
+	# поверх полотна, только на высоту двери (выше уже кладка). Чистая
+	# рамочная отделка, чтобы проём читался как дверь, а не голый пролом.
 	for side in [-1.0, 1.0]:
 		var post := MeshInstance3D.new()
 		post.mesh = BoxMesh.new()
-		post.mesh.size = Vector3(0.08, float(WALL_H), 0.08)
+		post.mesh.size = Vector3(0.08, leaf_top, 0.14) if dir.x != 0 else Vector3(0.14, leaf_top, 0.08)
 		post.material_override = wood_mat
-		post.position = Vector3(cx + perp.x * half * side, WALL_H / 2.0, cz + perp.y * half * side)
+		post.position = Vector3(cx + perp.x * jamb_half * side, leaf_top / 2.0, cz + perp.y * jamb_half * side)
 		props_root.add_child(post)
-	# притолока -- раньше была тонким бруском (0.12 высотой у самого потолка),
-	# и над ней до потолка оставалась открытая щель в стене: сквозь верх
-	# проёма было видно наружу ("сверху пространство пустое"). Теперь это
-	# цельная перемычка от верхнего края полотна до самого потолка (WALL_H) --
-	# проём закрыт вплотную сверху, как по бокам его закрывают косяки.
-	var lintel := MeshInstance3D.new()
-	lintel.mesh = BoxMesh.new()
-	var span: float = half * 2.0 + 0.10
-	var lintel_h: float = float(WALL_H) - leaf_top
-	# длинная сторона притолоки идёт вдоль той же оси, что и косяки (perp)
-	lintel.mesh.size = Vector3(0.12, lintel_h, span) if dir.x != 0 else Vector3(span, lintel_h, 0.12)
-	lintel.material_override = wood_mat
-	lintel.position = Vector3(cx, leaf_top + lintel_h / 2.0, cz)
-	props_root.add_child(lintel)
+	var trim := MeshInstance3D.new()
+	trim.mesh = BoxMesh.new()
+	var trim_span: float = jamb_half * 2.0 + 0.14
+	trim.mesh.size = Vector3(0.14, 0.1, trim_span) if dir.x != 0 else Vector3(trim_span, 0.1, 0.14)
+	trim.material_override = wood_mat
+	trim.position = Vector3(cx, leaf_top - 0.05, cz)
+	props_root.add_child(trim)
 
-	# кладка над притолокой -- геометрически проём и так закрыт потолочным
-	# тайлом (см. resources/tiles.tres), но тот тайл горизонтальный и почти
-	# не ловит свет от факелов на стенах (они светят вбок, не вниз), так что
-	# выглядит как чёрная дыра, даже когда честно на месте. Вертикальный
-	# кусок кладки над самой притолокой ловит тот же свет, что и стены
-	# рядом, и читается как "стена продолжается вверх", а не пустота.
-	var cap := MeshInstance3D.new()
-	cap.mesh = BoxMesh.new()
-	var cap_h: float = float(WALL_H) - leaf_top + 0.3
-	cap.mesh.size = Vector3(1.02, cap_h, 1.02)
-	cap.material_override = wall_mat
-	cap.position = Vector3(cx, leaf_top + cap_h / 2.0, cz)
-	props_root.add_child(cap)
-
-	# сама панель -- навешена на "минус"-столб как на петлю (тот же приём,
+	# сама панель -- навешена на "минус"-косяк как на петлю (тот же приём,
 	# что и у двери выхода): пивот стоит у петли, панель -- его ребёнок,
 	# смещённая так, что её край совпадает с петлёй.
 	var leaf := MeshInstance3D.new()
 	leaf.mesh = BoxMesh.new()
-	var leaf_span: float = half * 2.0 - 0.05
+	var leaf_span: float = jamb_half * 2.0 - 0.05
 	leaf.mesh.size = Vector3(0.05, leaf_h, leaf_span) if dir.x != 0 else Vector3(leaf_span, leaf_h, 0.05)
 	leaf.material_override = wood_mat
 	var pivot := Node3D.new()
-	pivot.position = Vector3(cx - perp.x * half, 0.0, cz - perp.y * half)
+	pivot.position = Vector3(cx - perp.x * jamb_half, 0.0, cz - perp.y * jamb_half)
 	props_root.add_child(pivot)
-	leaf.position = Vector3(perp.x * half, leaf_h / 2.0 + 0.06, perp.y * half)
+	leaf.position = Vector3(perp.x * jamb_half, leaf_h / 2.0 + 0.05, perp.y * jamb_half)
 	pivot.add_child(leaf)
 	doors.append({"pivot": pivot, "pos": Vector2(cx, cz), "dir": dir, "is_open": false})
 
