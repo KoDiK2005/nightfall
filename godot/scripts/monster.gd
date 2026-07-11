@@ -799,6 +799,12 @@ func _sense(delta: float) -> void:
 	# Наблюдателя тоже (он и так всегда знает, где ты) -- присед против них
 	# работает только через слух/скорость, что честно разводит виды.
 	var see_mult: float = 0.75 if player.crouched else 1.0
+	# укрытие за ящиком (player.gd::near_cover, требует присед вплотную к
+	# ящику) -- дополнительная частичная невидимость поверх обычного присяда,
+	# не полная (шкафчик уже даёт полную через ранний return выше), просто
+	# труднее заметить силуэт за габаритом ящика.
+	if player.near_cover:
+		see_mult *= 0.55
 
 	if mon_type == MonType.LISTENER:
 		# слепой -- зрение не участвует вовсе, только гораздо более острый слух
@@ -855,10 +861,10 @@ func _sense(delta: float) -> void:
 		var tgt := Vector2i(int(last_known.x), int(last_known.y))
 		var best_ld := 3.0
 		for l in player.lockers:
-			var ld: float = abs(l.position.x - last_known.x) + abs(l.position.z - last_known.y)
+			var ld: float = abs(l.pos.x - last_known.x) + abs(l.pos.y - last_known.y)
 			if ld < best_ld:
 				best_ld = ld
-				tgt = Vector2i(int(l.position.x), int(l.position.z))
+				tgt = Vector2i(int(l.pos.x), int(l.pos.y))
 		set_target(tgt)
 	elif state == State.SEARCH:
 		if pause_timer > 0.0:
