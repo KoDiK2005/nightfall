@@ -1466,6 +1466,19 @@ func _place_lockers(exit_room_idx: int) -> void:
 				if cand_pos.distance_to(l.pos) < 2.0:
 					too_close = true
 					break
+			# сундуки и дверь выхода к этому моменту уже расставлены (см.
+			# порядок вызовов в _place_keys_and_exit), но раньше шкафчик их
+			# вообще не спрашивал -- только другие шкафчики и двери. Шкафчик
+			# мог сесть прямо на сундук/дверь выхода или вплотную к ним, и
+			# два перекрывающихся коллайдера у единственного прохода через
+			# комнату перегораживали его целиком ("не пройти из-за шкафа").
+			if not too_close:
+				for c2 in chests:
+					if cand_pos.distance_to(c2.pos) < 1.3:
+						too_close = true
+						break
+			if not too_close and cand_pos.distance_to(exit_pos) < 1.3:
+				too_close = true
 			if too_close:
 				continue
 			# клетка у стены рядом с дверным проёмом -- шкафчик своей коллизией
