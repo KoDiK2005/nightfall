@@ -80,6 +80,8 @@ var hip_l: Node3D = null
 var hip_r: Node3D = null
 var shoulder_l: Node3D = null
 var shoulder_r: Node3D = null
+var _torso_base_pos: Vector3 = Vector3.ZERO
+var _stutter_timer: float = 0.0
 
 ## тайловая текстура рваной, шрамированной плоти -- шум под кожей, тёмные
 ## трещины-вены, редкие кровавые/костяные вкрапления и пара более крупных
@@ -178,9 +180,17 @@ func _add_mesh(parent: Node3D, mesh: Mesh, mat: Material, pos: Vector3, rot_deg:
 ## и напрямую из level_gen.gd для "фантома" (галлюцинация на низком
 ## рассудке, см. _spawn_phantom): фантому не нужны сенсы/движение, только
 ## видимое тело с тем же материалом, который потом мерцает альфой.
+## заметно выше игрока (капсула игрока -- 1.7, см. scenes/main.tscn) --
+## "чувствовать беспомощность" в комнате с ним: снизу вверх смотришь на
+## что-то нависающее, а не вровень с собой. Раньше рост был почти равен
+## росту игрока, и вблизи оно читалось скорее как "ещё один человек", а не
+## как непропорциональная угроза.
+const RIG_SCALE := 1.3
+
 func _build_rig() -> void:
 	for c in body.get_children():
 		c.queue_free()
+	body.scale = Vector3.ONE * RIG_SCALE
 	flesh_mat = _build_flesh_material()
 	eye_mat = _build_eye_material()
 
@@ -195,6 +205,7 @@ func _build_rig() -> void:
 
 	# торс: узкая вытянутая капсула, чуть сужена к бёдрам -- через scale.x/z
 	torso_node = _add_pivot(body, Vector3(0, 1.0, 0))
+	_torso_base_pos = torso_node.position
 	var torso_mesh := CapsuleMesh.new()
 	torso_mesh.radius = 0.16
 	torso_mesh.height = 0.58
@@ -392,32 +403,67 @@ func _face_player() -> void:
 	if global_position.distance_to(t) > 0.2:
 		look_at(t, Vector3.UP)
 
-## походка рига -- ноги/руки качаются в противофазе от скорости, а не по
-## фактическому направлению движения (тело и так всегда развёрнуто на
-## игрока, см. _face_player() -- кинематически точная походка потребовала бы
-## разворота ног независимо от торса, лишняя сложность ради малозаметной
-## детали). Хромота -- лёгкий несимметричный крен бёдер, "неправильный" шаг,
-## тревожащий сильнее ровной походки. Сутулость нарастает во время охоты --
-## корпус и голова подаются вперёд, как в старом комментарии про силуэт.
+## походка рига -- ноги/руки качаются от скорости, а не по фактическому
+## направлению движения (тело и так всегда развёрнуто на игрока, см.
+## _face_player() -- кинематически точная походка потребовала бы разворота
+## ног независимо от торса, лишняя сложность ради малозаметной детали).
+## Раньше это был чистый sin() в противофазе -- плавно и предсказуемо
+## читалось скорее как аниматроник, чем как что-то живое-но-неправильное.
+## Теперь три слоя поверх этого:
+##  1) фаза ноги искажена вторым, более быстрым колебанием -- шаг то
+##     ускоряется, то тормозит внутри одного цикла, а не идёт ровно;
+##  2) руки качаются НЕ в противофазе ногам, а на собственной, чуть иной
+##     частоте -- рассинхрон между руками и ногами читается как "нарушенная
+##     координация", а не просто быстрая ходьба;
+##  3) редкие микро-заедания (_stutter_timer) -- шаг на долю секунды
+##     замирает и тут же продолжает с того же места, будто сбоящая марионетка
+##     потеряла и тут же поймала кадр. Чаще и резче во время охоты.
+## Вертикальный лурч (torso подпрыгивает дважды за шаг) и сутулость на
+## охоте -- как и раньше, корпус/голова подаются вперёд.
 func _animate_walk(delta: float) -> void:
 	if not (torso_node and hip_l and hip_r and shoulder_l and shoulder_r):
 		return
 	var creeping: bool = mon_type == MonType.WATCHER and _player_watching()
 	var speed: float = Vector2(velocity.x, velocity.z).length()
-	var moving: bool = speed > 0.05 and not frozen and pause_timer <= 0.0
-	if moving and not creeping:
+	var hunting: bool = state == State.HUNT
+	var moving: bool = speed > 0.05 and not frozen and pause_timer <= 0.0 and not creeping
+
+	if _stutter_timer > 0.0:
+		_stutter_timer -= delta
+		moving = false   # заело -- поза держится, пока не отпустит
+	elif moving:
+		var stutter_chance: float = 0.01 if hunting else 0.003
+		if randf() < stutter_chance:
+			_stutter_timer = 0.05 + randf() * 0.13
+
+	if moving:
 		_walk_t += delta * (4.0 + speed * 2.2)
-	var amp: float = clamp(speed / SPEED, 0.0, 1.6) * 0.55
-	if creeping or pause_timer > 0.0:
+
+	var amp: float = clamp(speed / SPEED, 0.0, 1.6) * (0.7 if hunting else 0.55)
+	if creeping or pause_timer > 0.0 or _stutter_timer > 0.0:
 		amp = 0.0
-	var swing: float = sin(_walk_t)
+
+	# рваная, неровная фаза ноги -- вместо чистой синусоиды
+	var leg_phase: float = _walk_t + sin(_walk_t * 2.7) * 0.35
+	var swing: float = sin(leg_phase)
 	hip_l.rotation.x = swing * amp
 	hip_r.rotation.x = -swing * amp
-	shoulder_l.rotation.x = -swing * amp * 0.8
-	shoulder_r.rotation.x = swing * amp * 0.8
+
+	# руки на собственной, рассинхронизированной частоте -- не зеркалят ноги
+	var arm_phase: float = _walk_t * 1.35 + 0.6 + sin(_walk_t * 1.9) * 0.5
+	var arm_swing: float = sin(arm_phase)
+	shoulder_l.rotation.x = arm_swing * amp * 0.9
+	shoulder_r.rotation.x = -arm_swing * amp * 0.9
+
 	if mon_type != MonType.WATCHER:
 		hip_l.rotation.z = sin(_walk_t * 0.5) * 0.08   # лёгкая хромота
-	var hunch_target: float = 0.4 if state == State.HUNT else 0.15
+
+	# двойной подскок торса за цикл шага -- тяжёлый, кривой лурч, а не
+	# ровное скольжение
+	var bob: float = absf(sin(leg_phase)) * amp * 0.05
+	torso_node.position = _torso_base_pos + Vector3(0, bob, 0)
+
+	var hunch_target: float = 0.4 if hunting else 0.15
 	torso_node.rotation.x = lerp(torso_node.rotation.x, hunch_target, delta * 3.0)
 	head_node.rotation.x = lerp(head_node.rotation.x, hunch_target * 1.4, delta * 3.0)
 
