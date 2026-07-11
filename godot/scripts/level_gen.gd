@@ -1295,17 +1295,22 @@ func _build_door_frame(cell: Vector2i, dir: Vector2i, wood_mat: StandardMaterial
 
 	# СТЕНА НАД ДВЕРЬЮ -- сплошной блок кладки на ВСЮ клетку (1x1 в плане),
 	# от верха проёма до потолка, тем же материалом, что и соседние стены.
-	# Именно full-cell (не тонкий брусок) закрывает дыру ПОЛНОСТЬЮ, со всех
-	# ракурсов: раньше притолока была 0.12 толщиной вдоль прохода и не
-	# заполняла клетку в глубину -- сбоку над дверью было видно насквозь
-	# ("дыра над дверью"). Полоса тонкая (потолок низкий), но глухая -- проём
-	# читается как проход, прорезанный в сплошной стене.
+	# КЛЮЧЕВОЕ: настоящий низ потолка -- НЕ на WALL_H (2.0), а на WALL_H+0.5
+	# (2.5). GridMap кладёт тайл потолка на слой WALL_H, а map_to_local даёт
+	# ЦЕНТР клетки (слой*cell_size + 0.5), так что низ потолка выходит на
+	# WALL_H+0.5. Стены рядом тоже доходят ровно до 2.5. Исходный код и все
+	# прошлые правки тянули притолоку лишь до WALL_H=2.0 -- отсюда стойкая
+	# щель 0.4-0.5 между верхом "стены над дверью" и потолком, которую никак
+	# не удавалось закрыть. Теперь блок доходит до реального потолка (+нахлёст).
+	var ceil_y: float = float(WALL_H) + 0.5
+	var header_bottom: float = leaf_top - 0.06         # лёгкий нахлёст на верх проёма
+	var header_top: float = ceil_y + 0.1               # нахлёст в потолок
+	var header_h: float = header_top - header_bottom
 	var header := MeshInstance3D.new()
 	header.mesh = BoxMesh.new()
-	var header_h: float = float(WALL_H) - leaf_top + 0.12   # нахлёст в потолок и на верх проёма
 	header.mesh.size = Vector3(1.0, header_h, 1.0)
 	header.material_override = wall_mat
-	header.position = Vector3(cx, leaf_top + header_h / 2.0 - 0.06, cz)
+	header.position = Vector3(cx, header_bottom + header_h / 2.0, cz)
 	props_root.add_child(header)
 
 	# деревянная дверная коробка -- два косяка по бокам проёма и перемычка
