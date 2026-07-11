@@ -83,40 +83,60 @@ var shoulder_r: Node3D = null
 var _torso_base_pos: Vector3 = Vector3.ZERO
 var _stutter_timer: float = 0.0
 
-## тайловая текстура рваной, шрамированной плоти -- шум под кожей, тёмные
-## трещины-вены, редкие кровавые/костяные вкрапления и пара более крупных
-## открытых ран. Используется через triplanar-проекцию (mat.uv1_triplanar),
-## поэтому один и тот же тайл ложится без ручной UV-развёртки на любую
-## капсулу/сферу рига -- ни швов, ни растяжения.
+## тайловая текстура рваной, шрамированной плоти -- рёбра, вены, кровавые
+## и костяные вкрапления, крупные открытые раны. Используется через
+## triplanar-проекцию (mat.uv1_triplanar), поэтому один и тот же тайл
+## ложится без ручной UV-развёртки на любую капсулу/сферу рига -- ни швов,
+## ни растяжения. Раньше была почти однотонная (база 0.15 ± 0.05, мелкий
+## масштаб повторов) -- вблизи читалась просто как шумной серый ком, без
+## различимых деталей. Теперь контраст в разы выше (рёбра светлее, раны
+## темнее, крупнее сами пятна), плюс сгенерированная normal-карта из того же
+## рельефа (_build_flesh_normal) -- рёбра/трещины реально выступают под
+## светом факела, а не только раскрашены плоским цветом.
 static func _build_flesh_texture() -> ImageTexture:
 	if _flesh_tex != null:
 		return _flesh_tex
-	const N := 128
+	const N := 192
 	var img := Image.create(N, N, false, Image.FORMAT_RGBA8)
 	var base_n := FastNoiseLite.new()
 	base_n.seed = 1337
-	base_n.frequency = 0.06
+	base_n.frequency = 0.045
 	var vein_n := FastNoiseLite.new()
 	vein_n.seed = 91
-	vein_n.frequency = 0.14
+	vein_n.frequency = 0.1
 	vein_n.fractal_type = FastNoiseLite.FRACTAL_RIDGED
+	var rib_n := FastNoiseLite.new()
+	rib_n.seed = 53
+	rib_n.frequency = 0.045
 	for y in range(N):
 		for x in range(N):
-			var base: float = 0.15 + base_n.get_noise_2d(x, y) * 0.05
-			var col := Color(base * 0.88, base, base * 0.8, 1.0)
-			if vein_n.get_noise_2d(x, y) > 0.5:
-				col = col.darkened(0.55)   # трещины/вены, проступающие сквозь кожу
+			var base: float = 0.12 + base_n.get_noise_2d(x, y) * 0.06
+			var col := Color(base * 0.85, base, base * 0.75, 1.0)
+			var vein: float = vein_n.get_noise_2d(x, y)
+			if vein > 0.45:
+				col = col.darkened(0.7)   # глубокие трещины/вены
+			elif vein > 0.25:
+				col = col.darkened(0.35)
+			# рёбра/кость -- редкие неровные пятна обнажённой кости из
+			# одного шумового поля (не периодическая волна -- та давала
+			# ровные "зебровые" полосы по всему телу, читалось как ткань,
+			# а не как редкие проступающие кости)
+			var rib_v: float = rib_n.get_noise_2d(x, y * 0.6)
+			if rib_v > 0.5:
+				var bone: float = 0.48 + randf() * 0.12
+				col = Color(bone, bone * 0.93, bone * 0.82, 1.0)
 			var speck := randf()
-			if speck > 0.986:
-				col = Color(0.3, 0.03, 0.03, 1.0)     # кровавая крапинка
+			if speck > 0.982:
+				col = Color(0.35, 0.03, 0.03, 1.0)    # кровавая крапинка
 			elif speck > 0.965:
-				col = Color(0.42, 0.38, 0.3, 1.0)     # бледный костяной скол
+				col = Color(0.5, 0.45, 0.35, 1.0)     # бледный костяной скол
 			img.set_pixel(x, y, col)
-	# несколько более крупных открытых ран поверх шумовой базы
-	for _i in range(5):
+	# несколько крупных открытых ран поверх шумовой базы -- заметно крупнее
+	# и темнее прежних, читаются с нескольких метров, а не только вплотную
+	for _i in range(7):
 		var wx := randi() % N
 		var wy := randi() % N
-		var wr: int = 3 + randi() % 6
+		var wr: int = 6 + randi() % 10
 		for dy in range(-wr, wr):
 			for dx in range(-wr, wr):
 				var px := wx + dx
@@ -125,17 +145,44 @@ static func _build_flesh_texture() -> ImageTexture:
 					continue
 				if dx * dx + dy * dy < wr * wr:
 					var edge: float = float(dx * dx + dy * dy) / float(wr * wr)
-					img.set_pixel(px, py, Color(0.22, 0.02, 0.02, 1.0).lerp(Color(0.05, 0.008, 0.008, 1.0), edge))
+					img.set_pixel(px, py, Color(0.28, 0.02, 0.02, 1.0).lerp(Color(0.04, 0.006, 0.006, 1.0), edge))
 	_flesh_tex = ImageTexture.create_from_image(img)
 	return _flesh_tex
+
+## normal-карта, построенная градиентом яркости той же текстуры (грубый
+## Собель) -- рёбра и трещины получают настоящий рельеф под источником
+## света вместо плоской раскраски, которая в почти чёрном подземелье
+## (см. комментарий в _setup_dungeon_env про почти-чёрный этаж) едва
+## читалась без прямого света в упор.
+static var _flesh_normal: ImageTexture = null
+static func _build_flesh_normal() -> ImageTexture:
+	if _flesh_normal != null:
+		return _flesh_normal
+	var src := _build_flesh_texture().get_image()
+	var n := src.get_width()
+	var img := Image.create(n, n, false, Image.FORMAT_RGBA8)
+	for y in range(n):
+		for x in range(n):
+			var l := src.get_pixel(x, y).v
+			var lx := src.get_pixel((x + 1) % n, y).v
+			var ly := src.get_pixel(x, (y + 1) % n).v
+			var dx: float = (l - lx) * 3.0
+			var dy: float = (l - ly) * 3.0
+			var nrm := Vector3(dx, dy, 1.0).normalized()
+			img.set_pixel(x, y, Color(nrm.x * 0.5 + 0.5, nrm.y * 0.5 + 0.5, nrm.z * 0.5 + 0.5, 1.0))
+	_flesh_normal = ImageTexture.create_from_image(img)
+	return _flesh_normal
 
 func _build_flesh_material() -> StandardMaterial3D:
 	var mat := StandardMaterial3D.new()
 	mat.albedo_texture = _build_flesh_texture()
 	mat.uv1_triplanar = true
-	mat.uv1_triplanar_sharpness = 2.0
-	mat.uv1_scale = Vector3(2.4, 2.4, 2.4)
-	mat.roughness = 0.88
+	mat.uv1_triplanar_sharpness = 2.5
+	mat.uv1_scale = Vector3(1.3, 1.3, 1.3)
+	mat.normal_enabled = true
+	mat.normal_texture = _build_flesh_normal()
+	mat.normal_scale = 1.6
+	mat.roughness = 0.82
 	mat.metallic = 0.0
 	mat.albedo_color = TYPE_TINT.get(mon_type, Color.WHITE)
 	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
@@ -160,6 +207,73 @@ func _sphere(radius: float) -> SphereMesh:
 	m.radius = radius
 	m.height = radius * 2.0
 	return m
+
+## растянутый неестественно широкий оскал с редкими кривыми клыками --
+## порт того же приёма из старого пиксель-арта (fang-паттерн в build_sprites/
+## render.c), но нарисован на прозрачной нашлёпке поверх головы, а не
+## запечён в общую кожу: у Слухача/Наблюдателя рот тоже есть (хищник есть
+## хищник), просто не подписан явным "лицом" отдельно.
+static var _face_tex: ImageTexture = null
+static func _build_face_texture() -> ImageTexture:
+	if _face_tex != null:
+		return _face_tex
+	const FW := 96
+	const FH := 80
+	var img := Image.create(FW, FH, false, Image.FORMAT_RGBA8)
+	img.fill(Color(0, 0, 0, 0))
+	var cx: float = FW / 2.0
+	# тень переносицы -- мягкий тёмный клин над рваным ртом
+	for y in range(int(FH * 0.15), int(FH * 0.55)):
+		for x in range(FW):
+			var nx: float = (x - cx) / (FW * 0.14)
+			var ny: float = (y - FH * 0.15) / (FH * 0.4)
+			if abs(nx) < 1.0 - ny * 0.5:
+				var a: float = clamp(0.35 - abs(nx) * 0.3, 0.0, 0.35)
+				img.set_pixel(x, y, Color(0.02, 0.01, 0.01, a))
+	# рот -- широкий рваный оскал в нижней трети, шире прежнего, неровные края
+	var mouth_y0 := int(FH * 0.58)
+	var mouth_y1 := int(FH * 0.92)
+	for y in range(mouth_y0, mouth_y1):
+		var t: float = float(y - mouth_y0) / float(mouth_y1 - mouth_y0)
+		var half_w: float = (FW * 0.42) * sin(t * PI) + FW * 0.03
+		for x in range(FW):
+			var nx: float = x - cx
+			if abs(nx) < half_w:
+				img.set_pixel(x, y, Color(0.03, 0.008, 0.01, 0.95))
+	# клыки -- кривые бледные треугольники, торчащие сверху и снизу рта,
+	# неровный шаг вместо идеального ряда
+	var fang_mat_c := Color(0.78, 0.74, 0.62, 1.0)
+	var fx := -FW * 0.32
+	while fx < FW * 0.32:
+		var flen: float = 5.0 + randf() * 6.0
+		var fw: float = 2.0 + randf() * 1.5
+		var top: bool = randf() < 0.6
+		var by: float = mouth_y0 + 2.0 if top else mouth_y1 - 2.0
+		var dir: float = 1.0 if top else -1.0
+		for i in range(int(flen)):
+			var row_w: float = fw * (1.0 - float(i) / flen)
+			var py := int(by + dir * i)
+			if py < 0 or py >= FH:
+				continue
+			for dx in range(-int(row_w), int(row_w) + 1):
+				var px := int(cx + fx + dx)
+				if px < 0 or px >= FW:
+					continue
+				img.set_pixel(px, py, fang_mat_c)
+		fx += 5.0 + randf() * 4.0
+	_face_tex = ImageTexture.create_from_image(img)
+	return _face_tex
+
+func _build_face_material() -> StandardMaterial3D:
+	var mat := StandardMaterial3D.new()
+	mat.albedo_texture = _build_face_texture()
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	mat.albedo_color = TYPE_TINT.get(mon_type, Color.WHITE)
+	mat.emission_enabled = true
+	mat.emission_texture = _build_face_texture()
+	mat.emission_energy_multiplier = 0.5   # лёгкий блик на клыках, не самосвет
+	return mat
 
 func _add_pivot(parent: Node3D, pos: Vector3) -> Node3D:
 	var n := Node3D.new()
@@ -238,6 +352,17 @@ func _build_rig() -> void:
 		# заметно мельче левого (тот же перекос, что был в старом пиксель-арте)
 		_add_mesh(head_node, _sphere(0.032), eye_mat, Vector3(-0.06, 0.15, -0.115))
 		_add_mesh(head_node, _sphere(0.022), eye_mat, Vector3(0.06, 0.155, -0.11))
+
+	# лицевая пластина -- рот с клыками и тень переносицы, приклеены плоской
+	# нашлёпкой чуть впереди сферы головы (z чуть меньше, чем у глаз, чтобы
+	# не пересекаться с ней по глубине). Раньше, кроме глаз, на голове не
+	# было вообще ничего -- сфера с двумя точками читалась как "что-то", а
+	# не как лицо; клыкастый оскал возвращает узнаваемый силуэт старого
+	# пиксель-арта.
+	var face_mesh := PlaneMesh.new()
+	face_mesh.size = Vector2(0.15, 0.12)
+	var face_mi := _add_mesh(head_node, face_mesh, _build_face_material(), Vector3(0, 0.045, -0.124), Vector3(-90, 0, 0))
+	face_mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 
 	# руки: две капсулы на сустав (плечо -> локоть -> кисть), тянутся ниже
 	# колен -- те самые "неестественно длинные когтистые руки" из старого
