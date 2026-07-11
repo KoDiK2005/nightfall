@@ -1093,6 +1093,22 @@ func _place_keys_and_exit() -> void:
 ## смещённый ребёнок", что и у двери выхода, см. _open_exit_door) -- E
 ## реально распахивает крышку с тем же скрипом, а сундук остаётся на месте
 ## как открытый ориентир, а не исчезает целиком.
+## реальная мировая высота верхней грани пола -- НЕ 0. FloorGridMap кладёт
+## тайл на слой 0, а GridMap.map_to_local() возвращает ЦЕНТР клетки
+## (cell_center_y по умолчанию true), так что даже с mesh_transform пола
+## y=-0.05 верх плитки выходит на 0.5, не на 0 (замерено напрямую:
+## floor_map.get_cell_item + get_item_mesh_transform + Mesh.get_aabb()).
+## Сундук был размещён в предположении "пол на 0" (y=0.22, высота всего
+## 0.34) -- целиком тонул НИЖЕ настоящего пола и был попросту не виден
+## ("сундук под землёй, а ключ над ним" -- виден был только парящий
+## billboard-значок ключа на y=0.77 и пятно света маяка, самого сундука
+## не видно вообще). Тот же сдвиг, скорее всего, чуть занижает и другие
+## объекты в этом файле (монстр, например, тоже стоит "по щиколотку в
+## полу" при том же замере) -- в тёмной игре с силуэтами это менее
+## заметно, чем с маленьким полностью тонущим сундуком, но если где-то
+## ещё всплывёт "выглядит вросшим в пол", здесь корень.
+const GROUND_Y := 0.5
+
 func _build_chest(pos: Vector2, chest_mat: StandardMaterial3D, key_icon_mat: StandardMaterial3D) -> Dictionary:
 	const CHEST_SIZE := Vector3(0.55, 0.34, 0.36)
 	const LID_FRAC := 0.42   # доля общей высоты, которая приходится на крышку
@@ -1141,7 +1157,7 @@ func _build_chest(pos: Vector2, chest_mat: StandardMaterial3D, key_icon_mat: Sta
 	# крышка -- сузив там, только увеличили бы долю крышки без коллизии под
 	# собой, а не уменьшили.
 	var chest_col_size := Vector3(CHEST_SIZE.x * 0.82, CHEST_SIZE.y, CHEST_SIZE.z)
-	var chest_root := _add_prop_collision(root, Vector3(pos.x, 0.22, pos.y), chest_col_size)
+	var chest_root := _add_prop_collision(root, Vector3(pos.x, GROUND_Y + 0.22, pos.y), chest_col_size)
 	return {"pos": pos, "active": true, "mesh": root, "root": chest_root, "key_icon": key_icon, "lid_pivot": lid_pivot}
 
 ## Распахнуть крышку конкретного сундука -- тот же tween-приём и звук
