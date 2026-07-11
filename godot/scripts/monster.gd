@@ -42,164 +42,220 @@ var level_gen: Node = null
 var player: CharacterBody3D = null
 var frozen: bool = false   # dev-хук NIGHTFALL_SHOWMON: стоит на месте для скриншота
 
-## Порт сприта 0 (THE STALKER) из build_sprites (render.c): высокий сутулый
-## силуэт с впалым бледным лицом, тонкими когтистыми руками и горящими
-## глазами -- раньше тело было просто чёрной капсулой с двумя отдельными
-## сферами-глазами. Теперь это billboard-плоскость (сам движок держит её
-## лицом к камере -- ручной _face_player() для этого больше не нужен, но
-## оставлен: он же используется в watcher-логике "видит ли игрок монстра").
-## перерисовано крупнее (64 -> 96px, тот же силуэт, но заметно детальнее
-## вблизи -- рёбра, когти, потёки крови читаются отчётливее, а не
-## расплываются в блочные пиксели): SCALE масштабирует все координаты и
-## радиусы формы, чтобы пропорции остались ровно теми же, что и раньше.
-const SCALE := 1.5
-const TEX := 96
-@onready var body: MeshInstance3D = $Body
-static var _albedo_tex: ImageTexture = null
-static var _emission_tex: ImageTexture = null
+## Раньше тело было плоским billboard-квадом с нарисованным пиксель-артом --
+## "плоский призрак", который выдавал себя силуэтом-карточкой при взгляде
+## сбоку. Теперь это настоящий объёмный риг из капсул/сфер/конусов (торс,
+## голова, две асимметричные руки с локтем и когтями, две ноги), собранный
+## процедурно в _build_rig() -- то же самое "высокий сутулый силуэт с впалым
+## лицом и тонкими когтистыми руками" (порт THE STALKER из render.c), но
+## читаемое с любого ракурса, не только анфас. Кожа -- триплэйнарная
+## процедурная текстура (шрамы/вены/кровоподтёки, _build_flesh_texture()),
+## общая на все виды, тонированная по типу и раскрытая иначе для каждого:
+## Слухач слеп -- без светящихся глаз, зато с чуткими ушами-рожками;
+## Наблюдатель -- неестественно крупные немигающие глаза.
+@onready var body: Node3D = $Body
+static var _flesh_tex: ImageTexture = null
+var flesh_mat: StandardMaterial3D = null
+var eye_mat: StandardMaterial3D = null
 
 ## каждый вид носит свой оттенок -- дешёвый способ различить силуэты,
-## не рисуя три разных сприта (см. "each kind wears its own pallor")
+## не рисуя три разных модели (см. "each kind wears its own pallor")
 const TYPE_TINT := {
 	0: Color(1.0, 1.0, 1.0),     # STALKER -- как нарисовано
-	1: Color(0.75, 0.8, 0.95),   # LISTENER -- бледнее, holodный синеватый
-	2: Color(0.55, 0.15, 0.55),  # WATCHER -- неестественный лиловый
+	1: Color(0.7, 0.78, 0.92),   # LISTENER -- бледнее, холодный синеватый
+	2: Color(0.62, 0.2, 0.62),   # WATCHER -- неестественный лиловый
+}
+const EYE_COLOR := {
+	0: Color(1.0, 0.28, 0.05),   # STALKER -- тлеющий оранжево-красный
+	2: Color(0.85, 0.2, 0.95),   # WATCHER -- холодный лиловый, немигающий
 }
 
-func _build_body_material() -> StandardMaterial3D:
-	if _albedo_tex == null:
-		var pair := _build_stalker_textures()
-		_albedo_tex = pair[0]
-		_emission_tex = pair[1]
+## узлы рига, на которые опирается процедурная анимация (_animate_walk,
+## _process) -- заполняются в _build_rig(), нужны как отдельные Node3D-пивоты
+## (а не сразу MeshInstance3D), чтобы вращать конечности вокруг сустава,
+## а не вокруг их геометрического центра
+var torso_node: Node3D = null
+var head_node: Node3D = null
+var hip_l: Node3D = null
+var hip_r: Node3D = null
+var shoulder_l: Node3D = null
+var shoulder_r: Node3D = null
+
+## тайловая текстура рваной, шрамированной плоти -- шум под кожей, тёмные
+## трещины-вены, редкие кровавые/костяные вкрапления и пара более крупных
+## открытых ран. Используется через triplanar-проекцию (mat.uv1_triplanar),
+## поэтому один и тот же тайл ложится без ручной UV-развёртки на любую
+## капсулу/сферу рига -- ни швов, ни растяжения.
+static func _build_flesh_texture() -> ImageTexture:
+	if _flesh_tex != null:
+		return _flesh_tex
+	const N := 128
+	var img := Image.create(N, N, false, Image.FORMAT_RGBA8)
+	var base_n := FastNoiseLite.new()
+	base_n.seed = 1337
+	base_n.frequency = 0.06
+	var vein_n := FastNoiseLite.new()
+	vein_n.seed = 91
+	vein_n.frequency = 0.14
+	vein_n.fractal_type = FastNoiseLite.FRACTAL_RIDGED
+	for y in range(N):
+		for x in range(N):
+			var base: float = 0.15 + base_n.get_noise_2d(x, y) * 0.05
+			var col := Color(base * 0.88, base, base * 0.8, 1.0)
+			if vein_n.get_noise_2d(x, y) > 0.5:
+				col = col.darkened(0.55)   # трещины/вены, проступающие сквозь кожу
+			var speck := randf()
+			if speck > 0.986:
+				col = Color(0.3, 0.03, 0.03, 1.0)     # кровавая крапинка
+			elif speck > 0.965:
+				col = Color(0.42, 0.38, 0.3, 1.0)     # бледный костяной скол
+			img.set_pixel(x, y, col)
+	# несколько более крупных открытых ран поверх шумовой базы
+	for _i in range(5):
+		var wx := randi() % N
+		var wy := randi() % N
+		var wr: int = 3 + randi() % 6
+		for dy in range(-wr, wr):
+			for dx in range(-wr, wr):
+				var px := wx + dx
+				var py := wy + dy
+				if px < 0 or py < 0 or px >= N or py >= N:
+					continue
+				if dx * dx + dy * dy < wr * wr:
+					var edge: float = float(dx * dx + dy * dy) / float(wr * wr)
+					img.set_pixel(px, py, Color(0.22, 0.02, 0.02, 1.0).lerp(Color(0.05, 0.008, 0.008, 1.0), edge))
+	_flesh_tex = ImageTexture.create_from_image(img)
+	return _flesh_tex
+
+func _build_flesh_material() -> StandardMaterial3D:
 	var mat := StandardMaterial3D.new()
-	mat.albedo_texture = _albedo_tex
-	mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
-	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
-	mat.billboard_mode = BaseMaterial3D.BILLBOARD_ENABLED
-	mat.emission_enabled = true
-	mat.emission_texture = _emission_tex
-	mat.emission_energy_multiplier = 4.0
+	mat.albedo_texture = _build_flesh_texture()
+	mat.uv1_triplanar = true
+	mat.uv1_triplanar_sharpness = 2.0
+	mat.uv1_scale = Vector3(2.4, 2.4, 2.4)
+	mat.roughness = 0.88
+	mat.metallic = 0.0
 	mat.albedo_color = TYPE_TINT.get(mon_type, Color.WHITE)
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	# лёгкое ободковое свечение -- читается как контражур в темноте, а не
+	# просто чёрный силуэт, даже без прямого света на нём
+	mat.rim_enabled = true
+	mat.rim = 0.4
+	mat.rim_tint = 0.7
 	return mat
 
-static func _build_stalker_textures() -> Array:
-	var albedo := Image.create(TEX, TEX, false, Image.FORMAT_RGBA8)
-	var emission := Image.create(TEX, TEX, false, Image.FORMAT_RGBA8)
-	var cx: float = TEX / 2.0
-	for y in range(TEX):
-		for x in range(TEX):
-			var nx: float = x - cx
-			var part := 0   # 1 = тёмная плоть, 2 = бледное лицо
-			var hy: float = y - 11.0 * SCALE
-			var he: float = (nx * nx) / (5.5 * SCALE * 5.5 * SCALE) + (hy * hy) / (8.0 * SCALE * 8.0 * SCALE)
-			if he < 1.0:
-				part = 2
-			if y >= 17 * SCALE and y <= 20 * SCALE and abs(nx) < 2.3 * SCALE and part == 0:
-				part = 1
-			if y >= 19 * SCALE and y <= 47 * SCALE:
-				var tt: float = (y - 19 * SCALE) / (28.0 * SCALE)
-				var hw: float = 9.5 * SCALE - tt * 6.0 * SCALE
-				if abs(nx) < hw and part == 0:
-					part = 1
-				# лёгкая тень вдоль позвоночника посередине торса -- раньше
-				# силуэт спереди был совсем плоским, без намёка на объём
-				if abs(nx) < 0.9 * SCALE and part == 1:
-					part = 3
-			if y >= 20 * SCALE and y <= 60 * SCALE:
-				# руки длиннее и тянутся ниже колен -- пропорции чуть "неправильные",
-				# читается тревожнее правдоподобно-человеческих рук
-				var ax: float = 8.0 * SCALE + (y - 20 * SCALE) * 0.22
-				if abs(abs(nx) - ax) < 2.1 * SCALE and part == 0:
-					part = 1
-				if y >= 50 * SCALE and abs(nx) - ax > -1.5 * SCALE and abs(nx) - ax < 5.5 * SCALE and (int(x / SCALE) % 2 == 0) and part == 0:
-					part = 1   # растопыренные когтистые пальцы, ещё длиннее
-			if y >= 46 * SCALE and y <= 63 * SCALE and abs(abs(nx) - 3.5 * SCALE) < 2.0 * SCALE and part == 0:
-				part = 1
-			# рваная тряпка на бёдрах -- всё, что осталось от одежды
-			var rag: bool = y >= 44 * SCALE and y <= 50 * SCALE and abs(nx) < 8.5 * SCALE and (part == 0 or part == 3)
-			if rag:
-				part = 1
-			if part == 1 or part == 3:
-				var v: float = (6.0 + randf() * 7.0) / 255.0
-				if part == 3:
-					v *= 0.4   # тень позвоночника -- заметно темнее окружающей плоти
-				if randf() < 0.04:
-					v += 22.0 / 255.0
-				var c1 := Color(v, v, v + 2.0 / 255.0, 1.0)
-				# рёбра/кости, проступающие через рваную плоть на торсе --
-				# бледные горизонтальные полосы почаще, чем раньше -- крупнее
-				# холст даёт место на более частую, отчётливую решётку рёбер
-				if y >= 22 * SCALE and y <= 42 * SCALE and (int(y / SCALE) % 4) < 1 and abs(nx) < 7.0 * SCALE and randf() < 0.6:
-					var bone: float = (110.0 + randf() * 20.0) / 255.0
-					c1 = Color(bone, bone * 0.95, bone * 0.88, 1.0)
-				# синюшные кровоподтёки/язвы, разбросанные по коже -- реже,
-				# чем кость, тёмное бурое пятно с нечётким краем
-				var sore: float = sin(x * 0.9 / SCALE + 7.0 * sin(y * 0.5 / SCALE)) * 0.5 + 0.5
-				if sore > 0.93:
-					c1 = Color(32 / 255.0, 8 / 255.0, 14 / 255.0, 1.0)
-				if rag:
-					# сама тряпка -- пыльно-серая мешковина, а не плоть
-					var rv: float = (30.0 + randf() * 10.0) / 255.0
-					if (int((x + y) / SCALE) % 5) < 1:
-						rv -= 10.0 / 255.0   # складки/дыры на ткани
-					c1 = Color(rv * 1.1, rv, rv * 0.85, 1.0)
-				albedo.set_pixel(x, y, c1)
-			elif part == 2:
-				var edge: float = abs(nx) / (5.5 * SCALE)
-				var v2: float = (64.0 - edge * 42.0) / 255.0 + randf() * 6.0 / 255.0
-				albedo.set_pixel(x, y, Color(v2, v2 * 0.92, v2 * 0.86, 1.0))
-	# впалые глазницы, горящие глаза и клыкастая пасть -- второй проход
-	# поверх тела, только в верхней полосе (лицо)
-	for y in range(int(4 * SCALE), int(46 * SCALE)):
-		for x in range(TEX):
-			var lex: float = x - (cx - 4.5 * SCALE)
-			var ley: float = y - 10.0 * SCALE
-			var le: float = (lex * lex + ley * ley) / (SCALE * SCALE)
-			var rex: float = x - (cx + 4.5 * SCALE)
-			# правый глаз заметно мельче левого -- несимметричное лицо
-			# тревожит сильнее, чем зеркально одинаковое
-			var re: float = (rex * rex + ley * ley) / (SCALE * SCALE) * 1.6
-			if le < 10.0 or re < 10.0:
-				var q: float = (min(le, re)) / 10.0
-				var c := Color(1.0, (90.0 - q * 60.0) / 255.0, (30.0 - q * 22.0) / 255.0, 1.0)
-				albedo.set_pixel(x, y, c)
-				emission.set_pixel(x, y, c)
-			elif le < 22.0 or re < 22.0:
-				albedo.set_pixel(x, y, Color(120 / 255.0, 12 / 255.0, 8 / 255.0, 1.0))
-				emission.set_pixel(x, y, Color(120 / 255.0, 12 / 255.0, 8 / 255.0, 1.0))
-			# тёмный ободок глазницы шире прежнего -- глаза читаются как
-			# по-настоящему запавшие, а не просто два светлых пятна на коже
-			elif le < 46.0 or re < 46.0:
-				albedo.set_pixel(x, y, Color(3 / 255.0, 1 / 255.0, 1 / 255.0, 1.0))
-			# кровавые дорожки из глаз тянутся дальше вниз по телу, не
-			# обрываются сразу под подбородком -- читается свежее и хуже
-			if (absf(x - (cx - 4.5 * SCALE)) < 0.6 or absf(x - (cx + 4.5 * SCALE)) < 0.6) \
-					and y > 12 * SCALE and y < 45 * SCALE and (int((y + x) / SCALE) % 3) != 0:
-				albedo.set_pixel(x, y, Color(70 / 255.0, 6 / 255.0, 6 / 255.0, 1.0))
-			# рваная рана на груди, чуть ниже шеи, с собственным потёком крови
-			var wound: float = (x - cx) * (x - cx) / (4.0 * SCALE * SCALE) + (y - 28.0 * SCALE) * (y - 28.0 * SCALE) / (9.0 * SCALE * SCALE)
-			if wound < 1.0 and y > 24 * SCALE:
-				var wd: bool = (int((x * 3 + y) / SCALE) % 4) < 2
-				albedo.set_pixel(x, y, Color(40 / 255.0, 3 / 255.0, 4 / 255.0, 1.0) if wd else Color(85 / 255.0, 8 / 255.0, 6 / 255.0, 1.0))
-			elif absf(x - cx) < 0.6 and y >= 33 * SCALE and y < 45 * SCALE and (int(y / SCALE) % 3) != 0:
-				albedo.set_pixel(x, y, Color(60 / 255.0, 5 / 255.0, 5 / 255.0, 1.0))
-			# пасть шире и глубже прежней -- неестественно растянутый
-			# оскал, а не аккуратный человеческий рот
-			var m: float = (x - cx) * (x - cx) / (9.0 * SCALE * SCALE) + (y - 19.0 * SCALE) * (y - 19.0 * SCALE) / (7.5 * SCALE * SCALE)
-			if m < 1.0:
-				var fang: bool
-				if y < 19 * SCALE:
-					fang = (int(x * 5 / SCALE) % 4) < 2 and y > 15 * SCALE
-				else:
-					fang = (int((x * 5 + 2) / SCALE) % 4) < 2 and y < 23 * SCALE
-				if fang:
-					var fc := Color(205 / 255.0, 195 / 255.0, 175 / 255.0, 1.0)
-					albedo.set_pixel(x, y, fc)
-					emission.set_pixel(x, y, fc)
-				else:
-					albedo.set_pixel(x, y, Color(5 / 255.0, 2 / 255.0, 3 / 255.0, 1.0))
-	return [ImageTexture.create_from_image(albedo), ImageTexture.create_from_image(emission)]
+func _build_eye_material() -> StandardMaterial3D:
+	var mat := StandardMaterial3D.new()
+	var c: Color = EYE_COLOR.get(mon_type, Color(1.0, 0.28, 0.05))
+	mat.albedo_color = c
+	mat.emission_enabled = true
+	mat.emission = c
+	mat.emission_energy_multiplier = 6.0
+	return mat
+
+func _sphere(radius: float) -> SphereMesh:
+	var m := SphereMesh.new()
+	m.radius = radius
+	m.height = radius * 2.0
+	return m
+
+func _add_pivot(parent: Node3D, pos: Vector3) -> Node3D:
+	var n := Node3D.new()
+	n.position = pos
+	parent.add_child(n)
+	return n
+
+func _add_mesh(parent: Node3D, mesh: Mesh, mat: Material, pos: Vector3, rot_deg: Vector3 = Vector3.ZERO) -> MeshInstance3D:
+	var mi := MeshInstance3D.new()
+	mi.mesh = mesh
+	mi.material_override = mat
+	mi.position = pos
+	mi.rotation_degrees = rot_deg
+	parent.add_child(mi)
+	return mi
+
+## собирает объёмный риг с нуля -- вызывается и из setup() (боевой монстр),
+## и напрямую из level_gen.gd для "фантома" (галлюцинация на низком
+## рассудке, см. _spawn_phantom): фантому не нужны сенсы/движение, только
+## видимое тело с тем же материалом, который потом мерцает альфой.
+func _build_rig() -> void:
+	for c in body.get_children():
+		c.queue_free()
+	flesh_mat = _build_flesh_material()
+	eye_mat = _build_eye_material()
+
+	# ноги: пивот в бедре на высоте 1.0 -- капсула свисает вниз до земли
+	var leg_mesh := CapsuleMesh.new()
+	leg_mesh.radius = 0.07
+	leg_mesh.height = 0.95
+	hip_l = _add_pivot(body, Vector3(-0.12, 1.0, 0.0))
+	_add_mesh(hip_l, leg_mesh, flesh_mat, Vector3(0, -0.475, 0))
+	hip_r = _add_pivot(body, Vector3(0.12, 1.0, 0.0))
+	_add_mesh(hip_r, leg_mesh, flesh_mat, Vector3(0, -0.475, 0))
+
+	# торс: узкая вытянутая капсула, чуть сужена к бёдрам -- через scale.x/z
+	torso_node = _add_pivot(body, Vector3(0, 1.0, 0))
+	var torso_mesh := CapsuleMesh.new()
+	torso_mesh.radius = 0.16
+	torso_mesh.height = 0.58
+	var torso_mi := _add_mesh(torso_node, torso_mesh, flesh_mat, Vector3(0, 0.29, 0))
+	torso_mi.scale = Vector3(1.0, 1.0, 0.72)
+
+	# голова: приплюснутая сфера на пивоте у основания шеи, чтобы вращать
+	# отдельно от торса (кивки/повороты в _animate_walk)
+	head_node = _add_pivot(torso_node, Vector3(0, 0.58, 0))
+	var head_mesh := SphereMesh.new()
+	head_mesh.radius = 0.14
+	head_mesh.height = 0.28
+	var head_mi := _add_mesh(head_node, head_mesh, flesh_mat, Vector3(0, 0.14, 0.01))
+	head_mi.scale = Vector3(0.92, 1.12, 0.88)
+
+	if mon_type == MonType.LISTENER:
+		# слеп -- глаз нет вовсе, зато торчащие уши-рожки ловят каждый звук
+		var ear_mesh := CylinderMesh.new()
+		ear_mesh.top_radius = 0.0
+		ear_mesh.bottom_radius = 0.04
+		ear_mesh.height = 0.16
+		_add_mesh(head_node, ear_mesh, flesh_mat, Vector3(-0.11, 0.24, 0), Vector3(0, 0, -20))
+		_add_mesh(head_node, ear_mesh.duplicate(), flesh_mat, Vector3(0.11, 0.24, 0), Vector3(0, 0, 20))
+	elif mon_type == MonType.WATCHER:
+		# неестественно крупные, симметричные, немигающие глаза
+		_add_mesh(head_node, _sphere(0.05), eye_mat, Vector3(-0.065, 0.15, -0.115))
+		_add_mesh(head_node, _sphere(0.05), eye_mat, Vector3(0.065, 0.15, -0.115))
+	else:
+		# асимметричное лицо тревожит сильнее зеркального -- правый глаз
+		# заметно мельче левого (тот же перекос, что был в старом пиксель-арте)
+		_add_mesh(head_node, _sphere(0.032), eye_mat, Vector3(-0.06, 0.15, -0.115))
+		_add_mesh(head_node, _sphere(0.022), eye_mat, Vector3(0.06, 0.155, -0.11))
+
+	# руки: две капсулы на сустав (плечо -> локоть -> кисть), тянутся ниже
+	# колен -- те самые "неестественно длинные когтистые руки" из старого
+	# силуэта, но теперь читаются с любого ракурса, не только анфас
+	for side in [-1.0, 1.0]:
+		var shoulder := _add_pivot(torso_node, Vector3(0.19 * side, 0.56, 0))
+		# слегка разведены в стороны от торса -- иначе капсулы рук сливаются
+		# с торсом в один нечитаемый ком, особенно на средней дистанции
+		shoulder.rotation.z = deg_to_rad(10.0 * side)
+		var upper_mesh := CapsuleMesh.new()
+		upper_mesh.radius = 0.05
+		upper_mesh.height = 0.42
+		_add_mesh(shoulder, upper_mesh, flesh_mat, Vector3(0, -0.21, 0))
+		var elbow := _add_pivot(shoulder, Vector3(0, -0.42, 0))
+		var fore_mesh := CapsuleMesh.new()
+		fore_mesh.radius = 0.042
+		fore_mesh.height = 0.5
+		_add_mesh(elbow, fore_mesh, flesh_mat, Vector3(0, -0.25, 0))
+		# растопыренные когтистые пальцы -- три тонких конуса веером на кисти
+		var claw_mesh := CylinderMesh.new()
+		claw_mesh.top_radius = 0.0
+		claw_mesh.bottom_radius = 0.016
+		claw_mesh.height = 0.11
+		for cf in [-1, 0, 1]:
+			_add_mesh(elbow, claw_mesh.duplicate(), flesh_mat, Vector3(cf * 0.03, -0.52, -0.02), Vector3(8.0 * cf, 0, 0))
+		if side < 0.0:
+			shoulder_l = shoulder
+		else:
+			shoulder_r = shoulder
 
 ## Рёв при входе в погоню и рваное рычание, пока она длится -- порт
 ## соответствующего куска update_ai (ai.c). До этого фикса звуки лежали в
@@ -228,7 +284,7 @@ func setup(p_level_gen: Node, p_player: CharacterBody3D) -> void:
 	mon_type = _pick_type()
 	pick_wander()
 	_setup_voice()
-	body.material_override = _build_body_material()
+	_build_rig()
 	GameState.note_encounter(mon_type)
 
 func _setup_voice() -> void:
@@ -262,17 +318,40 @@ func _pick_type() -> MonType:
 var _aitrace_t: float = 0.0
 
 var _twitch_t: float = randf() * 10.0
+var _walk_t: float = 0.0
+var pause_timer: float = 0.0   # "прислушивается" -- см. _sense() SEARCH-ветку
 
-## лёгкая нервная дрожь силуэта -- даже стоя на месте (WANDER, ждёт своего
-## хода) он не читается как застывший кадр. Резче и чаще во время охоты,
-## как будто на грани того, чтобы сорваться.
+## лёгкая нервная дрожь -- даже стоя на месте (WANDER, ждёт своего хода) он
+## не читается как застывший кадр. Резче и чаще во время охоты, как будто
+## на грани того, чтобы сорваться. Раньше дрожь была равномерным scale()
+## всего плоского спрайта -- на объёмном риге вместо этого чуть трясутся
+## торс/голова по отдельности, читается объёмнее и меньше похоже на баг.
+## Наблюдатель -- особый случай: пока на него смотрят, он абсолютно
+## неподвижен (ни следа дрожи, см. _move()), а стоит отвести взгляд --
+## дёргается рвано и часто, как будто едва сдерживался.
 func _process(delta: float) -> void:
 	_twitch_t += delta
+	var watched: bool = mon_type == MonType.WATCHER and _player_watching()
 	var jitter_speed: float = 14.0 if state == State.HUNT else 6.0
-	var jitter_amp: float = 0.035 if state == State.HUNT else 0.015
+	var jitter_amp: float = 0.06 if state == State.HUNT else 0.025
+	if mon_type == MonType.WATCHER:
+		if watched:
+			jitter_amp = 0.0
+		else:
+			jitter_speed = 24.0
+			jitter_amp = 0.11
 	var jx: float = sin(_twitch_t * jitter_speed) * jitter_amp
 	var jy: float = sin(_twitch_t * jitter_speed * 1.7 + 1.3) * jitter_amp * 0.6
-	body.scale = Vector3(1.0 + jx, 1.0 + jy, 1.0)
+	if torso_node:
+		torso_node.rotation.z = jx
+	if head_node:
+		head_node.rotation.z = jy * 0.6
+		# Слухач слеп -- вместо взгляда медленно "обшаривает" комнату слухом,
+		# голова плавно ходит из стороны в сторону, пока не взял след
+		if mon_type == MonType.LISTENER and state != State.HUNT:
+			head_node.rotation.y = sin(_twitch_t * 0.6) * 0.55
+		else:
+			head_node.rotation.y = lerp(head_node.rotation.y, 0.0, delta * 3.0)
 
 func _physics_process(delta: float) -> void:
 	if level_gen == null or player == null or GameState.state != GameState.State.PLAY:
@@ -280,6 +359,7 @@ func _physics_process(delta: float) -> void:
 	_sense(delta)
 	_move(delta)
 	_face_player()
+	_animate_walk(delta)
 
 	if OS.get_environment("NIGHTFALL_AITRACE") != "":
 		_aitrace_t -= delta
@@ -311,6 +391,35 @@ func _face_player() -> void:
 	t.y = global_position.y
 	if global_position.distance_to(t) > 0.2:
 		look_at(t, Vector3.UP)
+
+## походка рига -- ноги/руки качаются в противофазе от скорости, а не по
+## фактическому направлению движения (тело и так всегда развёрнуто на
+## игрока, см. _face_player() -- кинематически точная походка потребовала бы
+## разворота ног независимо от торса, лишняя сложность ради малозаметной
+## детали). Хромота -- лёгкий несимметричный крен бёдер, "неправильный" шаг,
+## тревожащий сильнее ровной походки. Сутулость нарастает во время охоты --
+## корпус и голова подаются вперёд, как в старом комментарии про силуэт.
+func _animate_walk(delta: float) -> void:
+	if not (torso_node and hip_l and hip_r and shoulder_l and shoulder_r):
+		return
+	var creeping: bool = mon_type == MonType.WATCHER and _player_watching()
+	var speed: float = Vector2(velocity.x, velocity.z).length()
+	var moving: bool = speed > 0.05 and not frozen and pause_timer <= 0.0
+	if moving and not creeping:
+		_walk_t += delta * (4.0 + speed * 2.2)
+	var amp: float = clamp(speed / SPEED, 0.0, 1.6) * 0.55
+	if creeping or pause_timer > 0.0:
+		amp = 0.0
+	var swing: float = sin(_walk_t)
+	hip_l.rotation.x = swing * amp
+	hip_r.rotation.x = -swing * amp
+	shoulder_l.rotation.x = -swing * amp * 0.8
+	shoulder_r.rotation.x = swing * amp * 0.8
+	if mon_type != MonType.WATCHER:
+		hip_l.rotation.z = sin(_walk_t * 0.5) * 0.08   # лёгкая хромота
+	var hunch_target: float = 0.4 if state == State.HUNT else 0.15
+	torso_node.rotation.x = lerp(torso_node.rotation.x, hunch_target, delta * 3.0)
+	head_node.rotation.x = lerp(head_node.rotation.x, hunch_target * 1.4, delta * 3.0)
 
 func _sense(delta: float) -> void:
 	if player.hidden:
@@ -383,8 +492,17 @@ func _sense(delta: float) -> void:
 				tgt = Vector2i(int(l.position.x), int(l.position.z))
 		set_target(tgt)
 	elif state == State.SEARCH:
-		_check_noise()
-		search_time -= delta
+		if pause_timer > 0.0:
+			pause_timer -= delta
+		else:
+			_check_noise()
+			search_time -= delta
+			# порт "оно замирает и прислушивается" -- редкая короткая пауза
+			# посреди поиска, не только непрерывное шарканье по маршруту.
+			# Слышателя не трогаем -- у него и так самый острый слух из
+			# всех, дополнительная пауза ему без надобности.
+			if mon_type != MonType.WATCHER and mon_type != MonType.LISTENER and randf() < 0.006:
+				pause_timer = 0.7 + randf() * 0.9
 		var here := Vector2i(int(position.x), int(position.z))
 		if here == target_cell or search_time <= 0.0:
 			state = State.WANDER
@@ -484,15 +602,21 @@ func _player_watching() -> bool:
 	return _has_los(Vector2(player.position.x, player.position.z))
 
 func _move(delta: float) -> void:
-	if frozen:
+	if frozen or pause_timer > 0.0:
 		velocity = Vector3.ZERO
 		return
 	var speed_mult := 1.0
 	if mon_type == MonType.WATCHER:
 		if _player_watching():
-			velocity = Vector3.ZERO
-			return
-		speed_mult = WATCHER_RUSH_MULT
+			# "SCP-173"-приём: не жёсткий стоп-кадр, а едва заметное
+			# подкрадывание -- даже глядя на него в упор, за десяток секунд
+			# оно окажется на полметра ближе, чем было. Стоит отвести взгляд
+			# хоть на миг -- срывается в полноценный рывок (WATCHER_RUSH_MULT
+			# ниже). Раньше был честный velocity=0, полностью статичный, пока
+			# смотришь -- надёжно, но совсем не тревожит.
+			speed_mult = 0.045
+		else:
+			speed_mult = WATCHER_RUSH_MULT
 	elif state == State.HUNT:
 		# "it surges when hunting you at close range -- a terrifying final
 		# lunge" (ai.c) -- было в C-версии, потерялось при портировании:

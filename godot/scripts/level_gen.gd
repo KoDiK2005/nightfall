@@ -569,7 +569,7 @@ func _update_phantom(delta: float) -> void:
 		# альфу материала (он уже TRANSPARENCY_ALPHA в _build_body_material)
 		var a: float = fade * (0.7 + 0.3 * sin(_phantom_t * 23.0))
 		_phantom_mat.albedo_color.a = a
-		_phantom_mat.emission_energy_multiplier = 4.0 * a
+		_phantom.eye_mat.emission_energy_multiplier = 6.0 * a
 		if _phantom_t > 1.7:
 			_phantom.queue_free()
 			_phantom = null
@@ -601,8 +601,8 @@ func _spawn_phantom() -> void:
 	add_child(_phantom)
 	_phantom.position = Vector3(pos.x, 0.1, pos.z)
 	_phantom.mon_type = _phantom.MonType.STALKER
-	_phantom_mat = _phantom._build_body_material()
-	_phantom.body.material_override = _phantom_mat
+	_phantom._build_rig()
+	_phantom_mat = _phantom.flesh_mat
 	_phantom.collision_layer = 0
 	_phantom.collision_mask = 0
 	_phantom_t = 0.0
