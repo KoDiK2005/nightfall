@@ -1125,7 +1125,23 @@ func _build_chest(pos: Vector2, chest_mat: StandardMaterial3D, key_icon_mat: Sta
 	root.add_child(key_icon)
 
 	_add_beacon(root, Color(1.0, 0.75, 0.35), 0.55, 2.4, 0.3)
-	var chest_root := _add_prop_collision(root, Vector3(pos.x, 0.22, pos.y), CHEST_SIZE)
+	# коллизия чуть компактнее видимого габарита сундука -- "что-то
+	# непонятное в полу мешает пройти" при подборе ключа была не выдумкой:
+	# распахнутая крышка (см. _open_chest_lid) размашисто откидывается
+	# назад-вверх и визуально нависает НАД полом за пределами закрытого
+	# сундука, там, где никакой коллизии никогда не было (пройти там
+	# физически можно, но выглядит как сплошное препятствие, и игрок
+	# упирается в него взглядом/навигацией). Угол раскрытия там же уменьшен
+	# со 100° до 55° -- крышка всё ещё явно распахивается, но заметно не
+	# улетает настолько далеко за пределы тела сундука. Плюс сама коллизия
+	# сужена относительно видимого меша -- меньше шанс, что сундук ощутимо
+	# перегораживает проход мимо себя в тесной комнате.
+	# сужаем только по X (ширине -- та ось, вдоль которой протискиваются
+	# мимо сундука в тесной комнате), а не по Z: та же ось, куда откидывается
+	# крышка -- сузив там, только увеличили бы долю крышки без коллизии под
+	# собой, а не уменьшили.
+	var chest_col_size := Vector3(CHEST_SIZE.x * 0.82, CHEST_SIZE.y, CHEST_SIZE.z)
+	var chest_root := _add_prop_collision(root, Vector3(pos.x, 0.22, pos.y), chest_col_size)
 	return {"pos": pos, "active": true, "mesh": root, "root": chest_root, "key_icon": key_icon, "lid_pivot": lid_pivot}
 
 ## Распахнуть крышку конкретного сундука -- тот же tween-приём и звук
@@ -1140,7 +1156,7 @@ func _open_chest_lid(c: Dictionary) -> void:
 	c.lid_pivot.add_child(creak)
 	creak.play()
 	var tw := create_tween()
-	tw.tween_property(c.lid_pivot, "rotation:x", -deg_to_rad(100.0), 0.5) \
+	tw.tween_property(c.lid_pivot, "rotation:x", -deg_to_rad(55.0), 0.5) \
 		.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 
 ## Дверь выхода -- прежде была просто цветной коробкой посреди комнаты.
