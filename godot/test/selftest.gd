@@ -62,7 +62,61 @@ func _run() -> void:
 			all_chests_reachable = false
 	check(all_chests_reachable, "все сундуки достижимы от старта")
 
-	# 2) подбор ключей: телепортируемся на каждый сундук и дёргаем подбор
+	# 1b) проходимость дверей: ни один prop с коллизией (StaticBody3D на слое
+	# 8 -- сундук/шкафчик/ящик) не должен стоять в горловине дверного проёма,
+	# иначе он физически перегораживает единственный путь в дверь (жалоба
+	# "некоторые вещи не дают пройти в двери"). Игрок -- капсула r=0.35,
+	# проём -- клетка 1.0, так что коллайдер (полуразмер ~0.25) ближе ~0.6 к
+	# центру горловины уже не пропускает. Перебираем несколько свежих этажей,
+	# чтобы поймать редкий неудачный расклад, а не только текущую генерацию.
+	var doorway_clear := true
+	for _f in range(6):
+		lg._build_level()
+		await process_frame
+		for d in lg.doors:
+			var mouth := Vector2(d.pos.x - d.dir.x, d.pos.y - d.dir.y)
+			for body in lg.props_root.get_children():
+				if not (body is StaticBody3D and body.collision_layer == 8):
+					continue
+				var bp := Vector2(body.position.x, body.position.z)
+				if bp.distance_to(mouth) < 0.6 or bp.distance_to(d.pos) < 0.6:
+					doorway_clear = false
+	check(doorway_clear, "ни один коллайдер не стоит в горловине дверного проёма")
+
+	# 1c) генерация на разной глубине: этаж строится остовным деревом коридоров
+	# (см. level_gen.gd::_connect_rooms), и на глубоких этажах с малым числом
+	# комнат легко нарваться на два дефекта -- отрезанный карман пола (BFS не
+	# достаёт) и нехватку комнат под ключи (сундуков меньше, чем нужно ключей,
+	# => дверь выхода не откроется никогда, софт-лок). Гоняем несколько глубин.
+	var gen_ok := true
+	var supply_ok := true
+	for depth in [4, 8, 12]:
+		gs.depth = depth
+		for _rep in range(4):
+			gs.state = 1
+			lg._build_level()
+			await process_frame
+			var sc := Vector2i(int(player.position.x), int(player.position.z))
+			var fd: Array = lg.flood_from(sc)
+			for yy in range(lg.MH):
+				for xx in range(lg.MW):
+					if lg.is_open(xx, yy) and fd[yy][xx] >= (1 << 20):
+						gen_ok = false
+			if lg.chests.size() != lg.keys_left or lg.keys_left != lg.num_keys:
+				supply_ok = false
+	check(gen_ok, "на всех глубинах нет отрезанных от старта клеток пола")
+	check(supply_ok, "на всех глубинах сундуков ровно под запас ключей (нет софт-лока)")
+	# вернуть чистый этаж глубины 1 для остальных секций
+	gs.depth = 1
+	lg._build_level()
+	await process_frame
+
+	# 2) подбор ключей: реальный путь -- просто наступаем на сундук, без E
+	# (жалоба "хочу, чтобы ключ подбирался наступанием, а не по E"; см.
+	# level_gen.gd::_process, try_pickup_nearby(p) теперь вызывается каждый
+	# кадр безусловно, тем же приёмом, что и подбор спичек/камней). Двигаем
+	# игрока и просто ждём кадр -- _process сработает сам, без единого
+	# нажатия клавиши, в отличие от прежней версии теста.
 	var first_chest: Dictionary = lg.chests[0]
 	check(rad_to_deg(first_chest.lid_pivot.rotation.x) == 0.0, "крышка сундука закрыта до подбора")
 	check(first_chest.key_icon.visible, "значок ключа виден на закрытом сундуке")
@@ -71,10 +125,10 @@ func _run() -> void:
 	for c in lg.chests.duplicate():
 		player.position = Vector3(c.pos.x, 0.1, c.pos.y)
 		var before: int = lg.keys_left
-		var ok: bool = lg.try_pickup_nearby(Vector2(c.pos.x, c.pos.y))
-		if ok and lg.keys_left == before - 1:
+		await process_frame
+		if lg.keys_left == before - 1:
 			picked += 1
-	check(picked == expected_keys, "подобраны все ключи (%d/%d)" % [picked, expected_keys])
+	check(picked == expected_keys, "ключи подобраны наступанием, без E (%d/%d)" % [picked, expected_keys])
 	check(lg.keys_left == 0, "keys_left обнулился после сбора всех ключей")
 	check(lg.exit_door_open, "дверь выхода открылась после последнего ключа")
 	check(not first_chest.key_icon.visible, "значок ключа спрятан после подбора")

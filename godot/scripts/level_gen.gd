@@ -340,7 +340,8 @@ var exit_pos: Vector2 = Vector2.ZERO
 var exit_mesh: MeshInstance3D = null
 var exit_door_pivot: Node3D = null
 var exit_door_open: bool = false
-var doors: Array = []   # {pivot: Node3D, pos: Vector2, is_open: bool} -- дверные проёмы коридоров
+var doors: Array = []   # {pivot: Node3D, pos: Vector2, dir: Vector2i, is_open: bool} -- дверные проёмы коридоров
+var doorway_specs: Array = []   # [{pos: Vector2i, dir: Vector2i}] -- проёмы, записанные при генерации (см. _connect_rooms)
 var monster: CharacterBody3D = null
 
 var patrol_order: Array = []   # индексы rooms (кроме старта) в перемешанном порядке -- маршрут патруля
@@ -533,8 +534,11 @@ func _process(delta: float) -> void:
 	if noise_t > 0.0:
 		noise_t -= delta
 	var p := Vector2(player.position.x, player.position.z)
-	if Input.is_action_just_pressed("interact"):
-		try_pickup_nearby(p)
+	# ключ подбирается наступанием на сундук, без E -- та же логика, что и у
+	# спичек/камней/шашек/обмоток ниже (_collect_pickups), просто с открытием
+	# крышки. Раньше требовался E, но подбор ключа концептуально ничем не
+	# отличается от подбора остальных предметов на полу.
+	try_pickup_nearby(p)
 	_collect_pickups(p)
 	if keys_left == 0 and p.distance_to(exit_pos) < EXIT_DIST:
 		descend()
@@ -636,8 +640,8 @@ func _update_shrine_hum(delta: float, p: Vector2) -> void:
 	_shrine_player.play()
 	_shrine_timer = lerp(6.0, 2.0, clamp(1.0 - best_d / 12.0, 0.0, 1.0))
 
-## подобрать ключ из сундука, если игрок рядом с активным (вынесено из
-## _process, чтобы дёргать и из самотеста без эмуляции ввода)
+## подобрать ключ из сундука, если игрок наступил на активный -- вынесено из
+## _process, чтобы дёргать и из самотеста напрямую
 func try_pickup_nearby(p: Vector2) -> bool:
 	for c in chests:
 		if not c.active:
@@ -719,9 +723,14 @@ func _generate() -> void:
 		map.append(row)
 
 	rooms.clear()
-	var target: int = 7 + randi() % 4
+	# зазор между комнатами теперь минимум 2 клетки (было 1): коридоры идут
+	# в этом зазоре, а не впритык к стене соседней комнаты. При зазоре в 1
+	# клетку проходящий коридор открывал клетку прямо у чужой стены, и вся
+	# стена читалась как один сплошной проём -- отсюда двери гроздьями по её
+	# краю и слипшиеся в кляксу комнаты (см. жалобу на сломанную генерацию).
+	var target: int = 6 + randi() % 3
 	var attempts := 0
-	while rooms.size() < target and attempts < 300:
+	while rooms.size() < target and attempts < 400:
 		attempts += 1
 		var w: int = 4 + randi() % 5
 		var h: int = 3 + randi() % 4
@@ -729,8 +738,8 @@ func _generate() -> void:
 		var y: int = 1 + randi() % (MH - h - 1)
 		var ok := true
 		for r in rooms:
-			if x - 1 < r.position.x + r.size.x and x + w + 1 > r.position.x \
-					and y - 1 < r.position.y + r.size.y and y + h + 1 > r.position.y:
+			if x - 2 < r.position.x + r.size.x and x + w + 2 > r.position.x \
+					and y - 2 < r.position.y + r.size.y and y + h + 2 > r.position.y:
 				ok = false
 				break
 		if not ok:
@@ -738,20 +747,109 @@ func _generate() -> void:
 		rooms.append(Rect2i(x, y, w, h))
 		_carve_rect(x, y, w, h)
 
-	# соединяем каждую комнату с предыдущей -- гарантирует связность всей карты
-	for i in range(1, rooms.size()):
-		var a: Rect2i = rooms[i - 1]
-		var b: Rect2i = rooms[i]
-		var ax: int = a.position.x + a.size.x / 2
-		var ay: int = a.position.y + a.size.y / 2
-		var bx: int = b.position.x + b.size.x / 2
-		var by: int = b.position.y + b.size.y / 2
-		if randi() % 2 == 0:
-			_carve_h(ax, bx, ay)
-			_carve_v(ay, by, bx)
-		else:
-			_carve_v(ay, by, ax)
-			_carve_h(ax, bx, by)
+	_connect_rooms()
+
+## Соединяет комнаты коридорами по остовному дереву (Prim, манхэттен между
+## центрами) плюс пара петель -- вместо прежней цепочки "каждая с предыдущей
+## в порядке расстановки", из-за которой коридоры тянулись через весь этаж и
+## прорезали чужие комнаты. Каждое ребро входит в комнату ровно ОДНИМ проёмом
+## на обращённой к соседу стене, и этот проём записывается тут же
+## (doorway_specs), а не вылавливается потом сканом периметра, который плодил
+## лишние двери гроздьями.
+func _connect_rooms() -> void:
+	doorway_specs.clear()
+	var n := rooms.size()
+	if n <= 1:
+		return
+	var centers: Array = []
+	for r in rooms:
+		centers.append(Vector2i(r.position.x + r.size.x / 2, r.position.y + r.size.y / 2))
+	# Prim: растим дерево от комнаты 0, каждый раз цепляя ближайшую снаружи
+	var connected: Dictionary = {0: true}
+	while connected.size() < n:
+		var best_i := -1
+		var best_j := -1
+		var best_d := 1 << 30
+		for i in connected:
+			for j in range(n):
+				if connected.has(j):
+					continue
+				var d: int = absi(centers[i].x - centers[j].x) + absi(centers[i].y - centers[j].y)
+				if d < best_d:
+					best_d = d
+					best_i = i
+					best_j = j
+		connected[best_j] = true
+		_carve_corridor(best_i, best_j)
+	# петли: пара лишних коридоров между близкими комнатами -- этаж перестаёт
+	# быть деревом-цепью, у погони появляются обходные пути
+	for _k in range(1 + n / 4):
+		var i := randi() % n
+		var j := _nearest_room(i, centers)
+		if j != -1:
+			_carve_corridor(i, j)
+
+func _nearest_room(i: int, centers: Array) -> int:
+	var best := -1
+	var best_d := 1 << 30
+	for j in range(centers.size()):
+		if j == i:
+			continue
+		var d: int = absi(centers[i].x - centers[j].x) + absi(centers[i].y - centers[j].y)
+		if d < best_d:
+			best_d = d
+			best = j
+	return best
+
+## Прокладывает один коридор между комнатами i и j: берёт по клетке на
+## обращённых друг к другу стенах, роет между ними Г-образный проход в
+## один тайл шириной и записывает оба проёма.
+func _carve_corridor(i: int, j: int) -> void:
+	var a: Rect2i = rooms[i]
+	var b: Rect2i = rooms[j]
+	var ca := Vector2i(a.position.x + a.size.x / 2, a.position.y + a.size.y / 2)
+	var cb := Vector2i(b.position.x + b.size.x / 2, b.position.y + b.size.y / 2)
+	var da: Dictionary = _door_cell(a, cb)
+	var db: Dictionary = _door_cell(b, ca)
+	var pa: Vector2i = da.pos
+	var pb: Vector2i = db.pos
+	# клетки самих проёмов -- открыть (это клетки прохода сквозь стену)
+	if _in_bounds(pa):
+		map[pa.y][pa.x] = true
+	if _in_bounds(pb):
+		map[pb.y][pb.x] = true
+	# Г-образный коридор между внешними клетками проёмов
+	if randi() % 2 == 0:
+		_carve_h(pa.x, pb.x, pa.y)
+		_carve_v(pa.y, pb.y, pb.x)
+	else:
+		_carve_v(pa.y, pb.y, pa.x)
+		_carve_h(pa.x, pb.x, pb.y)
+	doorway_specs.append(da)
+	doorway_specs.append(db)
+
+## Клетка ПРЯМО ЗА стеной комнаты, обращённой к цели toward, плюс наружное
+## направление -- будущий дверной проём. Сторона выбирается по тому, куда
+## дальше до цели (по X или по Y), координата вдоль стены прижата к её отрезку.
+func _door_cell(room: Rect2i, toward: Vector2i) -> Dictionary:
+	var left: int = room.position.x
+	var right: int = room.position.x + room.size.x - 1
+	var top: int = room.position.y
+	var bottom: int = room.position.y + room.size.y - 1
+	var cx: int = (left + right) / 2
+	var cy: int = (top + bottom) / 2
+	if absi(toward.x - cx) >= absi(toward.y - cy):
+		var row: int = clampi(toward.y, top, bottom)
+		if toward.x >= cx:
+			return {"pos": Vector2i(right + 1, row), "dir": Vector2i(1, 0)}
+		return {"pos": Vector2i(left - 1, row), "dir": Vector2i(-1, 0)}
+	var col: int = clampi(toward.x, left, right)
+	if toward.y >= cy:
+		return {"pos": Vector2i(col, bottom + 1), "dir": Vector2i(0, 1)}
+	return {"pos": Vector2i(col, top - 1), "dir": Vector2i(0, -1)}
+
+func _in_bounds(c: Vector2i) -> bool:
+	return c.x > 0 and c.x < MW - 1 and c.y > 0 and c.y < MH - 1
 
 ## "shuffle every non-entrance room into a beat the monster loops while
 ## wandering, so idle movement reads as a patrol through the halls rather
@@ -915,7 +1013,6 @@ func _place_keys_and_exit() -> void:
 	_shrine_player = null   # тоже был ребёнком props_root -- та же чистка
 
 	num_keys = min(3 + (GameState.depth - 1) / 3, MAX_KEYS)
-	keys_left = num_keys
 
 	var start: Rect2i = rooms[0]
 	var start_center := Vector2(start.position.x + start.size.x / 2.0, start.position.y + start.size.y / 2.0)
@@ -930,6 +1027,13 @@ func _place_keys_and_exit() -> void:
 		if d > best_d:
 			best_d = d
 			exit_room_idx = i
+
+	# сундуков не больше, чем комнат под них (все, кроме стартовой и выходной):
+	# иначе на глубоком этаже с малым числом комнат ключей требовалось бы
+	# больше, чем помещается сундуков, и дверь выхода не открылась бы никогда
+	# (софт-лок). keys_left ставим уже после этого предела.
+	num_keys = mini(num_keys, maxi(0, rooms.size() - 2))
+	keys_left = num_keys
 
 	var chest_mat := StandardMaterial3D.new()
 	chest_mat.albedo_texture = _chest_texture()
@@ -970,8 +1074,12 @@ func _place_keys_and_exit() -> void:
 	if keys_left == 0:
 		_open_exit_door()
 
-	_place_lockers(exit_room_idx)
+	# двери -- ДО шкафчиков и клатера: и те, и другие теперь сверяются со
+	# списком doors, чтобы не встать своей коллизией в горловину прохода
+	# (см. _place_lockers/_place_room_dressing) -- раньше _place_doors шёл
+	# после _place_lockers, и шкафчик мог сесть прямо в дверной проём.
 	_place_doors()
+	_place_lockers(exit_room_idx)
 	_place_altar(exit_room_idx, start)
 	_place_room_dressing(exit_room_idx)
 	_place_pickups(start.position + Vector2i(start.size.x / 2, start.size.y / 2))
@@ -1098,13 +1206,13 @@ func _open_exit_door() -> void:
 	tw.tween_property(exit_door_pivot, "rotation:y", -deg_to_rad(100.0), 1.1) \
 		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
 
-## Дверные проёмы там, где коридор входит в комнату -- порт того, что в
-## подземелье раньше вообще не было дверей: комнаты просто перетекали в
-## коридор голым разрывом стены. Ищем клетки пола сразу за границей каждой
-## комнаты (там, где коридор её касается) и ставим раму: деревянный косяк
-## по бокам прохода + притолока сверху, и саму панель -- она распахивается
-## при приближении игрока и закрывается за спиной (см. _update_doors),
-## чисто визуально, без коллизии -- проход остаётся свободным, как и был.
+## Ставит дверную раму в каждый проём, записанный при генерации коридоров
+## (doorway_specs, см. _connect_rooms) -- один проём на связь между комнатами,
+## ровно там, где коридор пронзает стену. Раньше двери вылавливались сканом
+## периметра каждой комнаты и липли гроздьями к любой открытой границе; теперь
+## места проёмов известны заранее. Рама: деревянный косяк по бокам прохода +
+## притолока сверху, и сама панель -- она распахивается при приближении игрока
+## и закрывается за спиной (см. _update_doors), чисто визуально, без коллизии.
 func _place_doors() -> void:
 	doors.clear()
 	var wood_mat := StandardMaterial3D.new()
@@ -1113,13 +1221,16 @@ func _place_doors() -> void:
 	wood_mat.roughness = 1.0
 
 	var seen: Dictionary = {}
-	for r in rooms:
-		for entry in _room_doorway_cells(r):
-			var key: Vector2i = entry.pos
-			if seen.has(key):
-				continue
-			seen[key] = true
-			_build_door_frame(entry.pos, entry.dir, wood_mat)
+	for spec in doorway_specs:
+		var cell: Vector2i = spec.pos
+		if seen.has(cell):
+			continue
+		# проём у самого края карты мог не прорезаться (_carve_* режет только
+		# внутренние клетки) -- строим дверь лишь там, где проход реально открыт
+		if not is_open(cell.x, cell.y):
+			continue
+		seen[cell] = true
+		_build_door_frame(cell, spec.dir, wood_mat)
 
 ## открывает дверь при приближении игрока и закрывает за спиной, с
 ## гистерезисом между порогами (иначе дверь дребезжала бы туда-сюда прямо
@@ -1140,43 +1251,6 @@ func _update_doors(p: Vector2) -> void:
 			tw2.tween_property(d.pivot, "rotation:y", 0.0, 0.5) \
 				.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN)
 
-## клетки пола сразу за одной из четырёх границ комнаты, где начинается
-## коридор -- направление (dir) смотрит НАРУЖУ из комнаты, вдоль коридора.
-## Раньше ставила дверь на КАЖДУЮ открытую клетку вдоль границы комнаты --
-## если коридор шёл вдоль всей стены (а не заходил через один узкий проём),
-## получалась целая вереница дверей подряд в одном широком проходе ("10
-## дверей в одном проёме"). Теперь один дверной проём -- один непрерывный
-## открытый участок границы, а дверь ставится в его середине.
-func _room_doorway_cells(r: Rect2i) -> Array:
-	var out: Array = []
-	var x0: int = r.position.x
-	var y0: int = r.position.y
-	var x1: int = x0 + r.size.x - 1
-	var y1: int = y0 + r.size.y - 1
-	out.append_array(_doorway_runs(x0, x1, y0 - 1, true, Vector2i(0, -1)))
-	out.append_array(_doorway_runs(x0, x1, y1 + 1, true, Vector2i(0, 1)))
-	out.append_array(_doorway_runs(y0, y1, x0 - 1, false, Vector2i(-1, 0)))
-	out.append_array(_doorway_runs(y0, y1, x1 + 1, false, Vector2i(1, 0)))
-	return out
-
-## сканирует одну грань комнаты (горизонтальную при horizontal=true, вдоль
-## x на фиксированном y=fixed_coord; вертикальную иначе) и группирует
-## подряд идущие открытые клетки в участки -- один дверной проём на участок,
-## по его середине.
-func _doorway_runs(a0: int, a1: int, fixed_coord: int, horizontal: bool, dir: Vector2i) -> Array:
-	var out: Array = []
-	var run_start := -1
-	for a in range(a0, a1 + 2):   # +1 за край, чтобы закрыть последний участок
-		var open: bool = a <= a1 and (is_open(a, fixed_coord) if horizontal else is_open(fixed_coord, a))
-		if open and run_start == -1:
-			run_start = a
-		elif not open and run_start != -1:
-			var mid: int = (run_start + a - 1) / 2
-			var pos := Vector2i(mid, fixed_coord) if horizontal else Vector2i(fixed_coord, mid)
-			out.append({"pos": pos, "dir": dir})
-			run_start = -1
-	return out
-
 func _build_door_frame(cell: Vector2i, dir: Vector2i, wood_mat: StandardMaterial3D) -> void:
 	var cx: float = cell.x + 0.5
 	var cz: float = cell.y + 0.5
@@ -1184,6 +1258,10 @@ func _build_door_frame(cell: Vector2i, dir: Vector2i, wood_mat: StandardMaterial
 	# косяки стоят по бокам вдоль Z, и наоборот
 	var perp := Vector2(0.0, 1.0) if dir.x != 0 else Vector2(1.0, 0.0)
 	var half := 0.46
+	# полотно и его верхний край считаем заранее: притолока над дверью
+	# должна встать ровно на верх полотна и дотянуться до потолка (см. ниже).
+	var leaf_h: float = float(WALL_H) - 0.32
+	var leaf_top: float = leaf_h + 0.06
 	for side in [-1.0, 1.0]:
 		var post := MeshInstance3D.new()
 		post.mesh = BoxMesh.new()
@@ -1191,19 +1269,24 @@ func _build_door_frame(cell: Vector2i, dir: Vector2i, wood_mat: StandardMaterial
 		post.material_override = wood_mat
 		post.position = Vector3(cx + perp.x * half * side, WALL_H / 2.0, cz + perp.y * half * side)
 		props_root.add_child(post)
+	# притолока -- раньше была тонким бруском (0.12 высотой у самого потолка),
+	# и над ней до потолка оставалась открытая щель в стене: сквозь верх
+	# проёма было видно наружу ("сверху пространство пустое"). Теперь это
+	# цельная перемычка от верхнего края полотна до самого потолка (WALL_H) --
+	# проём закрыт вплотную сверху, как по бокам его закрывают косяки.
 	var lintel := MeshInstance3D.new()
 	lintel.mesh = BoxMesh.new()
 	var span: float = half * 2.0 + 0.10
+	var lintel_h: float = float(WALL_H) - leaf_top
 	# длинная сторона притолоки идёт вдоль той же оси, что и косяки (perp)
-	lintel.mesh.size = Vector3(0.12, 0.12, span) if dir.x != 0 else Vector3(span, 0.12, 0.12)
+	lintel.mesh.size = Vector3(0.12, lintel_h, span) if dir.x != 0 else Vector3(span, lintel_h, 0.12)
 	lintel.material_override = wood_mat
-	lintel.position = Vector3(cx, float(WALL_H) - 0.15, cz)
+	lintel.position = Vector3(cx, leaf_top + lintel_h / 2.0, cz)
 	props_root.add_child(lintel)
 
 	# сама панель -- навешена на "минус"-столб как на петлю (тот же приём,
 	# что и у двери выхода): пивот стоит у петли, панель -- его ребёнок,
 	# смещённая так, что её край совпадает с петлёй.
-	var leaf_h: float = float(WALL_H) - 0.32
 	var leaf := MeshInstance3D.new()
 	leaf.mesh = BoxMesh.new()
 	var leaf_span: float = half * 2.0 - 0.05
@@ -1214,7 +1297,7 @@ func _build_door_frame(cell: Vector2i, dir: Vector2i, wood_mat: StandardMaterial
 	props_root.add_child(pivot)
 	leaf.position = Vector3(perp.x * half, leaf_h / 2.0 + 0.06, perp.y * half)
 	pivot.add_child(leaf)
-	doors.append({"pivot": pivot, "pos": Vector2(cx, cz), "is_open": false})
+	doors.append({"pivot": pivot, "pos": Vector2(cx, cz), "dir": dir, "is_open": false})
 
 ## шкафчики, где можно спрятаться -- порт locker-плейсмента из reset_level
 ## (gen.c): по одному на комнату, не в стартовой/финальной.
@@ -1265,6 +1348,20 @@ func _place_lockers(exit_room_idx: int) -> void:
 					too_close = true
 					break
 			if too_close:
+				continue
+			# клетка у стены рядом с дверным проёмом -- шкафчик своей коллизией
+			# (слой 8) перегородил бы единственный проход в дверь. doors уже
+			# построены (см. порядок в _build), так что можем свериться. Держим
+			# зазор и от самого проёма, и от его горловины уже ВНУТРИ комнаты
+			# (d.pos сидит в стене снаружи -- см. _build_door_frame), иначе
+			# шкафчик у стены впритык к проёму всё равно зажимал бы проход.
+			var blocks_door := false
+			for d in doors:
+				var mouth: Vector2 = d.pos - Vector2(d.dir.x, d.dir.y)
+				if cand_pos.distance_to(d.pos) < 1.2 or cand_pos.distance_to(mouth) < 1.2:
+					blocks_door = true
+					break
+			if blocks_door:
 				continue
 			var wx: float = c.x + 0.5 + wall_dir.x * 0.22
 			var wz: float = c.y + 0.5 + wall_dir.y * 0.22
@@ -1559,6 +1656,11 @@ func _place_room_dressing(exit_room_idx: int) -> void:
 		occupied.append(Vector2(l.position.x, l.position.z))
 	for d in doors:
 		occupied.append(d.pos)
+		# и клетка сразу ВНУТРИ комнаты у этого проёма: d.pos сидит в стене
+		# снаружи, поэтому проверки на 1.3 от него не хватало, чтобы удержать
+		# ящик/стол от посадки ровно в горловину прохода. dir смотрит наружу,
+		# так что вычитаем его, чтобы шагнуть внутрь комнаты.
+		occupied.append(d.pos - Vector2(d.dir.x, d.dir.y))
 	occupied.append(exit_pos)
 	if not altar.is_empty():
 		occupied.append(altar.pos)
@@ -1733,7 +1835,11 @@ func _place_altar(exit_room_idx: int, start: Rect2i) -> void:
 				break
 		if not clash:
 			for d in doors:
-				if pos.distance_to(d.pos) < 1.2:
+				# и проём, и его горловина внутри комнаты (d.pos сидит в стене
+				# снаружи -- см. _build_door_frame): у алтаря настоящая коллизия,
+				# в горловине он так же перегородил бы проход, как ящик/шкафчик.
+				var mouth: Vector2 = d.pos - Vector2(d.dir.x, d.dir.y)
+				if pos.distance_to(d.pos) < 1.2 or pos.distance_to(mouth) < 1.2:
 					clash = true
 					break
 		if clash:

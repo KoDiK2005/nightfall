@@ -234,7 +234,7 @@ your keyboard layout to English.
 | `W` `A` `S` `D`| Move          |
 | Mouse          | Look (free, up/down too) |
 | `Shift`        | Run (uses stamina) |
-| `E`            | Open a chest · hide in / leave a locker · search a crate · pray at an altar · read / close a note |
+| `E`            | Hide in / leave a locker · search a crate · pray at an altar · read / close a note (chests open on their own — just walk into them) |
 | `F`            | Strike a match (light vs. being seen) |
 | `G`            | Throw a rock (a lure, away from you) |
 | `H`            | Drop a flare (a lure that keeps working after you leave) |
