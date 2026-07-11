@@ -1013,6 +1013,37 @@ func _wall_dir(x: int, y: int) -> Vector2i:
 	if not is_open(x, y - 1): return Vector2i(0, -1)
 	return Vector2i.ZERO
 
+## Геометрический центр комнаты, отодвинутый от ближайшего дверного проёма
+## (doorway_specs пишется в _connect_rooms ДО этого вызова, задолго до
+## визуальных _place_doors -- сами сырые позиции проёмов уже доступны).
+## Раньше сундук вставал строго в центр комнаты без единой проверки на
+## дверь: в маленькой/узкой комнате, где проём выходит почти на центр,
+## сундук мог сесть вплотную к горловине или прямо в неё -- полностью
+## перекрывая единственный вход, "не зайти в комнату из-за сундука" на
+## части сгенерированных сеидов. Тот же приём, что уже используют
+## _place_lockers/_place_altar (проверка расстояния до проёма), но здесь
+## не пропуск кандидата, а сдвиг центра в сторону от проёма с зажимом в
+## границы комнаты.
+func _safe_room_center(r: Rect2i, clearance: float = 1.3) -> Vector2:
+	var center := Vector2(r.position.x + r.size.x / 2.0, r.position.y + r.size.y / 2.0)
+	for spec in doorway_specs:
+		var dpos := Vector2(spec.pos.x + 0.5, spec.pos.y + 0.5)
+		var dist: float = dpos.distance_to(center)
+		if dist < clearance:
+			var away: Vector2 = center - dpos
+			if away.length() < 0.01:
+				away = Vector2(-spec.dir.y, spec.dir.x)   # проём точно в центре -- уходим вбок
+			center += away.normalized() * (clearance - dist + 0.05)
+	var min_x: float = r.position.x + 0.6
+	var max_x: float = r.position.x + r.size.x - 0.6
+	var min_y: float = r.position.y + 0.6
+	var max_y: float = r.position.y + r.size.y - 0.6
+	if min_x <= max_x:
+		center.x = clamp(center.x, min_x, max_x)
+	if min_y <= max_y:
+		center.y = clamp(center.y, min_y, max_y)
+	return center
+
 ## Ключи в сундуках (порт reset_level из gen.c): 3 на первом этаже, плюс
 ## один за каждые три этажа, максимум MAX_KEYS. Раскладываются по центрам
 ## комнат, кроме стартовой. Выход -- в комнате, самой дальней от старта.
@@ -1091,13 +1122,11 @@ func _place_keys_and_exit() -> void:
 		if i == exit_room_idx:
 			continue
 		var r: Rect2i = rooms[i]
-		var cx: float = r.position.x + r.size.x / 2.0
-		var cy: float = r.position.y + r.size.y / 2.0
-		chests.append(_build_chest(Vector2(cx, cy), chest_mat, key_icon_mat))
+		chests.append(_build_chest(_safe_room_center(r), chest_mat, key_icon_mat))
 		placed_keys += 1
 
 	var er: Rect2i = rooms[exit_room_idx]
-	exit_pos = Vector2(er.position.x + er.size.x / 2.0, er.position.y + er.size.y / 2.0)
+	exit_pos = _safe_room_center(er)
 	_place_exit_door(exit_pos)
 	if keys_left == 0:
 		_open_exit_door()
@@ -1872,16 +1901,25 @@ func _place_room_dressing(exit_room_idx: int) -> void:
 			var cx: float = r.position.x + 0.7 + randf() * max(r.size.x - 1.4, 0.1)
 			var cy: float = r.position.y + 0.7 + randf() * max(r.size.y - 1.4, 0.1)
 			var pos := Vector2(cx, cy)
+			# бросок решается ДО проверки клатера, а не после -- стол
+			# (_spawn_desk) заметно крупнее и, в отличие от ящика, ставится
+			# со случайным поворотом (legs_parent.rotation.y = randf()*TAU),
+			# так что его угол может дотянуться до прохода даже когда центр
+			# формально дальше обычного порога 1.3. Раньше все типы декора
+			# проверялись одним и тем же радиусом независимо от габарита --
+			# отсюда жалоба "не зайти в комнату из-за стола/ящика" на части
+			# сгенерированных сидов.
+			var roll := randf()
+			var need_clear: float = 1.75 if (roll >= 0.6 and roll < 0.8) else 1.3
 			var clash := false
 			for o in occupied:
-				if pos.distance_to(o) < 1.3:
+				if pos.distance_to(o) < need_clear:
 					clash = true
 					break
 			if clash:
 				continue
 			occupied.append(pos)
 			placed += 1
-			var roll := randf()
 			if roll < 0.35:
 				_spawn_rubble(pos, rubble_mat)
 			elif roll < 0.6:
