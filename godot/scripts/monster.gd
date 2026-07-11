@@ -81,6 +81,7 @@ var hip_r: Node3D = null
 var shoulder_l: Node3D = null
 var shoulder_r: Node3D = null
 var _torso_base_pos: Vector3 = Vector3.ZERO
+var _spine_tilt: float = 0.0
 var _stutter_timer: float = 0.0
 
 ## тайловая текстура рваной, шрамированной плоти -- рёбра, вены, кровавые
@@ -208,6 +209,53 @@ func _sphere(radius: float) -> SphereMesh:
 	m.height = radius * 2.0
 	return m
 
+## смещает вершины примитива вдоль нормали 3D-шумом -- без этого капсулы и
+## сферы рига оставались идеально гладкими и правильными, отсюда и жалоба
+## "выглядит как манекен": ровные примитивы с текстурой поверх всё равно
+## читаются как витринный манекен, а не как истощённая плоть. После
+## смещения нормали пересчитываются заново (SurfaceTool.generate_normals),
+## иначе освещение всё ещё "видит" старую гладкую форму под буграми.
+static func _organicize(mesh: Mesh, amp: float, freq: float, seed_val: int) -> ArrayMesh:
+	var arrays: Array = mesh.surface_get_arrays(0)
+	var verts: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+	var normals: PackedVector3Array = arrays[Mesh.ARRAY_NORMAL]
+	var noise := FastNoiseLite.new()
+	noise.seed = seed_val
+	noise.frequency = freq
+	var out_verts := PackedVector3Array()
+	out_verts.resize(verts.size())
+	for i in range(verts.size()):
+		var v: Vector3 = verts[i]
+		var d: float = noise.get_noise_3d(v.x * 60.0, v.y * 60.0, v.z * 60.0)
+		out_verts[i] = v + normals[i] * d * amp
+	arrays[Mesh.ARRAY_VERTEX] = out_verts
+	var raw := ArrayMesh.new()
+	raw.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	var st := SurfaceTool.new()
+	st.create_from(raw, 0)
+	st.generate_normals()
+	return st.commit()
+
+## капсула/сфера с меньшим числом сегментов -- под шумовым смещением грубая
+## огранка читается как рубленая, неровная плоть, а не идеально гладкая
+## поверхность (высокополигональные капсулы после того же шума выглядели
+## почти так же гладко, как и без него -- бугры тонули в сглаживании).
+static func _lumpy_capsule(radius: float, height: float, amp: float, seed_val: int) -> ArrayMesh:
+	var m := CapsuleMesh.new()
+	m.radius = radius
+	m.height = height
+	m.radial_segments = 10
+	m.rings = 3
+	return _organicize(m, amp, 5.5, seed_val)
+
+static func _lumpy_sphere(radius: float, amp: float, seed_val: int) -> ArrayMesh:
+	var m := SphereMesh.new()
+	m.radius = radius
+	m.height = radius * 2.0
+	m.radial_segments = 14
+	m.rings = 7
+	return _organicize(m, amp, 6.0, seed_val)
+
 ## растянутый неестественно широкий оскал с редкими кривыми клыками --
 ## порт того же приёма из старого пиксель-арта (fang-паттерн в build_sprites/
 ## render.c), но нарисован на прозрачной нашлёпке поверх головы, а не
@@ -308,31 +356,39 @@ func _build_rig() -> void:
 	flesh_mat = _build_flesh_material()
 	eye_mat = _build_eye_material()
 
-	# ноги: пивот в бедре на высоте 1.0 -- капсула свисает вниз до земли
-	var leg_mesh := CapsuleMesh.new()
-	leg_mesh.radius = 0.07
-	leg_mesh.height = 0.95
-	hip_l = _add_pivot(body, Vector3(-0.12, 1.0, 0.0))
-	_add_mesh(hip_l, leg_mesh, flesh_mat, Vector3(0, -0.475, 0))
-	hip_r = _add_pivot(body, Vector3(0.12, 1.0, 0.0))
-	_add_mesh(hip_r, leg_mesh, flesh_mat, Vector3(0, -0.475, 0))
+	# каждый экземпляр -- чуть иное сломанное тело, а не один и тот же
+	# клонированный манекен: одна нога на пару сантиметров короче (заметно
+	# даже в состоянии покоя, не только в шаге), торс перекошен собственным
+	# случайным креном. Разброс небольшой -- чтобы силуэт всё ещё читался
+	# как тот же вид монстра, а не выглядел как каждый раз новая модель.
+	var limp_l: float = randf_range(-0.03, 0.01)
+	var limp_r: float = randf_range(-0.03, 0.01)
+	var spine_tilt: float = randf_range(-0.09, 0.09)
+
+	# ноги: пивот в бедре на высоте 1.0 -- капсула свисает вниз до земли.
+	# Левая и правая -- разные экземпляры шумового смещения (разные seed),
+	# иначе шаг с "хромотой" (см. _animate_walk) выглядел бы странно рядом
+	# с идеально одинаковыми ногами.
+	hip_l = _add_pivot(body, Vector3(-0.12, 1.0 + limp_l, 0.0))
+	_add_mesh(hip_l, _lumpy_capsule(0.07, 0.95, 0.014, 11), flesh_mat, Vector3(0, -0.475, 0))
+	_add_mesh(hip_l, _lumpy_sphere(0.075, 0.016, 17), flesh_mat, Vector3.ZERO)
+	hip_r = _add_pivot(body, Vector3(0.12, 1.0 + limp_r, 0.0))
+	_add_mesh(hip_r, _lumpy_capsule(0.07, 0.95, 0.014, 12), flesh_mat, Vector3(0, -0.475, 0))
+	_add_mesh(hip_r, _lumpy_sphere(0.075, 0.016, 18), flesh_mat, Vector3.ZERO)
 
 	# торс: узкая вытянутая капсула, чуть сужена к бёдрам -- через scale.x/z
 	torso_node = _add_pivot(body, Vector3(0, 1.0, 0))
+	_spine_tilt = spine_tilt
+	torso_node.rotation.z = spine_tilt
 	_torso_base_pos = torso_node.position
-	var torso_mesh := CapsuleMesh.new()
-	torso_mesh.radius = 0.16
-	torso_mesh.height = 0.58
-	var torso_mi := _add_mesh(torso_node, torso_mesh, flesh_mat, Vector3(0, 0.29, 0))
+	var torso_mi := _add_mesh(torso_node, _lumpy_capsule(0.16, 0.58, 0.02, 13), flesh_mat, Vector3(0, 0.29, 0))
 	torso_mi.scale = Vector3(1.0, 1.0, 0.72)
 
 	# голова: приплюснутая сфера на пивоте у основания шеи, чтобы вращать
-	# отдельно от торса (кивки/повороты в _animate_walk)
+	# отдельно от торса (кивки/повороты в _animate_walk). Бугры мельче, чем
+	# на теле -- иначе размывается посадка глаз/пасти на поверхности.
 	head_node = _add_pivot(torso_node, Vector3(0, 0.58, 0))
-	var head_mesh := SphereMesh.new()
-	head_mesh.radius = 0.14
-	head_mesh.height = 0.28
-	var head_mi := _add_mesh(head_node, head_mesh, flesh_mat, Vector3(0, 0.14, 0.01))
+	var head_mi := _add_mesh(head_node, _lumpy_sphere(0.14, 0.008, 14), flesh_mat, Vector3(0, 0.14, 0.01))
 	head_mi.scale = Vector3(0.92, 1.12, 0.88)
 
 	if mon_type == MonType.LISTENER:
@@ -372,15 +428,15 @@ func _build_rig() -> void:
 		# слегка разведены в стороны от торса -- иначе капсулы рук сливаются
 		# с торсом в один нечитаемый ком, особенно на средней дистанции
 		shoulder.rotation.z = deg_to_rad(10.0 * side)
-		var upper_mesh := CapsuleMesh.new()
-		upper_mesh.radius = 0.05
-		upper_mesh.height = 0.42
-		_add_mesh(shoulder, upper_mesh, flesh_mat, Vector3(0, -0.21, 0))
+		var arm_seed: int = 15 if side < 0.0 else 16
+		_add_mesh(shoulder, _lumpy_sphere(0.058, 0.016, arm_seed + 30), flesh_mat, Vector3.ZERO)
+		_add_mesh(shoulder, _lumpy_capsule(0.05, 0.42, 0.012, arm_seed), flesh_mat, Vector3(0, -0.21, 0))
 		var elbow := _add_pivot(shoulder, Vector3(0, -0.42, 0))
-		var fore_mesh := CapsuleMesh.new()
-		fore_mesh.radius = 0.042
-		fore_mesh.height = 0.5
-		_add_mesh(elbow, fore_mesh, flesh_mat, Vector3(0, -0.25, 0))
+		_add_mesh(elbow, _lumpy_capsule(0.042, 0.5, 0.011, arm_seed + 10), flesh_mat, Vector3(0, -0.25, 0))
+		# костяшка локтя -- неровный нарост в месте сустава, скрывает шов
+		# между двумя капсулами руки, который иначе читался как ровный
+		# "манекенный" сгиб на шарнире
+		_add_mesh(shoulder, _lumpy_sphere(0.052, 0.016, arm_seed + 20), flesh_mat, Vector3(0, -0.42, 0))
 		# растопыренные когтистые пальцы -- три тонких конуса веером на кисти
 		var claw_mesh := CylinderMesh.new()
 		claw_mesh.top_radius = 0.0
@@ -479,7 +535,7 @@ func _process(delta: float) -> void:
 	var jx: float = sin(_twitch_t * jitter_speed) * jitter_amp
 	var jy: float = sin(_twitch_t * jitter_speed * 1.7 + 1.3) * jitter_amp * 0.6
 	if torso_node:
-		torso_node.rotation.z = jx
+		torso_node.rotation.z = _spine_tilt + jx
 	if head_node:
 		head_node.rotation.z = jy * 0.6
 		# Слухач слеп -- вместо взгляда медленно "обшаривает" комнату слухом,
