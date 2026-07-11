@@ -251,6 +251,23 @@ func _run() -> void:
 	check(lg.cage_spots.size() == cage_spots_before + 1, "_spawn_cage регистрирует позицию в cage_spots")
 	check(lg.props_root.get_child_count() == props_before + 2, "клетка и лужа крови добавлены в сцену")
 
+	# 9b2) регресс: сенс во время pause_timer ("прислушивается" в SEARCH) не
+	# должен намертво замораживать монстра на весь HUNT -- баг был именно
+	# в этом: state переключался в HUNT, а pause_timer оставался > 0
+	# навсегда, потому что декремент живёт только в ветке SEARCH.
+	var pmon: Node = player.monster
+	pmon.mon_type = pmon.MonType.STALKER
+	pmon.state = pmon.State.SEARCH
+	pmon.pause_timer = 1.0
+	pmon.position = Vector3(2.0, 0.1, 0.0)
+	player.position = Vector3(2.0, 0.9, 0.0)   # вплотную -- гарантированный sensed
+	player.hidden = false
+	pmon._sense(0.016)
+	check(pmon.state == pmon.State.HUNT, "сенс во время паузы всё равно переводит в HUNT")
+	check(pmon.pause_timer == 0.0, "переход в HUNT сбрасывает pause_timer -- монстр не застревает навсегда")
+	pmon.state = pmon.State.WANDER
+	pmon.pick_wander()
+
 	# 9c) красться: присед глушит слух. Берём Слухача (слепого -- зрение не
 	# мешает), ставим игрока в 5 клетках и "идущим" (velocity шага). Идущего
 	# он слышит (радиус ~7.2), крадущегося на том же месте -- нет (радиус

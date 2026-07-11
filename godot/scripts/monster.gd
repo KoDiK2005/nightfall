@@ -826,6 +826,14 @@ func _sense(delta: float) -> void:
 			# только что взяло след -- долгий рёв, потом пауза, чтобы он отыграл
 			roar_player.play()
 			growl_timer = ROAR_BREATHE_MIN + randf() * (ROAR_BREATHE_MAX - ROAR_BREATHE_MIN)
+		# pause_timer ("прислушивается", см. ветку SEARCH ниже) тикает вниз
+		# только пока state == SEARCH. Если игрок учуян ИМЕННО во время такой
+		# паузы, state тут же переключается в HUNT с pause_timer ещё > 0 --
+		# а внутри HUNT его больше никто не трогает, и _move() (см. ниже,
+		# "if frozen or pause_timer > 0.0") держит монстра неподвижным до
+		# конца этажа. Пауза была задумана как короткая заминка внутри
+		# поиска, а не как случайный шанс намертво его заглушить.
+		pause_timer = 0.0
 		state = State.HUNT
 		last_known = ppos
 		set_target(Vector2i(int(ppos.x), int(ppos.y)))
@@ -885,6 +893,16 @@ func _check_noise() -> void:
 		state = State.SEARCH
 		search_time = 5.0
 		set_target(Vector2i(int(level_gen.noise_pos.x), int(level_gen.noise_pos.y)))
+
+## публичный доступ для player.gd::_update_sanity -- "видит ли монстр меня
+## ПРЯМО СЕЙЧАС", а не просто "охотится" (см. там же, drain раньше дважды
+## гейтился на одном и том же hunting и не различал эти два случая, хотя
+## комментарий обещал "особенно, когда оно тебя видит"). Слухач слеп --
+## для него это всегда false, зрение не участвует в его охоте вовсе.
+func sees_player() -> bool:
+	if player == null or mon_type == MonType.LISTENER:
+		return false
+	return _has_los(Vector2(player.position.x, player.position.z))
 
 ## прямая видимость: луч игрок<->монстр не должен пересекать стены
 ## (см. has_los в gen.c, там -- пошаговая проверка по сетке; тут -- raycast)

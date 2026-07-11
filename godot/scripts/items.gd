@@ -76,16 +76,25 @@ func _strike_match() -> void:
 ## камень, летящий по дуге от руки до места удара -- раньше бросок был
 ## чисто логическим (raycast + отложенный звук, без единого пикселя в
 ## кадре в момент броска), отсюда жалоба "камня не видно, когда кидаешь".
+## Меш/материал одинаковы на каждый бросок -- кэшируем один раз (тот же
+## приём, что и у monster.gd::_flesh_tex), а не пересобираем на ровном месте
+## при каждом нажатии G.
+static var _rock_mesh: SphereMesh = null
+static var _rock_mat: StandardMaterial3D = null
 static func _rock_mesh_mat() -> Array:
-	var mesh := SphereMesh.new()
-	mesh.radius = 0.045
-	mesh.height = 0.09
-	mesh.radial_segments = 6
-	mesh.rings = 3
-	var mat := StandardMaterial3D.new()
-	mat.albedo_color = Color(0.32, 0.29, 0.26)
-	mat.roughness = 0.95
-	return [mesh, mat]
+	if _rock_mesh == null:
+		_rock_mesh = SphereMesh.new()
+		_rock_mesh.radius = 0.045
+		_rock_mesh.height = 0.09
+		_rock_mesh.radial_segments = 6
+		_rock_mesh.rings = 3
+		_rock_mat = StandardMaterial3D.new()
+		_rock_mat.albedo_color = Color(0.32, 0.29, 0.26)
+		_rock_mat.roughness = 0.95
+	return [_rock_mesh, _rock_mat]
+
+const ROCK_RADIUS := 0.045
+const ROCK_REST_Y := 0.05   # чуть над полом -- та же посадка, что у щебня/камней декора
 
 func _throw_rock() -> void:
 	if rock_count <= 0:
@@ -101,13 +110,19 @@ func _throw_rock() -> void:
 	var query := PhysicsRayQueryParameters3D.create(from, to)
 	query.collision_mask = 1
 	var hit := space.intersect_ray(query)
-	var to3: Vector3
 	if not hit.is_empty():
-		landing = Vector2(hit.position.x, hit.position.z)
-		to3 = hit.position
+		# точка удара -- ровно НА поверхности стены (raycast так и работает),
+		# а бросок летел на высоте руки (~1.2м), не пола: без поправок камень
+		# в конце полёта повисал вплотную к стене на высоте броска, а не падал
+		# на пол ("камень клеится к стене"). Оттягиваем точку приземления от
+		# стены вдоль её нормали на радиус камня, чтобы не втыкался в кладку,
+		# и в любом случае садим финальную точку на пол, а не туда, где по
+		# высоте случайно прошёл луч.
+		var n: Vector3 = hit.normal
+		landing = Vector2(hit.position.x + n.x * ROCK_RADIUS, hit.position.z + n.z * ROCK_RADIUS)
 	else:
 		landing = Vector2(to.x, to.z)
-		to3 = to
+	var to3 := Vector3(landing.x, ROCK_REST_Y, landing.y)
 
 	var mm := _rock_mesh_mat()
 	var rock := MeshInstance3D.new()
@@ -119,7 +134,7 @@ func _throw_rock() -> void:
 	var tw := player.get_tree().create_tween()
 	tw.tween_method(func(t: float):
 		var p: Vector3 = from.lerp(to3, t)
-		p.y += sin(t * PI) * 0.7   # дуга броска, не по прямой линии
+		p.y += sin(t * PI) * 0.7   # дуга броска поверх прямой линии от -> на пол
 		rock.position = p
 	, 0.0, 1.0, ROCK_FLY_DUR)
 	tw.finished.connect(func():

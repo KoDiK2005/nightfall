@@ -251,7 +251,13 @@ func _update_sanity(delta: float) -> void:
 		var d: float = global_position.distance_to(monster.global_position)
 		target = clamp(1.0 - d / 9.0, 0.0, 1.0)
 	tension = lerp(tension, target, clamp(delta * 3.0, 0.0, 1.0))
-	var drain: float = 0.004 + dd * 0.0025 + tension * 0.05 + (0.03 if hunting else 0.0) + (0.10 if hunting else 0.0)
+	# было два одинаковых "+ 0.0Х if hunting" слагаемых -- дубль, не давал
+	# отдельного штрафа за то, что монстр РЕАЛЬНО тебя видит (комментарий
+	# выше обещал "особенно, когда оно тебя видит", а код дважды спрашивал
+	# один и тот же hunting). Второе слагаемое теперь честно гейтится на
+	# monster.sees_player() -- прямую видимость, а не просто состояние HUNT.
+	var seen: bool = hunting and monster.sees_player()
+	var drain: float = 0.004 + dd * 0.0025 + tension * 0.05 + (0.03 if hunting else 0.0) + (0.10 if seen else 0.0)
 	if tension < 0.12 and not hunting:
 		sanity += delta * 0.02
 	# зажжённая спичка -- маленькая, но безусловная поддержка рассудка: свет
