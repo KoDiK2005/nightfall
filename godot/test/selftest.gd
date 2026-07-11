@@ -251,6 +251,34 @@ func _run() -> void:
 	check(lg.cage_spots.size() == cage_spots_before + 1, "_spawn_cage регистрирует позицию в cage_spots")
 	check(lg.props_root.get_child_count() == props_before + 2, "клетка и лужа крови добавлены в сцену")
 
+	# 9c) красться: присед глушит слух. Берём Слухача (слепого -- зрение не
+	# мешает), ставим игрока в 5 клетках и "идущим" (velocity шага). Идущего
+	# он слышит (радиус ~7.2), крадущегося на том же месте -- нет (радиус
+	# ужат множителем ~0.45). Разница только в player.crouched.
+	var lmon: Node = player.monster
+	lmon.mon_type = lmon.MonType.LISTENER
+	player.hidden = false
+	player.sanity = 1.0
+	player.velocity = Vector3(2.6, 0, 0)     # шаг: >0.5 и <3.5 => WALK-слух
+	lmon.position = Vector3(0.0, 0.1, 0.0)
+	player.position = Vector3(5.0, 0.9, 0.0)
+	lg.noise_t = 0.0
+	check(not player.crouched, "по умолчанию не крадёшься")
+	check(player.crouch_speed < player.walk_speed, "красться медленнее ходьбы")
+
+	lmon.state = lmon.State.WANDER
+	player.crouched = false
+	lmon._sense(0.016)
+	check(lmon.state == lmon.State.HUNT, "идущего игрока Слухач слышит за 5 клеток")
+
+	lmon.state = lmon.State.WANDER
+	lg.noise_t = 0.0
+	player.crouched = true
+	lmon._sense(0.016)
+	check(lmon.state != lmon.State.HUNT, "крадущегося на тех же 5 клетках Слухач НЕ слышит")
+	player.crouched = false
+	player.velocity = Vector3.ZERO
+
 	# 10) поимка: ставим игрока вплотную к монстру -- физика должна поймать
 	var mon: Node = player.monster
 	player.hidden = false
